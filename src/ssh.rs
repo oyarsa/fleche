@@ -32,6 +32,7 @@ impl SshClient {
     /// Returns an error if the command exits with a non-zero status.
     pub async fn exec(&self, command: &str) -> Result<String> {
         let output = Command::new("ssh")
+            .args(["-o", "ClearAllForwardings=yes"])
             .arg(&self.host)
             .arg(command)
             .output()
@@ -58,6 +59,7 @@ impl SshClient {
     /// Only returns an error if the SSH connection itself fails.
     pub async fn exec_allow_failure(&self, command: &str) -> Result<(bool, String, String)> {
         let output = Command::new("ssh")
+            .args(["-o", "ClearAllForwardings=yes"])
             .arg(&self.host)
             .arg(command)
             .output()
@@ -109,15 +111,17 @@ impl SshClient {
     ///
     /// Uses `tail -F` which will retry if the file doesn't exist yet,
     /// making it suitable for following log files from jobs that are
-    /// still pending in the queue.
+    /// still pending in the queue. Stderr is suppressed to hide "file
+    /// doesn't exist" messages during the retry period.
     ///
-    /// The child process's stdout and stderr are inherited by the current process.
+    /// The child process's stdout is inherited by the current process.
     pub fn tail_follow(&self, path: &str) -> Result<tokio::process::Child> {
         let child = Command::new("ssh")
+            .args(["-o", "ClearAllForwardings=yes"])
             .arg(&self.host)
-            .arg(format!("tail -F {}", shell_escape(path)))
+            .arg(format!("tail -F {} 2>/dev/null", shell_escape(path)))
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::null())
             .spawn()
             .map_err(|e| FlecheError::SshConnection(format!("Failed to spawn ssh: {e}")))?;
 

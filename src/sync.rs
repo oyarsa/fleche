@@ -9,6 +9,9 @@ use crate::ssh::SshClient;
 use std::path::Path;
 use tokio::process::Command;
 
+/// SSH command with options to disable port forwarding from SSH config.
+const RSYNC_SSH_CMD: &str = "ssh -o ClearAllForwardings=yes";
+
 /// Statistics from an rsync transfer.
 pub struct SyncStats {
     /// The number of bytes sent during the transfer.
@@ -64,6 +67,7 @@ pub async fn sync_to_remote(
     respect_gitignore: bool,
 ) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
+    cmd.args(["-e", RSYNC_SSH_CMD]);
     cmd.args(["-avz", "--delete", "--stats", "--exclude=.git"]);
 
     if respect_gitignore {
@@ -130,6 +134,7 @@ pub async fn sync_path_to_remote(
     let is_dir = source_path.is_dir();
 
     let mut cmd = Command::new("rsync");
+    cmd.args(["-e", RSYNC_SSH_CMD]);
     cmd.args(["-avz"]);
 
     if is_dir {
@@ -187,6 +192,7 @@ pub async fn sync_from_remote(
     }
 
     let mut cmd = Command::new("rsync");
+    cmd.args(["-e", RSYNC_SSH_CMD]);
     cmd.args(["-avz"]);
     cmd.arg(&remote_path);
 
@@ -253,6 +259,7 @@ pub async fn sync_input_cached(
 
     // Sync to cache
     let mut cmd = Command::new("rsync");
+    cmd.args(["-e", RSYNC_SSH_CMD]);
     cmd.args(["-avz", "--stats"]);
 
     if is_dir {
