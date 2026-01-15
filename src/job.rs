@@ -538,7 +538,7 @@ fn print_job_table(jobs: &[JobRecord]) {
 
     for job in jobs {
         println!(
-            "{:<45} {:<12} {:<12} {:<20}",
+            "{:<45} {} {:<12} {:<20}",
             truncate(&job.id, 44),
             format_status(job.status),
             job.slurm_id.as_deref().unwrap_or("-"),
@@ -547,14 +547,15 @@ fn print_job_table(jobs: &[JobRecord]) {
     }
 }
 
-/// Formats a job status with appropriate colors.
+/// Formats a job status with appropriate colors and fixed width.
 fn format_status(status: JobStatus) -> String {
+    // Pad the text before applying color so ANSI codes don't affect alignment
     match status {
-        JobStatus::Pending => style("pending").yellow().to_string(),
-        JobStatus::Running => style("running").blue().to_string(),
-        JobStatus::Completed => style("completed").green().to_string(),
-        JobStatus::Failed => style("failed").red().to_string(),
-        JobStatus::Cancelled => style("cancelled").dim().to_string(),
+        JobStatus::Pending => style(format!("{:<12}", "pending")).yellow().to_string(),
+        JobStatus::Running => style(format!("{:<12}", "running")).blue().to_string(),
+        JobStatus::Completed => style(format!("{:<12}", "completed")).green().to_string(),
+        JobStatus::Failed => style(format!("{:<12}", "failed")).red().to_string(),
+        JobStatus::Cancelled => style(format!("{:<12}", "cancelled")).dim().to_string(),
     }
 }
 
