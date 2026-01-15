@@ -85,11 +85,9 @@ pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
     let slurm_id = output
         .lines()
         .find_map(|line| {
-            if line.starts_with("Submitted batch job") {
-                line.split_whitespace().last().map(|s| s.to_string())
-            } else {
-                None
-            }
+            line.strip_prefix("Submitted batch job")
+                .and_then(|rest| rest.split_whitespace().next())
+                .map(str::to_string)
         })
         .ok_or_else(|| {
             FlecheError::SbatchFailed(format!("Could not parse sbatch output: {}", output))

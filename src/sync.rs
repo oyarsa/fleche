@@ -63,13 +63,10 @@ pub async fn sync_path_to_remote(
         cmd.arg(source_path.to_string_lossy().as_ref());
 
         // Ensure parent directory exists on remote
-        let parent = Path::new(relative_path).parent();
-        let dest_str = if let Some(p) = parent {
-            if p.as_os_str().is_empty() {
-                format!("{}:{}/", host, dest_base)
-            } else {
-                format!("{}:{}/{}/", host, dest_base, p.display())
-            }
+        let dest_str = if let Some(p) = Path::new(relative_path).parent()
+            && !p.as_os_str().is_empty()
+        {
+            format!("{}:{}/{}/", host, dest_base, p.display())
         } else {
             format!("{}:{}/", host, dest_base)
         };
@@ -199,13 +196,10 @@ pub async fn sync_input_cached(
     let symlink_target = format!("../cache/{}", normalized_path);
 
     // Ensure parent directory of symlink exists
-    let link_parent = Path::new(&link_path)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
-    if let Some(parent) = link_parent {
-        if !parent.is_empty() {
-            ssh.mkdir(&parent).await?;
-        }
+    if let Some(parent) = Path::new(&link_path).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        ssh.mkdir(&parent.to_string_lossy()).await?;
     }
 
     ssh.symlink(&symlink_target, &link_path).await?;

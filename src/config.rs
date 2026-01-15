@@ -240,7 +240,9 @@ fn load_jobs_from_dir(
 
         if path.is_dir() {
             load_jobs_from_dir(base_dir, &path, jobs)?;
-        } else if path.extension().map(|e| e == "toml").unwrap_or(false) {
+        } else if let Some(ext) = path.extension()
+            && ext == "toml"
+        {
             let relative = path
                 .strip_prefix(base_dir)
                 .map_err(|e| FlecheError::ConfigParse(format!("Path error: {}", e)))?;

@@ -201,17 +201,18 @@ pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
     let job = registry.get_job(job_id)?;
 
     // Check job status
-    if !partial && matches!(job.status, JobStatus::Pending | JobStatus::Running) {
+    if !partial
+        && matches!(job.status, JobStatus::Pending | JobStatus::Running)
+        && let Some(ref slurm_id) = job.slurm_id
+    {
         let ssh = SshClient::new(&job.remote_host);
-        if let Some(ref slurm_id) = job.slurm_id {
-            let current_status = get_job_status(&ssh, slurm_id).await.unwrap_or(job.status);
-            if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
-                eprintln!(
-                    "{}",
-                    style("Warning: Job is still running. Use --partial to sync anyway.").yellow()
-                );
-                return Ok(());
-            }
+        let current_status = get_job_status(&ssh, slurm_id).await.unwrap_or(job.status);
+        if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
+            eprintln!(
+                "{}",
+                style("Warning: Job is still running. Use --partial to sync anyway.").yellow()
+            );
+            return Ok(());
         }
     }
 
@@ -283,15 +284,14 @@ pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
         ));
     }
 
-    let ssh = SshClient::new(&job.remote_host);
-
-    if let Some(ref slurm_id) = job.slurm_id {
-        cancel_job(&ssh, slurm_id).await?;
-        registry.update_status(job_id, JobStatus::Cancelled)?;
-        println!("{} Job {} cancelled", style("✓").green(), job_id);
-    } else {
+    let Some(ref slurm_id) = job.slurm_id else {
         return Err(FlecheError::Other("Job has no Slurm ID".to_string()));
-    }
+    };
+
+    let ssh = SshClient::new(&job.remote_host);
+    cancel_job(&ssh, slurm_id).await?;
+    registry.update_status(job_id, JobStatus::Cancelled)?;
+    println!("{} Job {} cancelled", style("✓").green(), job_id);
 
     Ok(())
 }
