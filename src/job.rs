@@ -9,6 +9,7 @@ use crate::sync::{
 use chrono::Utc;
 use console::style;
 use rand::Rng;
+use std::io::Write;
 use std::time::Duration;
 
 pub async fn run_job(
@@ -56,6 +57,7 @@ pub async fn run_job(
 
     // Sync project code
     print!("{} Syncing project code...", style("[2/5]").bold().dim());
+    let _ = std::io::stdout().flush();
     let stats = sync_to_remote(
         &config.project_path,
         &config.remote.host,
@@ -77,6 +79,7 @@ pub async fn run_job(
             "{} Syncing input files (cached)...",
             style("[3/5]").bold().dim()
         );
+        let _ = std::io::stdout().flush();
         let mut total_bytes: u64 = 0;
         for input in &job.inputs {
             let stats = sync_input_cached(
