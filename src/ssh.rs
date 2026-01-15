@@ -108,7 +108,7 @@ impl SshClient {
     }
 }
 
-fn shell_escape(s: &str) -> String {
+pub fn shell_escape(s: &str) -> String {
     // Handle tilde expansion: ~/... -> ~/'...' (tilde must be unquoted to expand)
     if let Some(rest) = s.strip_prefix("~/") {
         format!("~/{}", quote_single(rest))

@@ -1,7 +1,7 @@
 use crate::config::{ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::registry::JobStatus;
-use crate::ssh::SshClient;
+use crate::ssh::{SshClient, shell_escape};
 
 pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     let mut script = String::new();
@@ -150,10 +150,6 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
 pub async fn cancel_job(ssh: &SshClient, slurm_id: &str) -> Result<()> {
     ssh.exec(&format!("scancel {slurm_id}")).await?;
     Ok(())
-}
-
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 pub fn slurm_config_from_cli(
