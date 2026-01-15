@@ -13,16 +13,20 @@ use tokio::process::Command;
 fn rsync_ssh_cmd() -> String {
     let mut cmd = "ssh -v -o ClearAllForwardings=yes".to_string();
 
-    // Add `ControlMaster` options if we can create the socket directory
-    if let Some(config_dir) = dirs::config_dir() {
-        let socket_dir = config_dir.join("fleche").join("ssh-sockets");
-        let _ = std::fs::create_dir_all(&socket_dir);
-        let control_path = socket_dir.join("%r@%h-%p");
-        cmd.push_str(&format!(
-            " -o ControlMaster=auto -o 'ControlPath={}' -o ControlPersist=600",
-            control_path.display()
-        ));
+    // Add `ControlMaster` options using short /tmp path (Unix sockets have ~104 byte limit)
+    let uid = unsafe { libc::getuid() };
+    let socket_dir = std::path::PathBuf::from(format!("/tmp/fleche-ssh-{uid}"));
+    let _ = std::fs::create_dir_all(&socket_dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700));
     }
+    let control_path = socket_dir.join("%r@%h-%p");
+    cmd.push_str(&format!(
+        " -o ControlMaster=auto -o 'ControlPath={}' -o ControlPersist=600",
+        control_path.display()
+    ));
 
     cmd
 }

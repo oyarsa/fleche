@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.4.0] - 2026-01-15
+
+### Fixed
+- SSH socket path now uses `/tmp/fleche-ssh-<uid>/` to avoid Unix domain socket path length limit (~104 bytes)
+
 ## [4.3.0] - 2026-01-15
 
 ### Fixed

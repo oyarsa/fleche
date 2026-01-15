@@ -33,10 +33,19 @@ fn ssh_log_path() -> Option<PathBuf> {
 
 /// Returns the directory for SSH `ControlMaster` sockets.
 /// Creates the directory if it doesn't exist.
-fn ssh_socket_dir() -> Option<PathBuf> {
-    let dir = dirs::config_dir().map(|p| p.join("fleche").join("ssh-sockets"))?;
+///
+/// Uses `/tmp/fleche-ssh-<uid>/` to keep paths short (Unix sockets have ~104 byte limit).
+fn ssh_socket_dir() -> PathBuf {
+    let uid = unsafe { libc::getuid() };
+    let dir = PathBuf::from(format!("/tmp/fleche-ssh-{uid}"));
     let _ = std::fs::create_dir_all(&dir);
-    Some(dir)
+    // Set permissions to owner-only (0700)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    dir
 }
 
 /// Checks if an SSH error looks like a connection/auth failure that might succeed on retry.
@@ -111,18 +120,17 @@ impl SshClient {
             "ClearAllForwardings=yes".to_string(),
         ];
 
-        // Add `ControlMaster` options if we can create the socket directory
-        if let Some(socket_dir) = ssh_socket_dir() {
-            let control_path = socket_dir.join("%r@%h-%p");
-            args.extend([
-                "-o".to_string(),
-                "ControlMaster=auto".to_string(),
-                "-o".to_string(),
-                format!("ControlPath=\"{}\"", control_path.display()),
-                "-o".to_string(),
-                "ControlPersist=600".to_string(),
-            ]);
-        }
+        // Add `ControlMaster` options for connection multiplexing
+        let socket_dir = ssh_socket_dir();
+        let control_path = socket_dir.join("%r@%h-%p");
+        args.extend([
+            "-o".to_string(),
+            "ControlMaster=auto".to_string(),
+            "-o".to_string(),
+            format!("ControlPath=\"{}\"", control_path.display()),
+            "-o".to_string(),
+            "ControlPersist=600".to_string(),
+        ]);
 
         args
     }
