@@ -302,7 +302,7 @@ These can be set in config or passed via CLI:
 
 ## Requirements
 
-- Rust 1.70+ (for building)
+- Rust 1.85+ (for building, required by Rust 2024 edition)
 - SSH access to the remote cluster
 - rsync installed locally and on the cluster
 - Slurm scheduler on the remote cluster
