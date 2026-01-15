@@ -7,42 +7,42 @@ pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     let mut script = String::new();
 
     script.push_str("#!/bin/bash\n");
-    script.push_str(&format!("#SBATCH --job-name={}\n", job_id));
+    script.push_str(&format!("#SBATCH --job-name={job_id}\n"));
     script.push_str("#SBATCH --output=job.out\n");
     script.push_str("#SBATCH --error=job.err\n");
 
     let slurm = &job.slurm;
 
     if let Some(ref partition) = slurm.partition {
-        script.push_str(&format!("#SBATCH --partition={}\n", partition));
+        script.push_str(&format!("#SBATCH --partition={partition}\n"));
     }
 
     if let Some(ref time) = slurm.time {
-        script.push_str(&format!("#SBATCH --time={}\n", time));
+        script.push_str(&format!("#SBATCH --time={time}\n"));
     }
 
     if let Some(gpus) = slurm.gpus {
-        script.push_str(&format!("#SBATCH --gpus={}\n", gpus));
+        script.push_str(&format!("#SBATCH --gpus={gpus}\n"));
     }
 
     if let Some(cpus) = slurm.cpus {
-        script.push_str(&format!("#SBATCH --cpus-per-task={}\n", cpus));
+        script.push_str(&format!("#SBATCH --cpus-per-task={cpus}\n"));
     }
 
     if let Some(ref memory) = slurm.memory {
-        script.push_str(&format!("#SBATCH --mem={}\n", memory));
+        script.push_str(&format!("#SBATCH --mem={memory}\n"));
     }
 
     if let Some(ref constraint) = slurm.constraint {
-        script.push_str(&format!("#SBATCH --constraint={}\n", constraint));
+        script.push_str(&format!("#SBATCH --constraint={constraint}\n"));
     }
 
     if let Some(nodes) = slurm.nodes {
-        script.push_str(&format!("#SBATCH --nodes={}\n", nodes));
+        script.push_str(&format!("#SBATCH --nodes={nodes}\n"));
     }
 
     if let Some(ref exclude) = slurm.exclude {
-        script.push_str(&format!("#SBATCH --exclude={}\n", exclude));
+        script.push_str(&format!("#SBATCH --exclude={exclude}\n"));
     }
 
     script.push('\n');
@@ -51,7 +51,7 @@ pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     if !job.env.is_empty() {
         script.push_str("# Environment variables\n");
         for (key, value) in &job.env {
-            script.push_str(&format!("export {}=\"{}\"\n", key, escape_bash_value(value)));
+            script.push_str(&format!("export {key}=\"{}\"\n", escape_bash_value(value)));
         }
         script.push('\n');
     }
@@ -90,7 +90,7 @@ pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
                 .map(str::to_string)
         })
         .ok_or_else(|| {
-            FlecheError::SbatchFailed(format!("Could not parse sbatch output: {}", output))
+            FlecheError::SbatchFailed(format!("Could not parse sbatch output: {output}"))
         })?;
 
     Ok(slurm_id)
@@ -99,7 +99,7 @@ pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
 pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus> {
     // First try squeue to see if job is still in queue
     let (success, stdout, _) = ssh
-        .exec_allow_failure(&format!("squeue -j {} -h -o %T", slurm_id))
+        .exec_allow_failure(&format!("squeue -j {slurm_id} -h -o %T"))
         .await?;
 
     if success && !stdout.trim().is_empty() {
@@ -117,8 +117,7 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
     // Job not in queue, check sacct for final state
     let (success, stdout, _) = ssh
         .exec_allow_failure(&format!(
-            "sacct -j {} -n -o State --parsable2 | head -1",
-            slurm_id
+            "sacct -j {slurm_id} -n -o State --parsable2 | head -1"
         ))
         .await?;
 
@@ -144,13 +143,12 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
     // Fallback: check if job.out exists (job likely ran)
     // This handles cases where sacct isn't available
     Err(FlecheError::Other(format!(
-        "Could not determine status for slurm job {}",
-        slurm_id
+        "Could not determine status for slurm job {slurm_id}"
     )))
 }
 
 pub async fn cancel_job(ssh: &SshClient, slurm_id: &str) -> Result<()> {
-    ssh.exec(&format!("scancel {}", slurm_id)).await?;
+    ssh.exec(&format!("scancel {slurm_id}")).await?;
     Ok(())
 }
 

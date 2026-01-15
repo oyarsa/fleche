@@ -18,7 +18,7 @@ pub async fn run_job(
     follow: bool,
     dry_run: bool,
 ) -> Result<()> {
-    let job = config.resolve_job(job_name, command_override, env_overrides, slurm_overrides)?;
+    let job = config.resolve_job(job_name, command_override, env_overrides, &slurm_overrides)?;
     let job_id = generate_job_id(&job.name);
 
     let remote_path = format!(
@@ -30,7 +30,7 @@ pub async fn run_job(
     let script = generate_sbatch_script(&job_id, &job);
 
     if dry_run {
-        println!("{}", script);
+        println!("{script}");
         return Ok(());
     }
 
@@ -52,7 +52,12 @@ pub async fn run_job(
 
     // Sync explicit inputs to shared cache
     let fleche_base = format!("{}/{}/.fleche", config.remote.base_path, config.project_name);
-    if !job.inputs.is_empty() {
+    if job.inputs.is_empty() {
+        println!(
+            "{} No input files to sync",
+            style("[3/5]").bold().dim()
+        );
+    } else {
         println!(
             "{} Syncing input files (cached)...",
             style("[3/5]").bold().dim()
@@ -68,11 +73,6 @@ pub async fn run_job(
             )
             .await?;
         }
-    } else {
-        println!(
-            "{} No input files to sync",
-            style("[3/5]").bold().dim()
-        );
     }
 
     // Upload script
@@ -80,7 +80,7 @@ pub async fn run_job(
         "{} Uploading job script...",
         style("[4/5]").bold().dim()
     );
-    ssh.write_file(&format!("{}/job.sbatch", remote_path), &script)
+    ssh.write_file(&format!("{remote_path}/job.sbatch"), &script)
         .await?;
 
     // Submit job
@@ -111,8 +111,8 @@ pub async fn run_job(
     if follow {
         println!();
         println!("{}", style("Following output (Ctrl+C to disconnect)...").yellow());
-        let log_path = format!("{}/job.out", remote_path);
-        let mut child = ssh.tail_follow(&log_path).await?;
+        let log_path = format!("{remote_path}/job.out");
+        let mut child = ssh.tail_follow(&log_path)?;
         let _ = child.wait().await;
     }
 
@@ -164,16 +164,16 @@ pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> 
         println!("{}", style("=== STDOUT ===").bold());
         let stdout_path = format!("{}/job.out", job.remote_path);
         match ssh.cat(&stdout_path).await {
-            Ok(content) => print!("{}", content),
-            Err(e) => eprintln!("Error reading stdout: {}", e),
+            Ok(content) => print!("{content}"),
+            Err(e) => eprintln!("Error reading stdout: {e}"),
         }
 
         println!();
         println!("{}", style("=== STDERR ===").bold());
         let stderr_path = format!("{}/job.err", job.remote_path);
         match ssh.cat(&stderr_path).await {
-            Ok(content) => print!("{}", content),
-            Err(e) => eprintln!("Error reading stderr: {}", e),
+            Ok(content) => print!("{content}"),
+            Err(e) => eprintln!("Error reading stderr: {e}"),
         }
     } else if follow {
         let log_file = if stderr { "job.err" } else { "job.out" };
@@ -183,14 +183,14 @@ pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> 
             "{}",
             style("Following output (Ctrl+C to disconnect)...").yellow()
         );
-        let mut child = ssh.tail_follow(&log_path).await?;
+        let mut child = ssh.tail_follow(&log_path)?;
         let _ = child.wait().await;
     } else {
         let log_file = if stderr { "job.err" } else { "job.out" };
         let log_path = format!("{}/{}", job.remote_path, log_file);
 
         let content = ssh.cat(&log_path).await?;
-        print!("{}", content);
+        print!("{content}");
     }
 
     Ok(())
@@ -228,7 +228,7 @@ pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
 
     println!("Syncing outputs from {}...", job.remote_path);
     for output in &resolved.outputs {
-        println!("  {}", output);
+        println!("  {output}");
         sync_from_remote(&job.remote_host, &job.remote_path, output, &local_path).await?;
     }
 
@@ -238,7 +238,7 @@ pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn list_jobs(
+pub fn list_jobs(
     project_filter: Option<&str>,
     status_filter: Option<&str>,
     tags: &[(String, String)],
@@ -322,7 +322,7 @@ pub async fn clean_job(job_id: Option<&str>, all: bool, older_than: Option<&str>
         // Delete remote directory
         let ssh = SshClient::new(&job.remote_host);
         if let Err(e) = ssh.rm_rf(&job.remote_path).await {
-            eprintln!("  Warning: Could not delete remote directory: {}", e);
+            eprintln!("  Warning: Could not delete remote directory: {e}");
         }
 
         // Delete from registry
@@ -377,14 +377,14 @@ fn print_job_details(job: &JobRecord, status: JobStatus) {
         println!();
         println!("  {}", style("Tags:").bold());
         for (key, value) in &job.tags {
-            println!("    {}={}", key, value);
+            println!("    {key}={value}");
         }
     }
 
     println!();
     println!("  {}", style("Command:").bold());
     for line in job.command.lines() {
-        println!("    {}", line);
+        println!("    {line}");
     }
 }
 

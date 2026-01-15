@@ -19,7 +19,7 @@ impl SshClient {
             .arg(command)
             .output()
             .await
-            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {}", e)))?;
+            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -41,7 +41,7 @@ impl SshClient {
             .arg(command)
             .output()
             .await
-            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {}", e)))?;
+            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -76,14 +76,14 @@ impl SshClient {
         self.exec(&format!("cat {}", shell_escape(path))).await
     }
 
-    pub async fn tail_follow(&self, path: &str) -> Result<tokio::process::Child> {
+    pub fn tail_follow(&self, path: &str) -> Result<tokio::process::Child> {
         let child = Command::new("ssh")
             .arg(&self.host)
             .arg(format!("tail -f {}", shell_escape(path)))
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|e| FlecheError::SshConnection(format!("Failed to spawn ssh: {}", e)))?;
+            .map_err(|e| FlecheError::SshConnection(format!("Failed to spawn ssh: {e}")))?;
 
         Ok(child)
     }

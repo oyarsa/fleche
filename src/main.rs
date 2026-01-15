@@ -1,3 +1,10 @@
+#![warn(clippy::all, clippy::pedantic)]
+#![allow(
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::format_push_string
+)]
+
 mod cli;
 mod config;
 mod error;
@@ -93,8 +100,7 @@ async fn run() -> Result<()> {
                 failed,
                 running,
                 completed,
-            )
-            .await?;
+            )?;
         }
 
         Commands::Cancel { job_id } => {
@@ -161,7 +167,7 @@ async fn run() -> Result<()> {
                         println!();
                         println!("  {}", style("Available jobs:").bold());
                         for name in job_names {
-                            println!("    - {}", name);
+                            println!("    - {name}");
                         }
                     }
                 }

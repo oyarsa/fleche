@@ -114,10 +114,10 @@ impl Config {
             .to_path_buf();
 
         let content = std::fs::read_to_string(config_path)
-            .map_err(|e| FlecheError::ConfigParse(format!("Failed to read config: {}", e)))?;
+            .map_err(|e| FlecheError::ConfigParse(format!("Failed to read config: {e}")))?;
 
         let raw: RawConfig = toml::from_str(&content)
-            .map_err(|e| FlecheError::ConfigParse(format!("Failed to parse TOML: {}", e)))?;
+            .map_err(|e| FlecheError::ConfigParse(format!("Failed to parse TOML: {e}")))?;
 
         let remote = raw
             .remote
@@ -154,33 +154,30 @@ impl Config {
         job_name: Option<&str>,
         command_override: Option<&str>,
         env_overrides: &[(String, String)],
-        slurm_overrides: SlurmConfig,
+        slurm_overrides: &SlurmConfig,
     ) -> Result<ResolvedJob> {
-        let (name, job_def) = match job_name {
-            Some(name) => {
-                let job = self.jobs.get(name).ok_or_else(|| {
-                    let available: Vec<_> = self.jobs.keys().cloned().collect();
-                    FlecheError::JobNotFound(name.to_string(), available.join(", "))
-                })?;
-                (name.to_string(), job.clone())
+        let (name, job_def) = if let Some(name) = job_name {
+            let job = self.jobs.get(name).ok_or_else(|| {
+                let available: Vec<_> = self.jobs.keys().cloned().collect();
+                FlecheError::JobNotFound(name.to_string(), available.join(", "))
+            })?;
+            (name.to_string(), job.clone())
+        } else {
+            // Ad-hoc job
+            if command_override.is_none() {
+                return Err(FlecheError::NoJobOrCommand);
             }
-            None => {
-                // Ad-hoc job
-                if command_override.is_none() {
-                    return Err(FlecheError::NoJobOrCommand);
-                }
-                ("adhoc".to_string(), JobDefinition::default())
-            }
+            ("adhoc".to_string(), JobDefinition::default())
         };
 
         let command = command_override
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .or(job_def.command.clone())
-            .ok_or_else(|| FlecheError::MissingField(format!("command for job '{}'", name)))?;
+            .ok_or_else(|| FlecheError::MissingField(format!("command for job '{name}'")))?;
 
         // Merge slurm: global -> job -> CLI
         let merged_slurm = self.global_slurm.merge(&job_def.slurm);
-        let final_slurm = merged_slurm.merge(&slurm_overrides);
+        let final_slurm = merged_slurm.merge(slurm_overrides);
 
         // Merge env: global -> job -> CLI
         let mut merged_env = self.global_env.clone();
@@ -208,7 +205,7 @@ impl Config {
 
 fn find_config_file() -> Result<PathBuf> {
     let mut current = std::env::current_dir().map_err(|e| {
-        FlecheError::ConfigParse(format!("Failed to get current directory: {}", e))
+        FlecheError::ConfigParse(format!("Failed to get current directory: {e}"))
     })?;
 
     loop {
@@ -229,12 +226,12 @@ fn load_jobs_from_dir(
     jobs: &mut HashMap<String, JobDefinition>,
 ) -> Result<()> {
     let entries = std::fs::read_dir(current_dir).map_err(|e| {
-        FlecheError::ConfigParse(format!("Failed to read fleche directory: {}", e))
+        FlecheError::ConfigParse(format!("Failed to read fleche directory: {e}"))
     })?;
 
     for entry in entries {
         let entry = entry.map_err(|e| {
-            FlecheError::ConfigParse(format!("Failed to read directory entry: {}", e))
+            FlecheError::ConfigParse(format!("Failed to read directory entry: {e}"))
         })?;
         let path = entry.path();
 
@@ -245,7 +242,7 @@ fn load_jobs_from_dir(
         {
             let relative = path
                 .strip_prefix(base_dir)
-                .map_err(|e| FlecheError::ConfigParse(format!("Path error: {}", e)))?;
+                .map_err(|e| FlecheError::ConfigParse(format!("Path error: {e}")))?;
 
             // Job name is path without .toml extension
             let job_name = relative

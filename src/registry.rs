@@ -56,7 +56,7 @@ impl std::str::FromStr for JobStatus {
             "completed" => Ok(JobStatus::Completed),
             "failed" => Ok(JobStatus::Failed),
             "cancelled" => Ok(JobStatus::Cancelled),
-            _ => Err(FlecheError::Other(format!("Unknown status: {}", s))),
+            _ => Err(FlecheError::Other(format!("Unknown status: {s}"))),
         }
     }
 }
@@ -82,7 +82,7 @@ impl Registry {
 
     fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
                 slurm_id TEXT,
@@ -111,7 +111,7 @@ impl Registry {
             );
 
             CREATE INDEX IF NOT EXISTS idx_job_tags_key_value ON job_tags(key, value);
-            "#,
+            ",
         )?;
         Ok(())
     }
@@ -131,12 +131,12 @@ impl Registry {
         let config_json = serde_json::to_string(job)?;
 
         self.conn.execute(
-            r#"
+            r"
             INSERT INTO jobs (id, slurm_id, job_name, project_name, project_path,
                               remote_host, remote_path, command, status, config_json,
                               created_at, updated_at, outputs_synced)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)
-            "#,
+            ",
             params![
                 id,
                 slurm_id,
@@ -194,12 +194,12 @@ impl Registry {
 
     pub fn get_job(&self, id: &str) -> Result<JobRecord> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT id, slurm_id, job_name, project_name, project_path,
                    remote_host, remote_path, command, status, config_json,
                    created_at, updated_at, outputs_synced
             FROM jobs WHERE id = ?1
-            "#,
+            ",
         )?;
 
         let job = stmt
@@ -218,12 +218,8 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
@@ -243,7 +239,7 @@ impl Registry {
             .query_map(params![job_id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .collect();
         Ok(tags)
     }
@@ -256,12 +252,12 @@ impl Registry {
         limit: usize,
     ) -> Result<Vec<JobRecord>> {
         let mut sql = String::from(
-            r#"
+            r"
             SELECT DISTINCT j.id, j.slurm_id, j.job_name, j.project_name, j.project_path,
                    j.remote_host, j.remote_path, j.command, j.status, j.config_json,
                    j.created_at, j.updated_at, j.outputs_synced
             FROM jobs j
-            "#,
+            ",
         );
 
         let mut conditions = Vec::new();
@@ -270,21 +266,20 @@ impl Registry {
         // Add tag joins
         for (i, _) in tag_filters.iter().enumerate() {
             sql.push_str(&format!(
-                " INNER JOIN job_tags t{} ON j.id = t{}.job_id",
-                i, i
+                " INNER JOIN job_tags t{i} ON j.id = t{i}.job_id"
             ));
         }
 
         // Add tag conditions
         for (i, (key, value)) in tag_filters.iter().enumerate() {
-            conditions.push(format!("t{}.key = ? AND t{}.value = ?", i, i));
+            conditions.push(format!("t{i}.key = ? AND t{i}.value = ?"));
             params_vec.push(Box::new(key.clone()));
             params_vec.push(Box::new(value.clone()));
         }
 
         if let Some(project) = project_filter {
             conditions.push("j.project_path LIKE ?".to_string());
-            params_vec.push(Box::new(format!("%{}%", project)));
+            params_vec.push(Box::new(format!("%{project}%")));
         }
 
         if let Some(status) = status_filter {
@@ -298,12 +293,12 @@ impl Registry {
         }
 
         sql.push_str(" ORDER BY j.created_at DESC LIMIT ?");
-        params_vec.push(Box::new(limit as i64));
+        params_vec.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
 
         let mut stmt = self.conn.prepare(&sql)?;
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
+            params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let jobs = stmt
             .query_map(params_refs.as_slice(), |row| {
@@ -321,17 +316,13 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .collect::<Vec<_>>();
 
         // Load tags for each job
@@ -347,14 +338,14 @@ impl Registry {
     pub fn list_jobs_older_than(&self, duration: Duration) -> Result<Vec<JobRecord>> {
         let cutoff = Utc::now() - duration;
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT id, slurm_id, job_name, project_name, project_path,
                    remote_host, remote_path, command, status, config_json,
                    created_at, updated_at, outputs_synced
             FROM jobs
             WHERE created_at < ?1 AND status IN ('completed', 'failed', 'cancelled')
             ORDER BY created_at DESC
-            "#,
+            ",
         )?;
 
         let jobs = stmt
@@ -373,17 +364,13 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .collect::<Vec<_>>();
 
         let mut jobs_with_tags = Vec::new();
@@ -397,14 +384,14 @@ impl Registry {
 
     pub fn list_finished_jobs(&self) -> Result<Vec<JobRecord>> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT id, slurm_id, job_name, project_name, project_path,
                    remote_host, remote_path, command, status, config_json,
                    created_at, updated_at, outputs_synced
             FROM jobs
             WHERE status IN ('completed', 'failed', 'cancelled')
             ORDER BY created_at DESC
-            "#,
+            ",
         )?;
 
         let jobs = stmt
@@ -423,17 +410,13 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .collect::<Vec<_>>();
 
         let mut jobs_with_tags = Vec::new();
@@ -465,26 +448,25 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
     if let Some(days) = s.strip_suffix('d') {
         let n: i64 = days
             .parse()
-            .map_err(|_| FlecheError::Other(format!("Invalid duration: {}", s)))?;
+            .map_err(|_| FlecheError::Other(format!("Invalid duration: {s}")))?;
         return Ok(Duration::days(n));
     }
 
     if let Some(hours) = s.strip_suffix('h') {
         let n: i64 = hours
             .parse()
-            .map_err(|_| FlecheError::Other(format!("Invalid duration: {}", s)))?;
+            .map_err(|_| FlecheError::Other(format!("Invalid duration: {s}")))?;
         return Ok(Duration::hours(n));
     }
 
     if let Some(minutes) = s.strip_suffix('m') {
         let n: i64 = minutes
             .parse()
-            .map_err(|_| FlecheError::Other(format!("Invalid duration: {}", s)))?;
+            .map_err(|_| FlecheError::Other(format!("Invalid duration: {s}")))?;
         return Ok(Duration::minutes(n));
     }
 
     Err(FlecheError::Other(format!(
-        "Invalid duration format: {}. Use format like 7d, 24h, 30m",
-        s
+        "Invalid duration format: {s}. Use format like 7d, 24h, 30m"
     )))
 }
