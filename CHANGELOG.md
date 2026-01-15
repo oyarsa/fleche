@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.3] - 2026-01-15
+
+### Fixed
+- rsync now creates parent directories for nested input paths (`--mkpath`)
+
 ## [5.0.2] - 2026-01-15
 
 ### Fixed

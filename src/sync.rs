@@ -134,7 +134,7 @@ pub async fn sync_inputs_to_workspace(
 
         let mut cmd = Command::new("rsync");
         cmd.args(["-e", &rsync_ssh_cmd()]);
-        cmd.args(["-avz", "--stats"]);
+        cmd.args(["-avz", "--stats", "--mkpath"]);
 
         if is_dir {
             // For directories, ensure trailing slash to copy contents
