@@ -1,4 +1,4 @@
-use crate::error::{Result, RjobError};
+use crate::error::{FlecheError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -110,18 +110,18 @@ impl Config {
     pub fn load_from_path(config_path: &Path) -> Result<Config> {
         let project_path = config_path
             .parent()
-            .ok_or_else(|| RjobError::ConfigParse("Invalid config path".to_string()))?
+            .ok_or_else(|| FlecheError::ConfigParse("Invalid config path".to_string()))?
             .to_path_buf();
 
         let content = std::fs::read_to_string(config_path)
-            .map_err(|e| RjobError::ConfigParse(format!("Failed to read config: {}", e)))?;
+            .map_err(|e| FlecheError::ConfigParse(format!("Failed to read config: {}", e)))?;
 
         let raw: RawConfig = toml::from_str(&content)
-            .map_err(|e| RjobError::ConfigParse(format!("Failed to parse TOML: {}", e)))?;
+            .map_err(|e| FlecheError::ConfigParse(format!("Failed to parse TOML: {}", e)))?;
 
         let remote = raw
             .remote
-            .ok_or_else(|| RjobError::MissingField("remote".to_string()))?;
+            .ok_or_else(|| FlecheError::MissingField("remote".to_string()))?;
 
         let project_name = raw.project.name.unwrap_or_else(|| {
             project_path
@@ -133,10 +133,10 @@ impl Config {
 
         let mut jobs = raw.jobs;
 
-        // Load jobs from rjob/ directory
-        let rjob_dir = project_path.join("rjob");
-        if rjob_dir.is_dir() {
-            load_jobs_from_dir(&rjob_dir, &rjob_dir, &mut jobs)?;
+        // Load jobs from fleche/ directory
+        let fleche_dir = project_path.join("fleche");
+        if fleche_dir.is_dir() {
+            load_jobs_from_dir(&fleche_dir, &fleche_dir, &mut jobs)?;
         }
 
         Ok(Config {
@@ -160,14 +160,14 @@ impl Config {
             Some(name) => {
                 let job = self.jobs.get(name).ok_or_else(|| {
                     let available: Vec<_> = self.jobs.keys().cloned().collect();
-                    RjobError::JobNotFound(name.to_string(), available.join(", "))
+                    FlecheError::JobNotFound(name.to_string(), available.join(", "))
                 })?;
                 (name.to_string(), job.clone())
             }
             None => {
                 // Ad-hoc job
                 if command_override.is_none() {
-                    return Err(RjobError::NoJobOrCommand);
+                    return Err(FlecheError::NoJobOrCommand);
                 }
                 ("adhoc".to_string(), JobDefinition::default())
             }
@@ -176,7 +176,7 @@ impl Config {
         let command = command_override
             .map(|s| s.to_string())
             .or(job_def.command.clone())
-            .ok_or_else(|| RjobError::MissingField(format!("command for job '{}'", name)))?;
+            .ok_or_else(|| FlecheError::MissingField(format!("command for job '{}'", name)))?;
 
         // Merge slurm: global -> job -> CLI
         let merged_slurm = self.global_slurm.merge(&job_def.slurm);
@@ -208,17 +208,17 @@ impl Config {
 
 fn find_config_file() -> Result<PathBuf> {
     let mut current = std::env::current_dir().map_err(|e| {
-        RjobError::ConfigParse(format!("Failed to get current directory: {}", e))
+        FlecheError::ConfigParse(format!("Failed to get current directory: {}", e))
     })?;
 
     loop {
-        let config_path = current.join("rjob.toml");
+        let config_path = current.join("fleche.toml");
         if config_path.exists() {
             return Ok(config_path);
         }
 
         if !current.pop() {
-            return Err(RjobError::ConfigNotFound);
+            return Err(FlecheError::ConfigNotFound);
         }
     }
 }
@@ -229,12 +229,12 @@ fn load_jobs_from_dir(
     jobs: &mut HashMap<String, JobDefinition>,
 ) -> Result<()> {
     let entries = std::fs::read_dir(current_dir).map_err(|e| {
-        RjobError::ConfigParse(format!("Failed to read rjob directory: {}", e))
+        FlecheError::ConfigParse(format!("Failed to read fleche directory: {}", e))
     })?;
 
     for entry in entries {
         let entry = entry.map_err(|e| {
-            RjobError::ConfigParse(format!("Failed to read directory entry: {}", e))
+            FlecheError::ConfigParse(format!("Failed to read directory entry: {}", e))
         })?;
         let path = entry.path();
 
@@ -243,7 +243,7 @@ fn load_jobs_from_dir(
         } else if path.extension().map(|e| e == "toml").unwrap_or(false) {
             let relative = path
                 .strip_prefix(base_dir)
-                .map_err(|e| RjobError::ConfigParse(format!("Path error: {}", e)))?;
+                .map_err(|e| FlecheError::ConfigParse(format!("Path error: {}", e)))?;
 
             // Job name is path without .toml extension
             let job_name = relative
@@ -252,18 +252,18 @@ fn load_jobs_from_dir(
                 .replace('\\', "/");
 
             if jobs.contains_key(&job_name) {
-                return Err(RjobError::DuplicateJob(
+                return Err(FlecheError::DuplicateJob(
                     job_name,
-                    format!("rjob.toml and {}", path.display()),
+                    format!("fleche.toml and {}", path.display()),
                 ));
             }
 
             let content = std::fs::read_to_string(&path).map_err(|e| {
-                RjobError::ConfigParse(format!("Failed to read {}: {}", path.display(), e))
+                FlecheError::ConfigParse(format!("Failed to read {}: {}", path.display(), e))
             })?;
 
             let raw: RawJobFile = toml::from_str(&content).map_err(|e| {
-                RjobError::ConfigParse(format!("Failed to parse {}: {}", path.display(), e))
+                FlecheError::ConfigParse(format!("Failed to parse {}: {}", path.display(), e))
             })?;
 
             jobs.insert(
@@ -288,7 +288,7 @@ pub fn generate_init_config() -> &'static str {
 
 [remote]
 host = "cluster"                    # SSH host (from ~/.ssh/config or full address)
-base_path = "~/rjob"                # Remote base directory
+base_path = "~/fleche"              # Remote base directory
 
 [env]
 # Global environment variables for all jobs
@@ -310,7 +310,7 @@ base_path = "~/rjob"                # Remote base directory
 # partition = "cpu"
 # time = "0:10:00"
 
-# Jobs can also be defined in separate files under rjob/*.toml
+# Jobs can also be defined in separate files under fleche/*.toml
 "#
 }
 

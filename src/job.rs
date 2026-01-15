@@ -1,9 +1,9 @@
 use crate::config::{Config, ResolvedJob, SlurmConfig};
-use crate::error::{Result, RjobError};
+use crate::error::{FlecheError, Result};
 use crate::registry::{parse_duration, JobRecord, JobStatus, Registry};
 use crate::slurm::{cancel_job, generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::SshClient;
-use crate::sync::{sync_from_remote, sync_path_to_remote, sync_to_remote};
+use crate::sync::{sync_from_remote, sync_input_cached, sync_to_remote};
 use chrono::Utc;
 use console::style;
 use rand::Rng;
@@ -22,7 +22,7 @@ pub async fn run_job(
     let job_id = generate_job_id(&job.name);
 
     let remote_path = format!(
-        "{}/{}/{}",
+        "{}/{}/.fleche/{}",
         config.remote.base_path, config.project_name, job_id
     );
 
@@ -50,15 +50,23 @@ pub async fn run_job(
     );
     sync_to_remote(&config.project_path, &config.remote.host, &remote_path, true).await?;
 
-    // Sync explicit inputs
+    // Sync explicit inputs to shared cache
+    let fleche_base = format!("{}/{}/.fleche", config.remote.base_path, config.project_name);
     if !job.inputs.is_empty() {
         println!(
-            "{} Syncing input files...",
+            "{} Syncing input files (cached)...",
             style("[3/5]").bold().dim()
         );
         for input in &job.inputs {
-            sync_path_to_remote(&config.project_path, input, &config.remote.host, &remote_path)
-                .await?;
+            sync_input_cached(
+                &config.project_path,
+                input,
+                &config.remote.host,
+                &fleche_base,
+                &job_id,
+                &ssh,
+            )
+            .await?;
         }
     } else {
         println!(
@@ -269,7 +277,7 @@ pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
     let job = registry.get_job(job_id)?;
 
     if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
-        return Err(RjobError::CannotCancel(
+        return Err(FlecheError::CannotCancel(
             job_id.to_string(),
             job.status.to_string(),
         ));
@@ -282,7 +290,7 @@ pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
         registry.update_status(job_id, JobStatus::Cancelled)?;
         println!("{} Job {} cancelled", style("✓").green(), job_id);
     } else {
-        return Err(RjobError::Other("Job has no Slurm ID".to_string()));
+        return Err(FlecheError::Other("Job has no Slurm ID".to_string()));
     }
 
     Ok(())

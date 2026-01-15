@@ -1,4 +1,4 @@
-use crate::error::{Result, RjobError};
+use crate::error::{FlecheError, Result};
 use std::process::Stdio;
 use tokio::process::Command;
 
@@ -19,12 +19,12 @@ impl SshClient {
             .arg(command)
             .output()
             .await
-            .map_err(|e| RjobError::SshConnection(format!("Failed to execute ssh: {}", e)))?;
+            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(RjobError::SshCommand(format!(
+            return Err(FlecheError::SshCommand(format!(
                 "Command failed with exit code {:?}\nstdout: {}\nstderr: {}",
                 output.status.code(),
                 stdout,
@@ -41,7 +41,7 @@ impl SshClient {
             .arg(command)
             .output()
             .await
-            .map_err(|e| RjobError::SshConnection(format!("Failed to execute ssh: {}", e)))?;
+            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {}", e)))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -83,7 +83,7 @@ impl SshClient {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
-            .map_err(|e| RjobError::SshConnection(format!("Failed to spawn ssh: {}", e)))?;
+            .map_err(|e| FlecheError::SshConnection(format!("Failed to spawn ssh: {}", e)))?;
 
         Ok(child)
     }
@@ -94,6 +94,18 @@ impl SshClient {
             .exec_allow_failure(&format!("test -f {}", shell_escape(path)))
             .await?;
         Ok(success)
+    }
+
+    pub async fn symlink(&self, target: &str, link_path: &str) -> Result<()> {
+        // Remove existing file/link if present, then create symlink
+        self.exec(&format!(
+            "rm -rf {} && ln -s {} {}",
+            shell_escape(link_path),
+            shell_escape(target),
+            shell_escape(link_path)
+        ))
+        .await?;
+        Ok(())
     }
 }
 

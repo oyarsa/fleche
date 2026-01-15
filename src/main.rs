@@ -110,10 +110,10 @@ async fn run() -> Result<()> {
         }
 
         Commands::Init => {
-            let config_path = Path::new("rjob.toml");
+            let config_path = Path::new("fleche.toml");
             if config_path.exists() {
                 eprintln!(
-                    "{} rjob.toml already exists in current directory",
+                    "{} fleche.toml already exists in current directory",
                     style("Error:").red().bold()
                 );
                 std::process::exit(1);
@@ -121,7 +121,7 @@ async fn run() -> Result<()> {
 
             std::fs::write(config_path, generate_init_config())?;
             println!(
-                "{} Created rjob.toml",
+                "{} Created fleche.toml",
                 style("✓").green()
             );
             println!("Edit the file to configure your remote host and jobs.");
@@ -146,7 +146,7 @@ async fn run() -> Result<()> {
                     println!(
                         "  {:<14} {}",
                         style("Config path:").bold(),
-                        config.project_path.join("rjob.toml").display()
+                        config.project_path.join("fleche.toml").display()
                     );
 
                     let job_names = config.job_names();
@@ -154,7 +154,7 @@ async fn run() -> Result<()> {
                         println!();
                         println!(
                             "  {}",
-                            style("No jobs defined. Add jobs to rjob.toml or create rjob/*.toml files.")
+                            style("No jobs defined. Add jobs to fleche.toml or create fleche/*.toml files.")
                                 .yellow()
                         );
                     } else {

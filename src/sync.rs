@@ -1,4 +1,5 @@
-use crate::error::{Result, RjobError};
+use crate::error::{FlecheError, Result};
+use crate::ssh::SshClient;
 use std::path::Path;
 use tokio::process::Command;
 
@@ -23,11 +24,11 @@ pub async fn sync_to_remote(
     let output = cmd
         .output()
         .await
-        .map_err(|e| RjobError::RsyncFailed(format!("Failed to execute rsync: {}", e)))?;
+        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(RjobError::RsyncFailed(format!(
+        return Err(FlecheError::RsyncFailed(format!(
             "rsync failed: {}",
             stderr
         )));
@@ -36,6 +37,7 @@ pub async fn sync_to_remote(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn sync_path_to_remote(
     source_base: &Path,
     relative_path: &str,
@@ -77,11 +79,11 @@ pub async fn sync_path_to_remote(
     let output = cmd
         .output()
         .await
-        .map_err(|e| RjobError::RsyncFailed(format!("Failed to execute rsync: {}", e)))?;
+        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(RjobError::RsyncFailed(format!(
+        return Err(FlecheError::RsyncFailed(format!(
             "rsync failed for '{}': {}",
             relative_path, stderr
         )));
@@ -119,15 +121,94 @@ pub async fn sync_from_remote(
     let output = cmd
         .output()
         .await
-        .map_err(|e| RjobError::RsyncFailed(format!("Failed to execute rsync: {}", e)))?;
+        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(RjobError::RsyncFailed(format!(
+        return Err(FlecheError::RsyncFailed(format!(
             "rsync failed for '{}': {}",
             relative_path, stderr
         )));
     }
+
+    Ok(())
+}
+
+/// Sync an input path to a shared cache and create a symlink in the job directory.
+///
+/// Cache structure:
+///   <base_path>/<project>/.fleche/cache/<input-path>
+///
+/// Job directory gets a symlink:
+///   <base_path>/<project>/.fleche/<job-id>/<input-path> -> ../cache/<input-path>
+pub async fn sync_input_cached(
+    source_base: &Path,
+    relative_path: &str,
+    host: &str,
+    fleche_base: &str, // e.g., ~/fleche/my-project/.fleche
+    job_id: &str,
+    ssh: &SshClient,
+) -> Result<()> {
+    let source_path = source_base.join(relative_path);
+    let is_dir = source_path.is_dir();
+
+    // Normalize the path (remove trailing slashes for consistent cache keys)
+    let normalized_path = relative_path.trim_end_matches('/');
+
+    // Cache destination: .fleche/cache/<path>
+    let cache_path = format!("{}/cache/{}", fleche_base, normalized_path);
+
+    // Ensure cache parent directory exists
+    let cache_parent = Path::new(&cache_path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("{}/cache", fleche_base));
+    ssh.mkdir(&cache_parent).await?;
+
+    // Sync to cache
+    let mut cmd = Command::new("rsync");
+    cmd.args(["-avz"]);
+
+    if is_dir {
+        let source_str = format!("{}/", source_path.display());
+        let dest_str = format!("{}:{}/", host, cache_path);
+        cmd.arg(&source_str);
+        cmd.arg(&dest_str);
+    } else {
+        cmd.arg(source_path.to_string_lossy().as_ref());
+        cmd.arg(format!("{}:{}", host, cache_path));
+    }
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(FlecheError::RsyncFailed(format!(
+            "rsync failed for '{}': {}",
+            relative_path, stderr
+        )));
+    }
+
+    // Create symlink in job directory
+    // Job is at .fleche/<job-id>/, cache is at .fleche/cache/
+    // So symlink target is: ../cache/<path>
+    let link_path = format!("{}/{}/{}", fleche_base, job_id, normalized_path);
+    let symlink_target = format!("../cache/{}", normalized_path);
+
+    // Ensure parent directory of symlink exists
+    let link_parent = Path::new(&link_path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string());
+    if let Some(parent) = link_parent {
+        if !parent.is_empty() {
+            ssh.mkdir(&parent).await?;
+        }
+    }
+
+    ssh.symlink(&symlink_target, &link_path).await?;
 
     Ok(())
 }

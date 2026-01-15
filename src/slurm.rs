@@ -1,5 +1,5 @@
 use crate::config::{ResolvedJob, SlurmConfig};
-use crate::error::{Result, RjobError};
+use crate::error::{FlecheError, Result};
 use crate::registry::JobStatus;
 use crate::ssh::SshClient;
 
@@ -92,7 +92,7 @@ pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
             }
         })
         .ok_or_else(|| {
-            RjobError::SbatchFailed(format!("Could not parse sbatch output: {}", output))
+            FlecheError::SbatchFailed(format!("Could not parse sbatch output: {}", output))
         })?;
 
     Ok(slurm_id)
@@ -145,7 +145,7 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
 
     // Fallback: check if job.out exists (job likely ran)
     // This handles cases where sacct isn't available
-    Err(RjobError::Other(format!(
+    Err(FlecheError::Other(format!(
         "Could not determine status for slurm job {}",
         slurm_id
     )))

@@ -1,5 +1,5 @@
 [package]
-name = "rjob"
+name = "fleche"
 version = "0.1.0"
 edition = "2021"
 description = "Remote job runner for Slurm clusters"

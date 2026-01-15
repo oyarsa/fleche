@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "rjob")]
+#[command(name = "fleche")]
 #[command(about = "Remote job runner for Slurm clusters")]
 #[command(version)]
 pub struct Cli {
@@ -150,7 +150,7 @@ pub enum Commands {
         older_than: Option<String>,
     },
 
-    /// Create a starter rjob.toml in current directory
+    /// Create a starter fleche.toml in current directory
     Init,
 
     /// Validate configuration without running anything

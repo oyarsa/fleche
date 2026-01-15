@@ -1,5 +1,5 @@
 use crate::config::ResolvedJob;
-use crate::error::{Result, RjobError};
+use crate::error::{FlecheError, Result};
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -47,7 +47,7 @@ impl std::fmt::Display for JobStatus {
 }
 
 impl std::str::FromStr for JobStatus {
-    type Err = RjobError;
+    type Err = FlecheError;
 
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
@@ -56,7 +56,7 @@ impl std::str::FromStr for JobStatus {
             "completed" => Ok(JobStatus::Completed),
             "failed" => Ok(JobStatus::Failed),
             "cancelled" => Ok(JobStatus::Cancelled),
-            _ => Err(RjobError::Other(format!("Unknown status: {}", s))),
+            _ => Err(FlecheError::Other(format!("Unknown status: {}", s))),
         }
     }
 }
@@ -228,7 +228,7 @@ impl Registry {
                     tags: HashMap::new(),
                 })
             })
-            .map_err(|_| RjobError::JobIdNotFound(id.to_string()))?;
+            .map_err(|_| FlecheError::JobIdNotFound(id.to_string()))?;
 
         // Load tags
         let tags = self.get_tags(&job.id)?;
@@ -455,8 +455,8 @@ impl Registry {
 
 fn get_db_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
-        .ok_or_else(|| RjobError::Other("Could not find config directory".to_string()))?;
-    Ok(config_dir.join("rjob").join("jobs.db"))
+        .ok_or_else(|| FlecheError::Other("Could not find config directory".to_string()))?;
+    Ok(config_dir.join("fleche").join("jobs.db"))
 }
 
 pub fn parse_duration(s: &str) -> Result<Duration> {
@@ -465,25 +465,25 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
     if let Some(days) = s.strip_suffix('d') {
         let n: i64 = days
             .parse()
-            .map_err(|_| RjobError::Other(format!("Invalid duration: {}", s)))?;
+            .map_err(|_| FlecheError::Other(format!("Invalid duration: {}", s)))?;
         return Ok(Duration::days(n));
     }
 
     if let Some(hours) = s.strip_suffix('h') {
         let n: i64 = hours
             .parse()
-            .map_err(|_| RjobError::Other(format!("Invalid duration: {}", s)))?;
+            .map_err(|_| FlecheError::Other(format!("Invalid duration: {}", s)))?;
         return Ok(Duration::hours(n));
     }
 
     if let Some(minutes) = s.strip_suffix('m') {
         let n: i64 = minutes
             .parse()
-            .map_err(|_| RjobError::Other(format!("Invalid duration: {}", s)))?;
+            .map_err(|_| FlecheError::Other(format!("Invalid duration: {}", s)))?;
         return Ok(Duration::minutes(n));
     }
 
-    Err(RjobError::Other(format!(
+    Err(FlecheError::Other(format!(
         "Invalid duration format: {}. Use format like 7d, 24h, 30m",
         s
     )))

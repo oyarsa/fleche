@@ -1,8 +1,8 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum RjobError {
-    #[error("No rjob.toml found in current directory or parents")]
+pub enum FlecheError {
+    #[error("No fleche.toml found in current directory or parents")]
     ConfigNotFound,
 
     #[error("Failed to parse config file: {0}")]
@@ -29,7 +29,7 @@ pub enum RjobError {
     #[error("Sbatch submission failed: {0}")]
     SbatchFailed(String),
 
-    #[error("Job '{0}' not found in registry. Run `rjob list` to see available jobs.")]
+    #[error("Job '{0}' not found in registry. Run `fleche list` to see available jobs.")]
     JobIdNotFound(String),
 
     #[error("Database error: {0}")]
@@ -51,4 +51,4 @@ pub enum RjobError {
     Other(String),
 }
 
-pub type Result<T> = std::result::Result<T, RjobError>;
+pub type Result<T> = std::result::Result<T, FlecheError>;
