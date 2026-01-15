@@ -48,7 +48,7 @@ impl SyncStats {
         } else if self.bytes_sent >= KB {
             format!("{:.1} KB", self.bytes_sent as f64 / KB as f64)
         } else {
-            format!("{} bytes", self.bytes_sent)
+            format!("{} B", self.bytes_sent)
         }
     }
 }
@@ -300,4 +300,111 @@ pub async fn sync_input_cached(
     ssh.symlink(&symlink_target, &link_path).await?;
 
     Ok(SyncStats::parse_from_rsync_output(&stdout))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_rsync_output_with_bytes() {
+        let output = r#"
+sending incremental file list
+./
+src/
+
+Number of files: 42 (reg: 35, dir: 7)
+Number of created files: 0
+Number of deleted files: 0
+Number of regular files transferred: 5
+Total file size: 125,432 bytes
+Total transferred file size: 12,345 bytes
+Literal data: 12,345 bytes
+Matched data: 0 bytes
+File list size: 1,234
+File list generation time: 0.001 seconds
+File list transfer time: 0.000 seconds
+Total bytes sent: 15,678
+Total bytes received: 234
+
+sent 15,678 bytes  received 234 bytes  31,824.00 bytes/sec
+total size is 125,432  speedup is 7.88
+"#;
+
+        let stats = SyncStats::parse_from_rsync_output(output);
+        assert_eq!(stats.bytes_sent, 15678);
+    }
+
+    #[test]
+    fn test_parse_rsync_output_no_commas() {
+        let output = "Total bytes sent: 1234\nTotal bytes received: 56";
+        let stats = SyncStats::parse_from_rsync_output(output);
+        assert_eq!(stats.bytes_sent, 1234);
+    }
+
+    #[test]
+    fn test_parse_rsync_output_missing_line() {
+        let output = "some other output\nno bytes sent line here";
+        let stats = SyncStats::parse_from_rsync_output(output);
+        assert_eq!(stats.bytes_sent, 0);
+    }
+
+    #[test]
+    fn test_parse_rsync_output_empty() {
+        let stats = SyncStats::parse_from_rsync_output("");
+        assert_eq!(stats.bytes_sent, 0);
+    }
+
+    #[test]
+    fn test_human_readable_bytes() {
+        let stats = SyncStats { bytes_sent: 500 };
+        assert_eq!(stats.human_readable(), "500 B");
+    }
+
+    #[test]
+    fn test_human_readable_kilobytes() {
+        let stats = SyncStats { bytes_sent: 1024 };
+        assert_eq!(stats.human_readable(), "1.0 KB");
+
+        let stats = SyncStats { bytes_sent: 1536 };
+        assert_eq!(stats.human_readable(), "1.5 KB");
+
+        let stats = SyncStats {
+            bytes_sent: 500_000,
+        };
+        assert_eq!(stats.human_readable(), "488.3 KB");
+    }
+
+    #[test]
+    fn test_human_readable_megabytes() {
+        let stats = SyncStats {
+            bytes_sent: 1024 * 1024,
+        };
+        assert_eq!(stats.human_readable(), "1.0 MB");
+
+        let stats = SyncStats {
+            bytes_sent: 5 * 1024 * 1024 + 512 * 1024,
+        };
+        assert_eq!(stats.human_readable(), "5.5 MB");
+    }
+
+    #[test]
+    fn test_human_readable_gigabytes() {
+        let stats = SyncStats {
+            bytes_sent: 1024 * 1024 * 1024,
+        };
+        assert_eq!(stats.human_readable(), "1.0 GB");
+
+        let stats = SyncStats {
+            bytes_sent: 2 * 1024 * 1024 * 1024 + 256 * 1024 * 1024,
+        };
+        // 2.25 GB rounds to 2.2 with banker's rounding (round half to even)
+        assert_eq!(stats.human_readable(), "2.2 GB");
+    }
+
+    #[test]
+    fn test_human_readable_zero() {
+        let stats = SyncStats { bytes_sent: 0 };
+        assert_eq!(stats.human_readable(), "0 B");
+    }
 }

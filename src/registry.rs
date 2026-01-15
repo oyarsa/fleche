@@ -578,3 +578,97 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
         "Invalid duration format: {s}. Use format like 7d, 24h, 30m"
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_duration_days() {
+        let d = parse_duration("7d").unwrap();
+        assert_eq!(d.num_days(), 7);
+
+        let d = parse_duration("1d").unwrap();
+        assert_eq!(d.num_days(), 1);
+
+        let d = parse_duration("30D").unwrap();
+        assert_eq!(d.num_days(), 30);
+    }
+
+    #[test]
+    fn test_parse_duration_hours() {
+        let d = parse_duration("24h").unwrap();
+        assert_eq!(d.num_hours(), 24);
+
+        let d = parse_duration("1h").unwrap();
+        assert_eq!(d.num_hours(), 1);
+
+        let d = parse_duration("48H").unwrap();
+        assert_eq!(d.num_hours(), 48);
+    }
+
+    #[test]
+    fn test_parse_duration_minutes() {
+        let d = parse_duration("30m").unwrap();
+        assert_eq!(d.num_minutes(), 30);
+
+        let d = parse_duration("60M").unwrap();
+        assert_eq!(d.num_minutes(), 60);
+    }
+
+    #[test]
+    fn test_parse_duration_with_whitespace() {
+        let d = parse_duration("  7d  ").unwrap();
+        assert_eq!(d.num_days(), 7);
+    }
+
+    #[test]
+    fn test_parse_duration_invalid() {
+        assert!(parse_duration("7").is_err());
+        assert!(parse_duration("d").is_err());
+        assert!(parse_duration("7x").is_err());
+        assert!(parse_duration("abc").is_err());
+        assert!(parse_duration("").is_err());
+    }
+
+    #[test]
+    fn test_job_status_to_string() {
+        assert_eq!(JobStatus::Pending.to_string(), "pending");
+        assert_eq!(JobStatus::Running.to_string(), "running");
+        assert_eq!(JobStatus::Completed.to_string(), "completed");
+        assert_eq!(JobStatus::Failed.to_string(), "failed");
+        assert_eq!(JobStatus::Cancelled.to_string(), "cancelled");
+    }
+
+    #[test]
+    fn test_job_status_from_str() {
+        assert_eq!("pending".parse::<JobStatus>().unwrap(), JobStatus::Pending);
+        assert_eq!("running".parse::<JobStatus>().unwrap(), JobStatus::Running);
+        assert_eq!(
+            "completed".parse::<JobStatus>().unwrap(),
+            JobStatus::Completed
+        );
+        assert_eq!("failed".parse::<JobStatus>().unwrap(), JobStatus::Failed);
+        assert_eq!(
+            "cancelled".parse::<JobStatus>().unwrap(),
+            JobStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_job_status_from_str_case_insensitive() {
+        assert_eq!("PENDING".parse::<JobStatus>().unwrap(), JobStatus::Pending);
+        assert_eq!("Running".parse::<JobStatus>().unwrap(), JobStatus::Running);
+        assert_eq!(
+            "COMPLETED".parse::<JobStatus>().unwrap(),
+            JobStatus::Completed
+        );
+    }
+
+    #[test]
+    fn test_job_status_from_str_invalid() {
+        assert!("unknown".parse::<JobStatus>().is_err());
+        assert!("".parse::<JobStatus>().is_err());
+        assert!("pend".parse::<JobStatus>().is_err());
+    }
+}

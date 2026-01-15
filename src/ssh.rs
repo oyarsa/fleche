@@ -168,3 +168,64 @@ pub fn shell_escape(s: &str) -> String {
 fn quote_single(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quote_single_simple() {
+        assert_eq!(quote_single("hello"), "'hello'");
+        assert_eq!(quote_single("path/to/file"), "'path/to/file'");
+    }
+
+    #[test]
+    fn test_quote_single_with_spaces() {
+        assert_eq!(quote_single("hello world"), "'hello world'");
+        assert_eq!(quote_single("path with spaces"), "'path with spaces'");
+    }
+
+    #[test]
+    fn test_quote_single_with_single_quotes() {
+        assert_eq!(quote_single("it's"), "'it'\\''s'");
+        assert_eq!(quote_single("don't"), "'don'\\''t'");
+    }
+
+    #[test]
+    fn test_quote_single_empty() {
+        assert_eq!(quote_single(""), "''");
+    }
+
+    #[test]
+    fn test_shell_escape_simple() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+        assert_eq!(shell_escape("/path/to/file"), "'/path/to/file'");
+    }
+
+    #[test]
+    fn test_shell_escape_tilde_expansion() {
+        // Tilde at start should be preserved for shell expansion
+        assert_eq!(shell_escape("~/path"), "~/'path'");
+        assert_eq!(shell_escape("~/path/to/file"), "~/'path/to/file'");
+    }
+
+    #[test]
+    fn test_shell_escape_tilde_not_at_start() {
+        // Tilde not at start should be quoted normally
+        assert_eq!(shell_escape("/home/~user"), "'/home/~user'");
+        assert_eq!(shell_escape("some~path"), "'some~path'");
+    }
+
+    #[test]
+    fn test_shell_escape_special_chars() {
+        assert_eq!(shell_escape("file with spaces"), "'file with spaces'");
+        assert_eq!(shell_escape("file$var"), "'file$var'");
+        assert_eq!(shell_escape("file;cmd"), "'file;cmd'");
+    }
+
+    #[test]
+    fn test_shell_escape_tilde_with_special_chars() {
+        assert_eq!(shell_escape("~/my files"), "~/'my files'");
+        assert_eq!(shell_escape("~/path's"), "~/'path'\\''s'");
+    }
+}

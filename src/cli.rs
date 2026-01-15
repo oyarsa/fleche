@@ -176,3 +176,47 @@ fn parse_key_value(s: &str) -> Result<(String, String), String> {
     }
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_key_value_simple() {
+        let (k, v) = parse_key_value("FOO=bar").unwrap();
+        assert_eq!(k, "FOO");
+        assert_eq!(v, "bar");
+    }
+
+    #[test]
+    fn test_parse_key_value_with_equals_in_value() {
+        // Value can contain equals signs
+        let (k, v) = parse_key_value("CONFIG=a=b=c").unwrap();
+        assert_eq!(k, "CONFIG");
+        assert_eq!(v, "a=b=c");
+    }
+
+    #[test]
+    fn test_parse_key_value_empty_value() {
+        let (k, v) = parse_key_value("EMPTY=").unwrap();
+        assert_eq!(k, "EMPTY");
+        assert_eq!(v, "");
+    }
+
+    #[test]
+    fn test_parse_key_value_spaces_in_value() {
+        let (k, v) = parse_key_value("MSG=hello world").unwrap();
+        assert_eq!(k, "MSG");
+        assert_eq!(v, "hello world");
+    }
+
+    #[test]
+    fn test_parse_key_value_no_equals() {
+        assert!(parse_key_value("NOEQUALS").is_err());
+    }
+
+    #[test]
+    fn test_parse_key_value_empty() {
+        assert!(parse_key_value("").is_err());
+    }
+}

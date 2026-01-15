@@ -112,6 +112,41 @@ pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
     Ok(slurm_id)
 }
 
+/// Parses a Slurm state string from squeue into a `JobStatus`.
+///
+/// squeue shows jobs that are still in the queue (pending or running).
+fn parse_squeue_state(state: &str) -> JobStatus {
+    match state.to_uppercase().as_str() {
+        "PENDING" | "CONFIGURING" | "RESV_DEL_HOLD" | "REQUEUE_FED" | "REQUEUE_HOLD"
+        | "REQUEUED" | "SPECIAL_EXIT" => JobStatus::Pending,
+        "RUNNING" | "COMPLETING" | "SIGNALING" | "STAGE_OUT" | "STOPPED" | "SUSPENDED" => {
+            JobStatus::Running
+        }
+        _ => JobStatus::Running, // Default to running if in queue
+    }
+}
+
+/// Parses a Slurm state string from sacct into a `JobStatus`.
+///
+/// sacct shows the final state of completed jobs. Handles state strings
+/// like "CANCELLED by 12345" by taking only the first word.
+#[allow(clippy::match_same_arms)] // Explicit mapping of known Slurm states is clearer
+fn parse_sacct_state(state: &str) -> JobStatus {
+    let state = state.to_uppercase();
+    // Remove any trailing state details like "CANCELLED by 12345"
+    let state = state.split_whitespace().next().unwrap_or(&state);
+
+    match state {
+        "COMPLETED" => JobStatus::Completed,
+        "FAILED" | "TIMEOUT" | "OUT_OF_MEMORY" | "NODE_FAIL" | "PREEMPTED" | "BOOT_FAIL"
+        | "DEADLINE" => JobStatus::Failed,
+        "CANCELLED" => JobStatus::Cancelled,
+        "PENDING" => JobStatus::Pending,
+        "RUNNING" => JobStatus::Running,
+        _ => JobStatus::Failed, // Unknown state, assume failed
+    }
+}
+
 /// Queries the status of a Slurm job.
 ///
 /// First checks `squeue` to see if the job is still in the queue (pending or running).
@@ -123,15 +158,7 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
         .await?;
 
     if success && !stdout.trim().is_empty() {
-        let state = stdout.trim().to_uppercase();
-        return Ok(match state.as_str() {
-            "PENDING" | "CONFIGURING" | "RESV_DEL_HOLD" | "REQUEUE_FED" | "REQUEUE_HOLD"
-            | "REQUEUED" | "SPECIAL_EXIT" => JobStatus::Pending,
-            "RUNNING" | "COMPLETING" | "SIGNALING" | "STAGE_OUT" | "STOPPED" | "SUSPENDED" => {
-                JobStatus::Running
-            }
-            _ => JobStatus::Running, // Default to running if in queue
-        });
+        return Ok(parse_squeue_state(stdout.trim()));
     }
 
     // Job not in queue, check sacct for final state
@@ -142,22 +169,7 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
         .await?;
 
     if success && !stdout.trim().is_empty() {
-        let state = stdout.trim().to_uppercase();
-        // Remove any trailing state details like "CANCELLED by 12345"
-        let state = state.split_whitespace().next().unwrap_or(&state);
-
-        return Ok(match state {
-            "COMPLETED" => JobStatus::Completed,
-            "FAILED" | "TIMEOUT" | "OUT_OF_MEMORY" | "NODE_FAIL" | "PREEMPTED" | "BOOT_FAIL"
-            | "DEADLINE" => JobStatus::Failed,
-            "CANCELLED" => JobStatus::Cancelled,
-            "PENDING" => JobStatus::Pending,
-            "RUNNING" => JobStatus::Running,
-            _ => {
-                // Unknown state, assume failed
-                JobStatus::Failed
-            }
-        });
+        return Ok(parse_sacct_state(stdout.trim()));
     }
 
     Err(FlecheError::Other(format!(
@@ -193,5 +205,169 @@ pub fn slurm_config_from_cli(
         constraint,
         nodes,
         exclude,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_escape_bash_value() {
+        assert_eq!(escape_bash_value("simple"), "simple");
+        assert_eq!(escape_bash_value("with\"quote"), "with\\\"quote");
+        assert_eq!(escape_bash_value("with$var"), "with\\$var");
+        assert_eq!(escape_bash_value("with`cmd`"), "with\\`cmd\\`");
+        assert_eq!(escape_bash_value("with\\backslash"), "with\\\\backslash");
+        assert_eq!(
+            escape_bash_value("all\"$`\\special"),
+            "all\\\"\\$\\`\\\\special"
+        );
+    }
+
+    #[test]
+    fn test_parse_squeue_state_pending() {
+        assert_eq!(parse_squeue_state("PENDING"), JobStatus::Pending);
+        assert_eq!(parse_squeue_state("pending"), JobStatus::Pending);
+        assert_eq!(parse_squeue_state("CONFIGURING"), JobStatus::Pending);
+        assert_eq!(parse_squeue_state("REQUEUED"), JobStatus::Pending);
+    }
+
+    #[test]
+    fn test_parse_squeue_state_running() {
+        assert_eq!(parse_squeue_state("RUNNING"), JobStatus::Running);
+        assert_eq!(parse_squeue_state("running"), JobStatus::Running);
+        assert_eq!(parse_squeue_state("COMPLETING"), JobStatus::Running);
+        assert_eq!(parse_squeue_state("SUSPENDED"), JobStatus::Running);
+    }
+
+    #[test]
+    fn test_parse_squeue_state_unknown_defaults_to_running() {
+        // Unknown states in queue default to running
+        assert_eq!(parse_squeue_state("UNKNOWN"), JobStatus::Running);
+        assert_eq!(parse_squeue_state("WEIRD_STATE"), JobStatus::Running);
+    }
+
+    #[test]
+    fn test_parse_sacct_state_completed() {
+        assert_eq!(parse_sacct_state("COMPLETED"), JobStatus::Completed);
+        assert_eq!(parse_sacct_state("completed"), JobStatus::Completed);
+    }
+
+    #[test]
+    fn test_parse_sacct_state_failed() {
+        assert_eq!(parse_sacct_state("FAILED"), JobStatus::Failed);
+        assert_eq!(parse_sacct_state("TIMEOUT"), JobStatus::Failed);
+        assert_eq!(parse_sacct_state("OUT_OF_MEMORY"), JobStatus::Failed);
+        assert_eq!(parse_sacct_state("NODE_FAIL"), JobStatus::Failed);
+    }
+
+    #[test]
+    fn test_parse_sacct_state_cancelled() {
+        assert_eq!(parse_sacct_state("CANCELLED"), JobStatus::Cancelled);
+        // Handles "CANCELLED by 12345" format
+        assert_eq!(
+            parse_sacct_state("CANCELLED by 12345"),
+            JobStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_parse_sacct_state_unknown_defaults_to_failed() {
+        assert_eq!(parse_sacct_state("UNKNOWN"), JobStatus::Failed);
+        assert_eq!(parse_sacct_state("WEIRD_STATE"), JobStatus::Failed);
+    }
+
+    #[test]
+    fn test_generate_sbatch_script_basic() {
+        let job = ResolvedJob {
+            name: "test".to_string(),
+            command: "echo hello".to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            slurm: SlurmConfig::default(),
+            env: HashMap::new(),
+        };
+
+        let script = generate_sbatch_script("test-123", &job);
+
+        assert!(script.starts_with("#!/bin/bash\n"));
+        assert!(script.contains("#SBATCH --job-name=test-123"));
+        assert!(script.contains("#SBATCH --output=job.out"));
+        assert!(script.contains("#SBATCH --error=job.err"));
+        assert!(script.contains("echo hello"));
+    }
+
+    #[test]
+    fn test_generate_sbatch_script_with_slurm_options() {
+        let job = ResolvedJob {
+            name: "test".to_string(),
+            command: "python train.py".to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            slurm: SlurmConfig {
+                partition: Some("gpu".to_string()),
+                time: Some("8:00:00".to_string()),
+                gpus: Some(2),
+                cpus: Some(16),
+                memory: Some("64G".to_string()),
+                constraint: Some("a100".to_string()),
+                nodes: Some(1),
+                exclude: Some("node01".to_string()),
+            },
+            env: HashMap::new(),
+        };
+
+        let script = generate_sbatch_script("train-456", &job);
+
+        assert!(script.contains("#SBATCH --partition=gpu"));
+        assert!(script.contains("#SBATCH --time=8:00:00"));
+        assert!(script.contains("#SBATCH --gpus=2"));
+        assert!(script.contains("#SBATCH --cpus-per-task=16"));
+        assert!(script.contains("#SBATCH --mem=64G"));
+        assert!(script.contains("#SBATCH --constraint=a100"));
+        assert!(script.contains("#SBATCH --nodes=1"));
+        assert!(script.contains("#SBATCH --exclude=node01"));
+    }
+
+    #[test]
+    fn test_generate_sbatch_script_with_env_vars() {
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        env.insert("PATH_VAR".to_string(), "/some/path".to_string());
+
+        let job = ResolvedJob {
+            name: "test".to_string(),
+            command: "echo $FOO".to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            slurm: SlurmConfig::default(),
+            env,
+        };
+
+        let script = generate_sbatch_script("test-789", &job);
+
+        assert!(script.contains("export FOO=\"bar\""));
+        assert!(script.contains("export PATH_VAR=\"/some/path\""));
+    }
+
+    #[test]
+    fn test_generate_sbatch_script_escapes_env_values() {
+        let mut env = HashMap::new();
+        env.insert("QUOTED".to_string(), "value\"with\"quotes".to_string());
+
+        let job = ResolvedJob {
+            name: "test".to_string(),
+            command: "echo test".to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            slurm: SlurmConfig::default(),
+            env,
+        };
+
+        let script = generate_sbatch_script("test-esc", &job);
+
+        assert!(script.contains("export QUOTED=\"value\\\"with\\\"quotes\""));
     }
 }
