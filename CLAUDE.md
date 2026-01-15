@@ -5,9 +5,16 @@ Project-specific instructions for working on fleche.
 ## Before Completing Any Task
 
 1. Run `just check-all` (runs clippy, rustfmt check, and tests)
-2. Bump the version in `Cargo.toml` (see Versioning below)
-3. Add an entry to `CHANGELOG.md` describing what changed
-4. Commit, create a git tag (e.g., `v3.1.0`), and push both
+2. Commit changes (do NOT bump version or tag unless explicitly asked)
+
+## Releasing
+
+Only release when explicitly requested (e.g., "release", "cut a release", "bump version").
+
+When releasing:
+1. Bump the version in `Cargo.toml` (see Versioning below)
+2. Add an entry to `CHANGELOG.md` describing what changed since last release
+3. Commit, create a git tag (e.g., `v3.1.0`), and push both
 
 ## Commits
 
