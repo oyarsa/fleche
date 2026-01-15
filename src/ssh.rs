@@ -109,6 +109,14 @@ impl SshClient {
 }
 
 fn shell_escape(s: &str) -> String {
-    // Simple escaping for paths - wrap in single quotes and escape any single quotes
+    // Handle tilde expansion: ~/... -> ~/'...' (tilde must be unquoted to expand)
+    if let Some(rest) = s.strip_prefix("~/") {
+        format!("~/{}", quote_single(rest))
+    } else {
+        quote_single(s)
+    }
+}
+
+fn quote_single(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
