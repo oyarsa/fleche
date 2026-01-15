@@ -369,40 +369,101 @@ async fn refresh_active_job_statuses(registry: &Registry, debug: bool) -> Result
     Ok(())
 }
 
-/// Cancels a running or pending Slurm job.
-pub async fn cancel_slurm_job(job_id: &str, debug: bool) -> Result<()> {
+/// Cancels running or pending Slurm jobs.
+///
+/// Can cancel a single job by ID, or all active jobs with `--all`.
+/// When cancelling multiple jobs, requires confirmation unless `--yes` is passed.
+pub async fn cancel_jobs(
+    job_id: Option<&str>,
+    all: bool,
+    skip_confirm: bool,
+    debug: bool,
+) -> Result<()> {
     let registry = Registry::open()?;
-    let job = registry.get_job(job_id)?;
 
-    if matches!(
-        job.status,
-        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
-    ) {
-        return Err(FlecheError::CannotCancel(
-            job_id.to_string(),
-            job.status.to_string(),
-        ));
-    }
-
-    let Some(ref slurm_id) = job.slurm_id else {
-        return Err(FlecheError::Other("Job has no Slurm ID".to_string()));
+    let jobs_to_cancel: Vec<JobRecord> = if let Some(id) = job_id {
+        let job = registry.get_job(id)?;
+        if matches!(
+            job.status,
+            JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+        ) {
+            return Err(FlecheError::CannotCancel(
+                id.to_string(),
+                job.status.to_string(),
+            ));
+        }
+        vec![job]
+    } else if all {
+        registry.list_active_jobs()?
+    } else {
+        println!("Specify a job ID or --all");
+        return Ok(());
     };
 
-    let ssh = SshClient::new(&job.remote_host, debug);
-    cancel_job(&ssh, slurm_id).await?;
-    registry.update_status(job_id, JobStatus::Cancelled)?;
-    println!("{} Job {} cancelled", style("✓").green(), job_id);
+    if jobs_to_cancel.is_empty() {
+        println!("No active jobs to cancel.");
+        return Ok(());
+    }
+
+    // Show jobs and confirm if multiple
+    if jobs_to_cancel.len() > 1 || all {
+        println!("Jobs to cancel:");
+        for job in &jobs_to_cancel {
+            println!(
+                "  {} ({}) - {}",
+                job.id,
+                style(&job.status).yellow(),
+                job.job_name
+            );
+        }
+        println!();
+
+        if !skip_confirm && !confirm("Cancel these jobs?")? {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    for job in &jobs_to_cancel {
+        let Some(ref slurm_id) = job.slurm_id else {
+            eprintln!("  Warning: Job {} has no Slurm ID, skipping", job.id);
+            continue;
+        };
+
+        let ssh = SshClient::new(&job.remote_host, debug);
+        if let Err(e) = cancel_job(&ssh, slurm_id).await {
+            eprintln!("  Warning: Could not cancel {}: {e}", job.id);
+            continue;
+        }
+        registry.update_status(&job.id, JobStatus::Cancelled)?;
+        println!("{} Job {} cancelled", style("✓").green(), job.id);
+    }
 
     Ok(())
+}
+
+/// Prompts the user for confirmation. Returns true if they answer 'y' or 'yes'.
+fn confirm(prompt: &str) -> Result<bool> {
+    use std::io::{self, Write};
+
+    print!("{prompt} [y/N] ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    Ok(matches!(input.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 /// Cleans up jobs by removing them from the registry and deleting remote files.
 ///
 /// Can clean a specific job, all finished jobs, or jobs older than a duration.
-pub async fn clean_job(
+/// When cleaning multiple jobs, requires confirmation unless `--yes` is passed.
+pub async fn clean_jobs(
     job_id: Option<&str>,
     all: bool,
     older_than: Option<&str>,
+    skip_confirm: bool,
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -424,21 +485,41 @@ pub async fn clean_job(
         return Ok(());
     }
 
+    // Show jobs and confirm if multiple
+    if jobs_to_clean.len() > 1 || all || older_than.is_some() {
+        println!("Jobs to clean:");
+        for job in &jobs_to_clean {
+            println!(
+                "  {} ({}) - {}",
+                job.id,
+                style(&job.status).cyan(),
+                job.job_name
+            );
+        }
+        println!();
+
+        if !skip_confirm && !confirm("Delete these jobs and their remote files?")? {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
     for job in &jobs_to_clean {
-        println!("Cleaning {}...", job.id);
+        print!("Cleaning {}... ", job.id);
 
         // Delete remote directory
         let ssh = SshClient::new(&job.remote_host, debug);
         if let Err(e) = ssh.rm_rf(&job.remote_path).await {
-            eprintln!("  Warning: Could not delete remote directory: {e}");
+            eprintln!("warning: could not delete remote directory: {e}");
         }
 
         // Delete from registry
         registry.delete_job(&job.id)?;
+        println!("{}", style("done").green());
     }
 
     println!(
-        "{} Cleaned {} job(s)",
+        "\n{} Cleaned {} job(s)",
         style("✓").green(),
         jobs_to_clean.len()
     );

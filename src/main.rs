@@ -136,16 +136,24 @@ async fn run() -> Result<()> {
             .await?;
         }
 
-        Commands::Cancel { job_id } => {
-            job::cancel_slurm_job(&job_id, cli.debug).await?;
+        Commands::Cancel { job_id, all, yes } => {
+            job::cancel_jobs(job_id.as_deref(), all, yes, cli.debug).await?;
         }
 
         Commands::Clean {
             job_id,
             all,
             older_than,
+            yes,
         } => {
-            job::clean_job(job_id.as_deref(), all, older_than.as_deref(), cli.debug).await?;
+            job::clean_jobs(
+                job_id.as_deref(),
+                all,
+                older_than.as_deref(),
+                yes,
+                cli.debug,
+            )
+            .await?;
         }
 
         Commands::Init => {

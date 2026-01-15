@@ -170,7 +170,9 @@ fleche sync <job-id> --partial
 | `fleche sync <job-id>` | Pull output files |
 | `fleche list` | List all jobs |
 | `fleche cancel <job-id>` | Cancel a job |
+| `fleche cancel --all [-y]` | Cancel all running/pending jobs |
 | `fleche clean [job-id]` | Remove job and remote files |
+| `fleche clean --all [-y]` | Clean all finished jobs |
 | `fleche init` | Create starter config |
 | `fleche check` | Validate config |
 

@@ -148,8 +148,16 @@ pub enum Commands {
 
     /// Cancel a running or pending job
     Cancel {
-        /// Job ID
-        job_id: String,
+        /// Job ID (optional with --all)
+        job_id: Option<String>,
+
+        /// Cancel all running/pending jobs
+        #[arg(long)]
+        all: bool,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 
     /// Remove job from registry and delete remote directory
@@ -164,6 +172,10 @@ pub enum Commands {
         /// Clean jobs older than duration (e.g., 7d, 24h)
         #[arg(long)]
         older_than: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 
     /// Create a starter fleche.toml in current directory

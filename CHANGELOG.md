@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.6.0] - 2026-01-15
+
+### Added
+- `fleche cancel --all` to cancel all running/pending jobs with confirmation
+- `fleche clean --all` now requires confirmation before deleting (use `-y` to skip)
+- `-y/--yes` flag for both cancel and clean to skip confirmation prompts
+
 ## [4.5.0] - 2026-01-15
 
 ### Added
