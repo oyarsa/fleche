@@ -4,7 +4,10 @@ Project-specific instructions for working on fleche.
 
 ## Before Completing Any Task
 
-Always run `just check-all` before saying you're done. This runs clippy, rustfmt check, and tests.
+1. Run `just check-all` (runs clippy, rustfmt check, and tests)
+2. Bump the version in `Cargo.toml` (see Versioning below)
+3. Add an entry to `CHANGELOG.md` describing what changed
+4. Commit, create a git tag (e.g., `v3.1.0`), and push both
 
 ## Commits
 
