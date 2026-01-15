@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.4] - 2026-01-15
+
+### Added
+- SSH command execution timeout (60s) with automatic retry on stale socket
+- Auto-cleanup of stale ControlMaster sockets on timeout
+
 ## [5.0.3] - 2026-01-15
 
 ### Fixed

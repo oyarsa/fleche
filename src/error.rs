@@ -37,6 +37,10 @@ pub enum FlecheError {
     #[error("SSH command failed: {0}")]
     SshCommand(String),
 
+    /// An SSH command timed out (likely stale `ControlMaster` socket).
+    #[error("SSH timeout: {0}")]
+    SshTimeout(String),
+
     /// An rsync file transfer operation failed.
     #[error("Rsync failed: {0}")]
     RsyncFailed(String),

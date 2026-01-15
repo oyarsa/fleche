@@ -26,6 +26,10 @@ const MAX_RETRIES: u32 = 3;
 /// Base delay for exponential backoff (doubles each retry).
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
+/// Timeout for SSH command execution (not connection - that's `ConnectTimeout`).
+/// If a command takes longer than this, likely the socket is stale.
+const EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Returns the path to the SSH log file (`~/.config/fleche/ssh.log`).
 fn ssh_log_path() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("fleche").join("ssh.log"))
@@ -111,6 +115,38 @@ impl SshClient {
         }
     }
 
+    /// Kills the `ControlMaster` socket for this host, forcing a fresh connection.
+    ///
+    /// This is useful when a socket becomes stale (e.g., after network issues).
+    async fn kill_control_socket(&self) {
+        let socket_dir = ssh_socket_dir();
+        let control_path = socket_dir.join("%r@%h-%p");
+
+        // Try graceful exit first
+        let _ = Command::new("ssh")
+            .args(["-O", "exit"])
+            .args(["-o", &format!("ControlPath=\"{}\"", control_path.display())])
+            .arg(&self.host)
+            .output()
+            .await;
+
+        // Also try to remove any matching socket files directly
+        if let Ok(entries) = std::fs::read_dir(&socket_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_string_lossy().contains(&self.host) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+
+        append_to_ssh_log(
+            &self.host,
+            "[socket cleanup]",
+            "Killed stale control socket",
+        );
+    }
+
     /// Returns the base SSH arguments including `ControlMaster` for connection multiplexing.
     #[allow(clippy::unused_self)]
     fn ssh_args(&self) -> Vec<String> {
@@ -148,8 +184,22 @@ impl SshClient {
     /// Executes a command on the remote host and returns its stdout.
     ///
     /// Automatically retries on connection failures with exponential backoff.
+    /// If a command times out, kills the control socket and retries once.
     /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec(&self, command: &str) -> Result<String> {
+        match self.exec_inner(command).await {
+            Ok(result) => Ok(result),
+            Err(FlecheError::SshTimeout(_)) => {
+                // Timeout likely means stale socket - kill it and retry once
+                self.kill_control_socket().await;
+                self.exec_inner(command).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Inner implementation of exec with retries and timeout.
+    async fn exec_inner(&self, command: &str) -> Result<String> {
         let mut last_error = None;
 
         for attempt in 0..=MAX_RETRIES {
@@ -163,13 +213,30 @@ impl SshClient {
                 tokio::time::sleep(delay).await;
             }
 
-            let output = Command::new("ssh")
+            let output_future = Command::new("ssh")
                 .args(self.ssh_args())
                 .arg(&self.host)
                 .arg(command)
-                .output()
-                .await
-                .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
+                .output();
+
+            let output = match tokio::time::timeout(EXEC_TIMEOUT, output_future).await {
+                Ok(Ok(output)) => output,
+                Ok(Err(e)) => {
+                    return Err(FlecheError::SshConnection(format!(
+                        "Failed to execute ssh: {e}"
+                    )));
+                }
+                Err(_) => {
+                    append_to_ssh_log(
+                        &self.host,
+                        command,
+                        &format!("Command timed out after {EXEC_TIMEOUT:?}"),
+                    );
+                    return Err(FlecheError::SshTimeout(format!(
+                        "SSH command timed out after {EXEC_TIMEOUT:?}: {command}"
+                    )));
+                }
+            };
 
             let stderr = String::from_utf8_lossy(&output.stderr);
             append_to_ssh_log(&self.host, command, &stderr);
@@ -206,8 +273,22 @@ impl SshClient {
     /// Returns a tuple of (success, stdout, stderr) regardless of exit status.
     /// Only returns an error if the SSH connection itself fails.
     /// Automatically retries on connection failures with exponential backoff.
+    /// If a command times out, kills the control socket and retries once.
     /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec_allow_failure(&self, command: &str) -> Result<(bool, String, String)> {
+        match self.exec_allow_failure_inner(command).await {
+            Ok(result) => Ok(result),
+            Err(FlecheError::SshTimeout(_)) => {
+                // Timeout likely means stale socket - kill it and retry once
+                self.kill_control_socket().await;
+                self.exec_allow_failure_inner(command).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Inner implementation of `exec_allow_failure` with retries and timeout.
+    async fn exec_allow_failure_inner(&self, command: &str) -> Result<(bool, String, String)> {
         for attempt in 0..=MAX_RETRIES {
             if attempt > 0 {
                 let delay = RETRY_BASE_DELAY * 2_u32.pow(attempt - 1);
@@ -219,13 +300,30 @@ impl SshClient {
                 tokio::time::sleep(delay).await;
             }
 
-            let output = Command::new("ssh")
+            let output_future = Command::new("ssh")
                 .args(self.ssh_args())
                 .arg(&self.host)
                 .arg(command)
-                .output()
-                .await
-                .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
+                .output();
+
+            let output = match tokio::time::timeout(EXEC_TIMEOUT, output_future).await {
+                Ok(Ok(output)) => output,
+                Ok(Err(e)) => {
+                    return Err(FlecheError::SshConnection(format!(
+                        "Failed to execute ssh: {e}"
+                    )));
+                }
+                Err(_) => {
+                    append_to_ssh_log(
+                        &self.host,
+                        command,
+                        &format!("Command timed out after {EXEC_TIMEOUT:?}"),
+                    );
+                    return Err(FlecheError::SshTimeout(format!(
+                        "SSH command timed out after {EXEC_TIMEOUT:?}: {command}"
+                    )));
+                }
+            };
 
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -246,13 +344,25 @@ impl SshClient {
         }
 
         // If we get here, all retries failed - return the last attempt's result
-        let output = Command::new("ssh")
+        let output_future = Command::new("ssh")
             .args(self.ssh_args())
             .arg(&self.host)
             .arg(command)
-            .output()
-            .await
-            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
+            .output();
+
+        let output = match tokio::time::timeout(EXEC_TIMEOUT, output_future).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                return Err(FlecheError::SshConnection(format!(
+                    "Failed to execute ssh: {e}"
+                )));
+            }
+            Err(_) => {
+                return Err(FlecheError::SshTimeout(format!(
+                    "SSH command timed out after {EXEC_TIMEOUT:?}: {command}"
+                )));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
