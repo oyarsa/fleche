@@ -484,18 +484,29 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str) -> Result<(
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             println!();
+            let message = match status {
+                JobStatus::Completed => "Job completed successfully.",
+                JobStatus::Failed => "Job failed.",
+                JobStatus::Cancelled => "Job cancelled.",
+                _ => "Job finished.",
+            };
+
+            // Print status message
             match status {
                 JobStatus::Completed => {
-                    println!("{}", style("Job completed successfully.").green().bold());
+                    println!("{}", style(message).green().bold());
                 }
                 JobStatus::Failed => {
-                    println!("{}", style("Job failed.").red().bold());
+                    println!("{}", style(message).red().bold());
                 }
                 JobStatus::Cancelled => {
-                    println!("{}", style("Job cancelled.").yellow().bold());
+                    println!("{}", style(message).yellow().bold());
                 }
                 _ => {}
             }
+
+            // Send terminal notification (OSC 9)
+            print!("\x1b]9;{message}\x07");
         }
     }
 
