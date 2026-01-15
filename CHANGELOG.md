@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.5.0] - 2026-01-15
+
+### Added
+- SSH connection timeout (`ConnectTimeout=30`) to fail fast on unreachable hosts
+- SSH keepalive (`ServerAliveInterval=15`, `ServerAliveCountMax=3`) to detect dead connections
+- SSH batch mode (`BatchMode=yes`) to fail immediately on MFA/password prompts instead of hanging
+
 ## [4.4.0] - 2026-01-15
 
 ### Fixed

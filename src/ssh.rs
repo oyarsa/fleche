@@ -118,6 +118,16 @@ impl SshClient {
             "-v".to_string(),
             "-o".to_string(),
             "ClearAllForwardings=yes".to_string(),
+            // Timeout options to prevent hanging
+            "-o".to_string(),
+            "ConnectTimeout=30".to_string(),
+            "-o".to_string(),
+            "ServerAliveInterval=15".to_string(),
+            "-o".to_string(),
+            "ServerAliveCountMax=3".to_string(),
+            // Disable interactive prompts (MFA, password) - fail instead of hang
+            "-o".to_string(),
+            "BatchMode=yes".to_string(),
         ];
 
         // Add `ControlMaster` options for connection multiplexing

@@ -11,7 +11,16 @@ use tokio::process::Command;
 
 /// Returns the SSH command for rsync with `ControlMaster` options for connection multiplexing.
 fn rsync_ssh_cmd() -> String {
-    let mut cmd = "ssh -v -o ClearAllForwardings=yes".to_string();
+    // Base command with timeout and batch mode options
+    let mut cmd = concat!(
+        "ssh -v",
+        " -o ClearAllForwardings=yes",
+        " -o ConnectTimeout=30",
+        " -o ServerAliveInterval=15",
+        " -o ServerAliveCountMax=3",
+        " -o BatchMode=yes",
+    )
+    .to_string();
 
     // Add `ControlMaster` options using short /tmp path (Unix sockets have ~104 byte limit)
     let uid = unsafe { libc::getuid() };
