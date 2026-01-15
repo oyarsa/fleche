@@ -116,7 +116,7 @@ impl SshClient {
             let control_path = socket_dir.join("%r@%h-%p");
             args.extend([
                 "-o".to_string(),
-                "`ControlMaster`=auto".to_string(),
+                "ControlMaster=auto".to_string(),
                 "-o".to_string(),
                 format!("ControlPath={}", control_path.display()),
                 "-o".to_string(),

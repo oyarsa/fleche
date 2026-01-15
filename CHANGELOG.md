@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.0] - 2026-01-15
+
+### Fixed
+- SSH `ControlMaster` option now uses correct case (was incorrectly backtick-quoted)
+
 ## [4.1.0] - 2026-01-15
 
 ### Fixed
