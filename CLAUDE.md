@@ -17,6 +17,7 @@ Always run `just check-all` before saying you're done. This runs clippy, rustfmt
 - Bump version in `Cargo.toml` when making changes (batch related changes together)
 - **Minor** (0.x.0): new features, significant changes
 - **Patch** (0.0.x): bug fixes, refactors, documentation, tests
+- Update `CHANGELOG.md` when bumping version (Added/Changed/Fixed/Removed sections)
 
 ## Code Style
 
