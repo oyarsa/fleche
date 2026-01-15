@@ -481,6 +481,57 @@ impl Registry {
         Ok(jobs_with_tags)
     }
 
+    /// Lists all active jobs (pending or running).
+    ///
+    /// Used to refresh job statuses from Slurm before displaying.
+    pub fn list_active_jobs(&self) -> Result<Vec<JobRecord>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT id, slurm_id, job_name, project_name, project_path,
+                   remote_host, remote_path, command, status, config_json,
+                   created_at, updated_at, outputs_synced
+            FROM jobs
+            WHERE status IN ('pending', 'running')
+            ORDER BY created_at DESC
+            ",
+        )?;
+
+        let jobs = stmt
+            .query_map([], |row| {
+                Ok(JobRecord {
+                    id: row.get(0)?,
+                    slurm_id: row.get(1)?,
+                    job_name: row.get(2)?,
+                    project_name: row.get(3)?,
+                    project_path: row.get(4)?,
+                    remote_host: row.get(5)?,
+                    remote_path: row.get(6)?,
+                    command: row.get(7)?,
+                    status: row
+                        .get::<_, String>(8)?
+                        .parse()
+                        .unwrap_or(JobStatus::Pending),
+                    config_json: row.get(9)?,
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    outputs_synced: row.get::<_, i32>(12)? == 1,
+                    tags: HashMap::new(),
+                })
+            })?
+            .filter_map(std::result::Result::ok)
+            .collect::<Vec<_>>();
+
+        let mut jobs_with_tags = Vec::new();
+        for job in jobs {
+            let tags = self.get_tags(&job.id)?;
+            jobs_with_tags.push(JobRecord { tags, ..job });
+        }
+
+        Ok(jobs_with_tags)
+    }
+
     /// Deletes a job from the registry.
     ///
     /// Tags are automatically deleted via the CASCADE constraint.

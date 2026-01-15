@@ -338,7 +338,9 @@ pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
 }
 
 /// Lists jobs from the registry with optional filters.
-pub fn list_jobs(
+///
+/// Automatically refreshes the status of pending/running jobs from Slurm.
+pub async fn list_jobs(
     project_filter: Option<&str>,
     status_filter: Option<&str>,
     tags: &[(String, String)],
@@ -347,6 +349,9 @@ pub fn list_jobs(
     completed: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
+
+    // Refresh status for all pending/running jobs before applying filters
+    refresh_active_job_statuses(&registry).await?;
 
     // Determine status filter
     let status = if failed {
@@ -369,6 +374,24 @@ pub fn list_jobs(
     }
 
     print_job_table(&jobs);
+
+    Ok(())
+}
+
+/// Refreshes the status of all pending/running jobs from Slurm.
+async fn refresh_active_job_statuses(registry: &Registry) -> Result<()> {
+    let active_jobs = registry.list_active_jobs()?;
+
+    for job in active_jobs {
+        if let Some(ref slurm_id) = job.slurm_id {
+            let ssh = SshClient::new(&job.remote_host);
+            if let Ok(status) = get_job_status(&ssh, slurm_id).await {
+                if status != job.status {
+                    registry.update_status(&job.id, status)?;
+                }
+            }
+        }
+    }
 
     Ok(())
 }

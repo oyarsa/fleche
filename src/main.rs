@@ -129,7 +129,8 @@ async fn run() -> Result<()> {
                 failed,
                 running,
                 completed,
-            )?;
+            )
+            .await?;
         }
 
         Commands::Cancel { job_id } => {
