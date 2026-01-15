@@ -19,7 +19,7 @@ fn rsync_ssh_cmd() -> String {
         let _ = std::fs::create_dir_all(&socket_dir);
         let control_path = socket_dir.join("%r@%h-%p");
         cmd.push_str(&format!(
-            " -o ControlMaster=auto -o ControlPath={} -o ControlPersist=600",
+            " -o ControlMaster=auto -o 'ControlPath={}' -o ControlPersist=600",
             control_path.display()
         ));
     }

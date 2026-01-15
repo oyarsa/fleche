@@ -118,7 +118,7 @@ impl SshClient {
                 "-o".to_string(),
                 "ControlMaster=auto".to_string(),
                 "-o".to_string(),
-                format!("ControlPath={}", control_path.display()),
+                format!("ControlPath=\"{}\"", control_path.display()),
                 "-o".to_string(),
                 "ControlPersist=600".to_string(),
             ]);

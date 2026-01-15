@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.3.0] - 2026-01-15
+
+### Fixed
+- Quote `ControlPath` value in SSH options to handle special characters in path
+
 ## [4.2.0] - 2026-01-15
 
 ### Fixed
