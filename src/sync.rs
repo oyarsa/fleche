@@ -47,7 +47,7 @@ pub async fn sync_to_remote(
     respect_gitignore: bool,
 ) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
-    cmd.args(["-avz", "--delete", "--stats"]);
+    cmd.args(["-avz", "--delete", "--stats", "--exclude=.git"]);
 
     if respect_gitignore {
         cmd.arg("--filter=:- .gitignore");
@@ -77,7 +77,7 @@ pub async fn estimate_sync_size(source: &Path, respect_gitignore: bool) -> Resul
     let mut cmd = Command::new("rsync");
     // --dry-run doesn't transfer, just calculates
     // Using /dev/null as dest since we just want to measure source
-    cmd.args(["-avz", "--dry-run", "--stats"]);
+    cmd.args(["-avz", "--dry-run", "--stats", "--exclude=.git"]);
 
     if respect_gitignore {
         cmd.arg("--filter=:- .gitignore");
