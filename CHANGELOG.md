@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] - 2026-01-15
+
+### Added
+- `--tail/-n` option to limit logs output to last N lines
+- `--stdout` flag to show only stdout in logs
+
+### Changed
+- `fleche logs` now shows both stdout and stderr by default
+- `--stderr` flag now means "show only stderr" (previously was "show stderr instead of stdout")
+
 ## [2.0.0] - 2025-01-15
 
 ### Added
