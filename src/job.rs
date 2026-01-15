@@ -14,10 +14,8 @@ use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::{cancel_job, generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::SshClient;
 use crate::sync::{
-    download_outputs as sync_download_outputs,
-    download_path as sync_download_path,
-    sync_inputs_to_workspace,
-    sync_project_to_workspace,
+    download_outputs as sync_download_outputs, download_path as sync_download_path,
+    sync_inputs_to_workspace, sync_project_to_workspace,
 };
 use chrono::Utc;
 use console::style;
@@ -91,7 +89,10 @@ pub async fn run_job(
     let script = generate_sbatch_script(&job_id, &job, &workspace, &job_dir);
 
     if dry_run {
-        println!("{}", style("[dry-run] Generated sbatch script:").bold().yellow());
+        println!(
+            "{}",
+            style("[dry-run] Generated sbatch script:").bold().yellow()
+        );
         println!();
         println!("{script}");
         return Ok(());
@@ -110,22 +111,15 @@ pub async fn run_job(
     // Sync project code to workspace
     print!("{} Syncing project code...", style("[2/4]").bold().dim());
     let _ = std::io::stdout().flush();
-    let stats = sync_project_to_workspace(
-        &config.project_path,
-        &config.remote.host,
-        &workspace,
-    )
-    .await?;
+    let stats =
+        sync_project_to_workspace(&config.project_path, &config.remote.host, &workspace).await?;
     println!(" {}", style(format!("({})", stats.human_readable())).dim());
 
     // Sync inputs to workspace
     if job.inputs.is_empty() {
         println!("{} No input files to sync", style("[3/4]").bold().dim());
     } else {
-        print!(
-            "{} Syncing input files...",
-            style("[3/4]").bold().dim()
-        );
+        print!("{} Syncing input files...", style("[3/4]").bold().dim());
         let _ = std::io::stdout().flush();
         let stats = sync_inputs_to_workspace(
             &config.project_path,
@@ -134,10 +128,7 @@ pub async fn run_job(
             &workspace,
         )
         .await?;
-        println!(
-            " {}",
-            style(format!("({})", stats.human_readable())).dim()
-        );
+        println!(" {}", style(format!("({})", stats.human_readable())).dim());
     }
 
     // Upload script to job directory
@@ -197,12 +188,8 @@ pub async fn exec_command(
     // Sync project code to workspace
     print!("{} Syncing project code...", style("[2/3]").bold().dim());
     let _ = std::io::stdout().flush();
-    let stats = sync_project_to_workspace(
-        &config.project_path,
-        &config.remote.host,
-        &workspace,
-    )
-    .await?;
+    let stats =
+        sync_project_to_workspace(&config.project_path, &config.remote.host, &workspace).await?;
     println!(" {}", style(format!("({})", stats.human_readable())).dim());
 
     // Sync global inputs
@@ -215,10 +202,7 @@ pub async fn exec_command(
     if global_inputs.is_empty() {
         println!("{} Executing command...", style("[3/3]").bold().dim());
     } else {
-        print!(
-            "{} Syncing input files...",
-            style("[3/3]").bold().dim()
-        );
+        print!("{} Syncing input files...", style("[3/3]").bold().dim());
         let _ = std::io::stdout().flush();
         let stats = sync_inputs_to_workspace(
             &config.project_path,
@@ -227,10 +211,7 @@ pub async fn exec_command(
             &workspace,
         )
         .await?;
-        println!(
-            " {}",
-            style(format!("({})", stats.human_readable())).dim()
-        );
+        println!(" {}", style(format!("({})", stats.human_readable())).dim());
     }
 
     // Build environment string
@@ -331,8 +312,9 @@ pub async fn show_logs(
     let job = if let Some(id) = job_id {
         registry.get_job(id)?
     } else {
-        registry.get_most_recent_job(None)?
-            .ok_or_else(|| FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string()))?
+        registry.get_most_recent_job(None)?.ok_or_else(|| {
+            FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
+        })?
     };
 
     let ssh = SshClient::new(&job.remote_host, debug);
@@ -400,8 +382,9 @@ pub async fn download_outputs(
     let job = if let Some(id) = job_id {
         registry.get_job(id)?
     } else {
-        registry.get_most_recent_job(None)?
-            .ok_or_else(|| FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string()))?
+        registry.get_most_recent_job(None)?.ok_or_else(|| {
+            FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
+        })?
     };
 
     // Check job status
@@ -412,7 +395,8 @@ pub async fn download_outputs(
             if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
                 eprintln!(
                     "{}",
-                    style("Warning: Job is still running. Use --partial to download anyway.").yellow()
+                    style("Warning: Job is still running. Use --partial to download anyway.")
+                        .yellow()
                 );
                 return Ok(());
             }
@@ -437,7 +421,13 @@ pub async fn download_outputs(
         for output in &resolved.outputs {
             println!("  {output}");
         }
-        sync_download_outputs(&job.remote_host, &job.remote_path, &resolved.outputs, &local_path).await?;
+        sync_download_outputs(
+            &job.remote_host,
+            &job.remote_path,
+            &resolved.outputs,
+            &local_path,
+        )
+        .await?;
     }
 
     registry.set_outputs_synced(&job.id)?;
@@ -596,7 +586,12 @@ pub async fn clean_jobs(
     }
 
     if clean_workspace {
-        println!("{}", style("WARNING: This will also delete the shared workspace!").red().bold());
+        println!(
+            "{}",
+            style("WARNING: This will also delete the shared workspace!")
+                .red()
+                .bold()
+        );
     }
 
     if !skip_confirm && !confirm("Proceed with cleanup?")? {
@@ -612,7 +607,9 @@ pub async fn clean_jobs(
         let ssh = SshClient::new(&job.remote_host, debug);
         let job_dir = format!(
             "{}/.fleche/jobs/{}",
-            job.remote_path.trim_end_matches("/workspace").trim_end_matches("/.fleche/workspace"),
+            job.remote_path
+                .trim_end_matches("/workspace")
+                .trim_end_matches("/.fleche/workspace"),
             job.id
         );
         if let Err(e) = ssh.rm_rf(&job_dir).await {

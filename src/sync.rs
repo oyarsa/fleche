@@ -87,7 +87,12 @@ pub async fn sync_project_to_workspace(
 ) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
     cmd.args(["-e", &rsync_ssh_cmd()]);
-    cmd.args(["-avz", "--stats", "--exclude=.git", "--filter=:- .gitignore"]);
+    cmd.args([
+        "-avz",
+        "--stats",
+        "--exclude=.git",
+        "--filter=:- .gitignore",
+    ]);
 
     // Ensure source path ends with / to copy contents, not the directory itself
     let source_str = format!("{}/", source.display());
@@ -141,8 +146,10 @@ pub async fn sync_inputs_to_workspace(
         } else {
             cmd.arg(input_path.to_string_lossy().as_ref());
             // Ensure parent directory structure is preserved
-            let dest_dir = Path::new(input)
-                .parent().map_or_else(|| format!("{workspace}/"), |p| format!("{workspace}/{}/", p.display()));
+            let dest_dir = Path::new(input).parent().map_or_else(
+                || format!("{workspace}/"),
+                |p| format!("{workspace}/{}/", p.display()),
+            );
             cmd.arg(format!("{host}:{dest_dir}"));
         }
 

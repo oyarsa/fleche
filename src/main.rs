@@ -117,7 +117,11 @@ async fn run() -> Result<()> {
             job::show_logs(job_id.as_deref(), follow, stdout, stderr, tail, cli.debug).await?;
         }
 
-        Commands::Download { job_id, partial, path } => {
+        Commands::Download {
+            job_id,
+            partial,
+            path,
+        } => {
             job::download_outputs(job_id.as_deref(), partial, path.as_deref(), cli.debug).await?;
         }
 

@@ -17,7 +17,12 @@ use crate::ssh::{SshClient, shell_escape};
 /// - The job command
 ///
 /// The job runs in `workspace` but logs are written to `job_dir`.
-pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob, workspace: &str, job_dir: &str) -> String {
+pub fn generate_sbatch_script(
+    job_id: &str,
+    job: &ResolvedJob,
+    workspace: &str,
+    job_dir: &str,
+) -> String {
     let mut script = String::new();
 
     script.push_str("#!/bin/bash\n");
