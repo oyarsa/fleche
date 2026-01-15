@@ -1,7 +1,7 @@
 use crate::config::ResolvedJob;
 use crate::error::{FlecheError, Result};
 use chrono::{DateTime, Duration, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -218,8 +218,10 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
@@ -265,9 +267,7 @@ impl Registry {
 
         // Add tag joins
         for (i, _) in tag_filters.iter().enumerate() {
-            sql.push_str(&format!(
-                " INNER JOIN job_tags t{i} ON j.id = t{i}.job_id"
-            ));
+            sql.push_str(&format!(" INNER JOIN job_tags t{i} ON j.id = t{i}.job_id"));
         }
 
         // Add tag conditions
@@ -316,8 +316,10 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
@@ -364,8 +366,10 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
@@ -410,8 +414,10 @@ impl Registry {
                         .parse()
                         .unwrap_or(JobStatus::Pending),
                     config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })

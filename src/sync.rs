@@ -28,9 +28,7 @@ pub async fn sync_to_remote(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(FlecheError::RsyncFailed(format!(
-            "rsync failed: {stderr}"
-        )));
+        return Err(FlecheError::RsyncFailed(format!("rsync failed: {stderr}")));
     }
 
     Ok(())
@@ -153,8 +151,10 @@ pub async fn sync_input_cached(
     let cache_path = format!("{fleche_base}/cache/{normalized_path}");
 
     // Ensure cache parent directory exists
-    let cache_parent = Path::new(&cache_path)
-        .parent().map_or_else(|| format!("{fleche_base}/cache"), |p| p.to_string_lossy().to_string());
+    let cache_parent = Path::new(&cache_path).parent().map_or_else(
+        || format!("{fleche_base}/cache"),
+        |p| p.to_string_lossy().to_string(),
+    );
     ssh.mkdir(&cache_parent).await?;
 
     // Sync to cache

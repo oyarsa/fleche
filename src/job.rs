@@ -1,6 +1,6 @@
 use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
-use crate::registry::{parse_duration, JobRecord, JobStatus, Registry};
+use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::{cancel_job, generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::SshClient;
 use crate::sync::{sync_from_remote, sync_input_cached, sync_to_remote};
@@ -44,19 +44,22 @@ pub async fn run_job(
     ssh.mkdir(&remote_path).await?;
 
     // Sync project code
-    println!(
-        "{} Syncing project code...",
-        style("[2/5]").bold().dim()
-    );
-    sync_to_remote(&config.project_path, &config.remote.host, &remote_path, true).await?;
+    println!("{} Syncing project code...", style("[2/5]").bold().dim());
+    sync_to_remote(
+        &config.project_path,
+        &config.remote.host,
+        &remote_path,
+        true,
+    )
+    .await?;
 
     // Sync explicit inputs to shared cache
-    let fleche_base = format!("{}/{}/.fleche", config.remote.base_path, config.project_name);
+    let fleche_base = format!(
+        "{}/{}/.fleche",
+        config.remote.base_path, config.project_name
+    );
     if job.inputs.is_empty() {
-        println!(
-            "{} No input files to sync",
-            style("[3/5]").bold().dim()
-        );
+        println!("{} No input files to sync", style("[3/5]").bold().dim());
     } else {
         println!(
             "{} Syncing input files (cached)...",
@@ -76,18 +79,12 @@ pub async fn run_job(
     }
 
     // Upload script
-    println!(
-        "{} Uploading job script...",
-        style("[4/5]").bold().dim()
-    );
+    println!("{} Uploading job script...", style("[4/5]").bold().dim());
     ssh.write_file(&format!("{remote_path}/job.sbatch"), &script)
         .await?;
 
     // Submit job
-    println!(
-        "{} Submitting job to Slurm...",
-        style("[5/5]").bold().dim()
-    );
+    println!("{} Submitting job to Slurm...", style("[5/5]").bold().dim());
     let slurm_id = submit_job(&ssh, &remote_path).await?;
 
     // Record in registry
@@ -110,7 +107,10 @@ pub async fn run_job(
 
     if follow {
         println!();
-        println!("{}", style("Following output (Ctrl+C to disconnect)...").yellow());
+        println!(
+            "{}",
+            style("Following output (Ctrl+C to disconnect)...").yellow()
+        );
         let log_path = format!("{remote_path}/job.out");
         let mut child = ssh.tail_follow(&log_path)?;
         let _ = child.wait().await;
@@ -277,7 +277,10 @@ pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
 
-    if matches!(job.status, JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled) {
+    if matches!(
+        job.status,
+        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+    ) {
         return Err(FlecheError::CannotCancel(
             job_id.to_string(),
             job.status.to_string(),
@@ -346,7 +349,12 @@ fn generate_job_id(job_name: &str) -> String {
         .map(char::from)
         .collect::<String>()
         .to_lowercase();
-    format!("{}-{}-{}", job_name, now.format("%Y%m%d-%H%M%S-%3f"), suffix)
+    format!(
+        "{}-{}-{}",
+        job_name,
+        now.format("%Y%m%d-%H%M%S-%3f"),
+        suffix
+    )
 }
 
 fn print_job_details(job: &JobRecord, status: JobStatus) {

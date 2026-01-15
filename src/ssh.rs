@@ -56,8 +56,7 @@ impl SshClient {
     }
 
     pub async fn rm_rf(&self, path: &str) -> Result<()> {
-        self.exec(&format!("rm -rf {}", shell_escape(path)))
-            .await?;
+        self.exec(&format!("rm -rf {}", shell_escape(path))).await?;
         Ok(())
     }
 

@@ -18,7 +18,7 @@ mod sync;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
-use config::{generate_init_config, Config};
+use config::{Config, generate_init_config};
 use console::style;
 use slurm::slurm_config_from_cli;
 use std::path::Path;
@@ -52,8 +52,9 @@ async fn run() -> Result<()> {
             dry_run,
         } => {
             let config = Config::find_and_load()?;
-            let slurm_overrides =
-                slurm_config_from_cli(partition, time, gpus, cpus, memory, constraint, nodes, exclude);
+            let slurm_overrides = slurm_config_from_cli(
+                partition, time, gpus, cpus, memory, constraint, nodes, exclude,
+            );
 
             job::run_job(
                 &config,
@@ -126,57 +127,52 @@ async fn run() -> Result<()> {
             }
 
             std::fs::write(config_path, generate_init_config())?;
-            println!(
-                "{} Created fleche.toml",
-                style("✓").green()
-            );
+            println!("{} Created fleche.toml", style("✓").green());
             println!("Edit the file to configure your remote host and jobs.");
         }
 
-        Commands::Check => {
-            match Config::find_and_load() {
-                Ok(config) => {
-                    println!("{} Configuration is valid", style("✓").green());
-                    println!();
-                    println!("  {:<14} {}", style("Project:").bold(), config.project_name);
-                    println!(
-                        "  {:<14} {}",
-                        style("Remote host:").bold(),
-                        config.remote.host
-                    );
-                    println!(
-                        "  {:<14} {}",
-                        style("Base path:").bold(),
-                        config.remote.base_path
-                    );
-                    println!(
-                        "  {:<14} {}",
-                        style("Config path:").bold(),
-                        config.project_path.join("fleche.toml").display()
-                    );
+        Commands::Check => match Config::find_and_load() {
+            Ok(config) => {
+                println!("{} Configuration is valid", style("✓").green());
+                println!();
+                println!("  {:<14} {}", style("Project:").bold(), config.project_name);
+                println!(
+                    "  {:<14} {}",
+                    style("Remote host:").bold(),
+                    config.remote.host
+                );
+                println!(
+                    "  {:<14} {}",
+                    style("Base path:").bold(),
+                    config.remote.base_path
+                );
+                println!(
+                    "  {:<14} {}",
+                    style("Config path:").bold(),
+                    config.project_path.join("fleche.toml").display()
+                );
 
-                    let job_names = config.job_names();
-                    if job_names.is_empty() {
-                        println!();
-                        println!(
+                let job_names = config.job_names();
+                if job_names.is_empty() {
+                    println!();
+                    println!(
                             "  {}",
                             style("No jobs defined. Add jobs to fleche.toml or create fleche/*.toml files.")
                                 .yellow()
                         );
-                    } else {
-                        println!();
-                        println!("  {}", style("Available jobs:").bold());
-                        for name in job_names {
-                            println!("    - {name}");
-                        }
+                } else {
+                    println!();
+                    println!("  {}", style("Available jobs:").bold());
+                    for name in job_names {
+                        println!("    - {name}");
                     }
                 }
-                Err(e) => {
-                    eprintln!("{} {}", style("✗").red(), e);
-                    std::process::exit(1);
-                }
             }
-        }
+            Err(e) => {
+                eprintln!("{} {}", style("✗").red(), e);
+                std::process::exit(1);
+            }
+        },
 
         Commands::Guide => {
             println!("{}", guide::GUIDE_TEXT);

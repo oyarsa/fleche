@@ -163,9 +163,7 @@ pub enum Commands {
 fn parse_key_value(s: &str) -> Result<(String, String), String> {
     let parts: Vec<&str> = s.splitn(2, '=').collect();
     if parts.len() != 2 {
-        return Err(format!(
-            "Invalid format '{s}'. Expected KEY=VALUE"
-        ));
+        return Err(format!("Invalid format '{s}'. Expected KEY=VALUE"));
     }
     Ok((parts[0].to_string(), parts[1].to_string()))
 }

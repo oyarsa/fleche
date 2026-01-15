@@ -39,7 +39,6 @@ impl SlurmConfig {
             exclude: other.exclude.clone().or_else(|| self.exclude.clone()),
         }
     }
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -204,9 +203,8 @@ impl Config {
 }
 
 fn find_config_file() -> Result<PathBuf> {
-    let mut current = std::env::current_dir().map_err(|e| {
-        FlecheError::ConfigParse(format!("Failed to get current directory: {e}"))
-    })?;
+    let mut current = std::env::current_dir()
+        .map_err(|e| FlecheError::ConfigParse(format!("Failed to get current directory: {e}")))?;
 
     loop {
         let config_path = current.join("fleche.toml");
@@ -225,9 +223,8 @@ fn load_jobs_from_dir(
     current_dir: &Path,
     jobs: &mut HashMap<String, JobDefinition>,
 ) -> Result<()> {
-    let entries = std::fs::read_dir(current_dir).map_err(|e| {
-        FlecheError::ConfigParse(format!("Failed to read fleche directory: {e}"))
-    })?;
+    let entries = std::fs::read_dir(current_dir)
+        .map_err(|e| FlecheError::ConfigParse(format!("Failed to read fleche directory: {e}")))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| {
