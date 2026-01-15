@@ -64,8 +64,9 @@ async fn run() -> Result<()> {
 
     match cli.command {
         Commands::Run {
-            job_name,
+            job_or_command,
             command,
+            bg,
             env_vars,
             tags,
             partition,
@@ -76,7 +77,6 @@ async fn run() -> Result<()> {
             constraint,
             nodes,
             exclude,
-            follow,
             dry_run,
         } => {
             let config = Config::find_and_load()?;
@@ -86,20 +86,25 @@ async fn run() -> Result<()> {
 
             job::run_job(
                 &config,
-                job_name.as_deref(),
+                job_or_command.as_deref(),
                 command.as_deref(),
                 &env_vars,
                 &tags,
                 slurm_overrides,
-                follow,
+                bg,
                 dry_run,
                 cli.debug,
             )
             .await?;
         }
 
-        Commands::Status { job_id } => {
-            job::show_status(job_id.as_deref(), cli.debug).await?;
+        Commands::Exec { command, env_vars } => {
+            let config = Config::find_and_load()?;
+            job::exec_command(&config, &command, &env_vars, cli.debug).await?;
+        }
+
+        Commands::Status { job_id, filter } => {
+            job::show_status(job_id.as_deref(), filter.as_deref(), cli.debug).await?;
         }
 
         Commands::Logs {
@@ -109,31 +114,11 @@ async fn run() -> Result<()> {
             stderr,
             tail,
         } => {
-            job::show_logs(&job_id, follow, stdout, stderr, tail, cli.debug).await?;
+            job::show_logs(job_id.as_deref(), follow, stdout, stderr, tail, cli.debug).await?;
         }
 
-        Commands::Sync { job_id, partial } => {
-            job::sync_outputs(&job_id, partial, cli.debug).await?;
-        }
-
-        Commands::List {
-            project,
-            status,
-            tags,
-            failed,
-            running,
-            completed,
-        } => {
-            job::list_jobs(
-                project.as_deref(),
-                status.as_deref(),
-                &tags,
-                failed,
-                running,
-                completed,
-                cli.debug,
-            )
-            .await?;
+        Commands::Download { job_id, partial, path } => {
+            job::download_outputs(job_id.as_deref(), partial, path.as_deref(), cli.debug).await?;
         }
 
         Commands::Cancel { job_id, all, yes } => {
@@ -144,12 +129,14 @@ async fn run() -> Result<()> {
             job_id,
             all,
             older_than,
+            workspace,
             yes,
         } => {
             job::clean_jobs(
                 job_id.as_deref(),
                 all,
                 older_than.as_deref(),
+                workspace,
                 yes,
                 cli.debug,
             )

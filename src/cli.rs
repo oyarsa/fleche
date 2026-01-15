@@ -23,14 +23,22 @@ pub struct Cli {
 /// All available subcommands.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run a job on the remote cluster
+    /// Run a job on the remote cluster via Slurm
+    ///
+    /// Syncs your project, submits to Slurm, and streams output.
+    /// Use --bg to run in background without streaming.
     Run {
-        /// Job name from config (optional if --command is provided)
-        job_name: Option<String>,
+        /// Job name from config, or command to run (in quotes)
+        #[arg(value_name = "JOB_OR_COMMAND")]
+        job_or_command: Option<String>,
 
-        /// Override or provide command
+        /// Override or provide command (if job name given)
         #[arg(long)]
         command: Option<String>,
+
+        /// Run in background (don't stream output)
+        #[arg(long)]
+        bg: bool,
 
         /// Set environment variable (repeatable)
         #[arg(long = "env", value_parser = parse_key_value)]
@@ -72,28 +80,46 @@ pub enum Commands {
         #[arg(long)]
         exclude: Option<String>,
 
-        /// Tail output after submission
-        #[arg(long)]
-        follow: bool,
-
         /// Print generated sbatch script without submitting
         #[arg(long)]
         dry_run: bool,
     },
 
-    /// Show status of a job, or all recent jobs if no ID provided
+    /// Execute a command directly via SSH (no Slurm)
+    ///
+    /// Syncs your project and runs the command directly over SSH.
+    /// Useful for quick tests or interactive work.
+    Exec {
+        /// Command to run (in quotes)
+        command: String,
+
+        /// Set environment variable (repeatable)
+        #[arg(long = "env", value_parser = parse_key_value)]
+        env_vars: Vec<(String, String)>,
+    },
+
+    /// Show status of jobs
+    ///
+    /// Without arguments, lists recent jobs.
+    /// With a job ID, shows detailed status.
     Status {
-        /// Job ID to check
+        /// Job ID to check (default: list recent jobs)
         job_id: Option<String>,
+
+        /// Filter by status (pending, running, completed, failed, cancelled)
+        #[arg(long)]
+        filter: Option<String>,
     },
 
     /// Fetch and display job logs
+    ///
+    /// Without a job ID, shows logs of the most recent job.
     Logs {
-        /// Job ID
-        job_id: String,
+        /// Job ID (default: most recent job)
+        job_id: Option<String>,
 
         /// Stream logs in real-time (Ctrl+C to disconnect)
-        #[arg(long)]
+        #[arg(long, short)]
         follow: bool,
 
         /// Show only stdout (default shows both stdout and stderr)
@@ -109,46 +135,27 @@ pub enum Commands {
         tail: Option<usize>,
     },
 
-    /// Pull output files from a completed job to local project directory
-    Sync {
-        /// Job ID
-        job_id: String,
+    /// Download output files from remote to local
+    ///
+    /// Without a job ID, downloads outputs from the most recent job.
+    Download {
+        /// Job ID (default: most recent job)
+        job_id: Option<String>,
 
-        /// Suppress warning when syncing from a running job
+        /// Download even if job is still running
         #[arg(long)]
         partial: bool,
-    },
 
-    /// List all jobs from the registry
-    List {
-        /// Filter by project path
+        /// Specific path to download (default: all configured outputs)
         #[arg(long)]
-        project: Option<String>,
-
-        /// Filter by status (pending, running, completed, failed, cancelled)
-        #[arg(long)]
-        status: Option<String>,
-
-        /// Filter by tag (repeatable, all must match)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
-
-        /// Shorthand for --status failed
-        #[arg(long)]
-        failed: bool,
-
-        /// Shorthand for --status running
-        #[arg(long)]
-        running: bool,
-
-        /// Shorthand for --status completed
-        #[arg(long)]
-        completed: bool,
+        path: Option<String>,
     },
 
     /// Cancel a running or pending job
+    ///
+    /// Without arguments, cancels the most recent running job.
     Cancel {
-        /// Job ID (optional with --all)
+        /// Job ID (default: most recent running job)
         job_id: Option<String>,
 
         /// Cancel all running/pending jobs
@@ -160,7 +167,10 @@ pub enum Commands {
         yes: bool,
     },
 
-    /// Remove job from registry and delete remote directory
+    /// Remove job from registry and delete remote job files
+    ///
+    /// This removes job logs and metadata, but NOT the workspace.
+    /// Use --workspace to also clear the shared workspace.
     Clean {
         /// Job ID (optional with --all or --older-than)
         job_id: Option<String>,
@@ -172,6 +182,10 @@ pub enum Commands {
         /// Clean jobs older than duration (e.g., 7d, 24h)
         #[arg(long)]
         older_than: Option<String>,
+
+        /// Also delete the shared workspace
+        #[arg(long)]
+        workspace: bool,
 
         /// Skip confirmation prompt
         #[arg(short, long)]

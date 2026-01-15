@@ -348,7 +348,7 @@ pub fn generate_init_config() -> &'static str {
 
 [remote]
 host = "cluster"                    # SSH host (from ~/.ssh/config or full address)
-base_path = "~/fleche"              # Remote base directory
+base_path = "~/fleche"              # Remote base directory for all projects
 
 [env]
 # Global environment variables for all jobs
@@ -356,21 +356,24 @@ base_path = "~/fleche"              # Remote base directory
 # PYTHONUNBUFFERED = "1"
 
 [slurm]
-# Global Slurm defaults
-# partition = "cpu"
-# time = "1:00:00"
+# Global Slurm defaults (inherited by all jobs)
+# partition = "gpu"
+# time = "4:00:00"
+# gpus = 1
+# cpus = 8
+# memory = "32G"
 
-# Example inline job definition:
-# [jobs.example]
-# command = "echo 'Hello, World!'"
-# inputs = []
-# outputs = []
+# Example job definition:
+# [jobs.train]
+# command = "python train.py"
+# inputs = ["data/"]          # gitignored files to copy to workspace
+# outputs = ["checkpoints/"]  # files to download with `fleche download`
 #
-# [jobs.example.slurm]
-# partition = "cpu"
-# time = "0:10:00"
+# [jobs.train.slurm]
+# time = "24:00:00"
+# gpus = 4
 
-# Jobs can also be defined in separate files under fleche/*.toml
+# Jobs can also be defined in separate files: fleche/train.toml, fleche/eval.toml
 "#
 }
 

@@ -1,15 +1,13 @@
 //! File synchronization using rsync.
 //!
 //! This module provides functions for syncing files between the local machine
-//! and a remote host using rsync. It supports both uploading project files to
-//! the remote and downloading outputs back.
+//! and a remote host using rsync.
 
 use crate::error::{FlecheError, Result};
-use crate::ssh::SshClient;
 use std::path::Path;
 use tokio::process::Command;
 
-/// Returns the SSH command for rsync with `ControlMaster` options for connection multiplexing.
+/// Returns the SSH command options for rsync.
 fn rsync_ssh_cmd() -> String {
     // Base command with timeout and batch mode options
     let mut cmd = concat!(
@@ -22,7 +20,7 @@ fn rsync_ssh_cmd() -> String {
     )
     .to_string();
 
-    // Add `ControlMaster` options using short /tmp path (Unix sockets have ~104 byte limit)
+    // Add ControlMaster options using short /tmp path (Unix sockets have ~104 byte limit)
     let uid = unsafe { libc::getuid() };
     let socket_dir = std::path::PathBuf::from(format!("/tmp/fleche-ssh-{uid}"));
     let _ = std::fs::create_dir_all(&socket_dir);
@@ -48,8 +46,6 @@ pub struct SyncStats {
 
 impl SyncStats {
     /// Parses transfer statistics from rsync's `--stats` output.
-    ///
-    /// Looks for the "Total bytes sent: X" line and extracts the byte count.
     fn parse_from_rsync_output(output: &str) -> Self {
         let bytes_sent = output
             .lines()
@@ -81,31 +77,22 @@ impl SyncStats {
     }
 }
 
-/// Syncs a local directory to a remote host.
+/// Syncs project files to the remote workspace.
 ///
-/// Uses rsync with compression (`-z`), archive mode (`-a`), and verbose output (`-v`).
-/// The `--delete` flag removes files on the remote that don't exist locally.
-/// The `.git` directory is always excluded.
-///
-/// If `respect_gitignore` is true, files matching patterns in `.gitignore` are excluded.
-pub async fn sync_to_remote(
+/// Uses rsync with compression, archive mode, and respects `.gitignore`.
+pub async fn sync_project_to_workspace(
     source: &Path,
     host: &str,
-    dest: &str,
-    respect_gitignore: bool,
+    workspace: &str,
 ) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
     cmd.args(["-e", &rsync_ssh_cmd()]);
-    cmd.args(["-avz", "--delete", "--stats", "--exclude=.git"]);
-
-    if respect_gitignore {
-        cmd.arg("--filter=:- .gitignore");
-    }
+    cmd.args(["-avz", "--stats", "--exclude=.git", "--filter=:- .gitignore"]);
 
     // Ensure source path ends with / to copy contents, not the directory itself
     let source_str = format!("{}/", source.display());
     cmd.arg(&source_str);
-    cmd.arg(format!("{host}:{dest}"));
+    cmd.arg(format!("{host}:{workspace}/"));
 
     let output = cmd
         .output()
@@ -121,225 +108,117 @@ pub async fn sync_to_remote(
     Ok(SyncStats::parse_from_rsync_output(&stdout))
 }
 
-/// Estimates how much data would be transferred without actually syncing.
+/// Syncs input files to the remote workspace.
 ///
-/// Performs a dry-run rsync to calculate the transfer size. Useful for
-/// showing progress information before a potentially long sync operation.
-pub async fn estimate_sync_size(source: &Path, respect_gitignore: bool) -> Result<SyncStats> {
-    let mut cmd = Command::new("rsync");
-    cmd.args(["-avz", "--dry-run", "--stats", "--exclude=.git"]);
-
-    if respect_gitignore {
-        cmd.arg("--filter=:- .gitignore");
+/// These are typically gitignored files that need to be uploaded.
+pub async fn sync_inputs_to_workspace(
+    source: &Path,
+    inputs: &[String],
+    host: &str,
+    workspace: &str,
+) -> Result<SyncStats> {
+    if inputs.is_empty() {
+        return Ok(SyncStats { bytes_sent: 0 });
     }
 
-    let source_str = format!("{}/", source.display());
-    cmd.arg(&source_str);
-    cmd.arg("/dev/null");
+    let mut total_bytes: u64 = 0;
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
+    for input in inputs {
+        let input_path = source.join(input);
+        let is_dir = input_path.is_dir();
 
-    // Note: rsync dry-run to /dev/null may show warnings but still provides stats
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(SyncStats::parse_from_rsync_output(&stdout))
-}
+        let mut cmd = Command::new("rsync");
+        cmd.args(["-e", &rsync_ssh_cmd()]);
+        cmd.args(["-avz", "--stats"]);
 
-/// Syncs a specific path (file or directory) to the remote host.
-///
-/// Unlike [`sync_to_remote`], this syncs a single path relative to a base directory,
-/// preserving the directory structure on the remote.
-#[allow(dead_code)]
-pub async fn sync_path_to_remote(
-    source_base: &Path,
-    relative_path: &str,
-    host: &str,
-    dest_base: &str,
-) -> Result<()> {
-    let source_path = source_base.join(relative_path);
-    let is_dir = source_path.is_dir();
-
-    let mut cmd = Command::new("rsync");
-    cmd.args(["-e", &rsync_ssh_cmd()]);
-    cmd.args(["-avz"]);
-
-    if is_dir {
-        // For directories, ensure trailing slash to copy contents
-        let source_str = format!("{}/", source_path.display());
-        let dest_str = format!("{host}:{dest_base}/{relative_path}/");
-        cmd.arg(&source_str);
-        cmd.arg(&dest_str);
-    } else {
-        // For files, sync the file itself
-        cmd.arg(source_path.to_string_lossy().as_ref());
-
-        // Ensure parent directory exists on remote
-        let dest_str = if let Some(p) = Path::new(relative_path).parent()
-            && !p.as_os_str().is_empty()
-        {
-            format!("{}:{}/{}/", host, dest_base, p.display())
+        if is_dir {
+            // For directories, ensure trailing slash to copy contents
+            let source_str = format!("{}/", input_path.display());
+            // Remove trailing slash from input for destination path
+            let dest_path = input.trim_end_matches('/');
+            cmd.arg(&source_str);
+            cmd.arg(format!("{host}:{workspace}/{dest_path}/"));
         } else {
-            format!("{host}:{dest_base}/")
-        };
-        cmd.arg(&dest_str);
+            cmd.arg(input_path.to_string_lossy().as_ref());
+            // Ensure parent directory structure is preserved
+            let dest_dir = Path::new(input)
+                .parent().map_or_else(|| format!("{workspace}/"), |p| format!("{workspace}/{}/", p.display()));
+            cmd.arg(format!("{host}:{dest_dir}"));
+        }
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(FlecheError::RsyncFailed(format!(
+                "rsync failed for '{input}': {stderr}"
+            )));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        total_bytes += SyncStats::parse_from_rsync_output(&stdout).bytes_sent;
     }
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(FlecheError::RsyncFailed(format!(
-            "rsync failed for '{relative_path}': {stderr}"
-        )));
-    }
-
-    Ok(())
+    Ok(SyncStats {
+        bytes_sent: total_bytes,
+    })
 }
 
-/// Syncs a path from the remote host to the local machine.
-///
-/// Downloads a file or directory from `remote_base/relative_path` on the remote
-/// host to `local_base/relative_path` locally. Creates parent directories as needed.
-pub async fn sync_from_remote(
+/// Downloads outputs from the remote workspace to local.
+pub async fn download_outputs(
     host: &str,
-    remote_base: &str,
-    relative_path: &str,
+    workspace: &str,
+    outputs: &[String],
     local_base: &Path,
 ) -> Result<()> {
-    let remote_path = format!("{host}:{remote_base}/{relative_path}");
-    let local_path = local_base.join(relative_path);
+    for output in outputs {
+        let remote_path = format!("{host}:{workspace}/{output}");
+        let local_path = local_base.join(output);
 
-    // Ensure local parent directory exists
-    if let Some(parent) = local_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+        // Ensure local parent directory exists
+        if let Some(parent) = local_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
-    let mut cmd = Command::new("rsync");
-    cmd.args(["-e", &rsync_ssh_cmd()]);
-    cmd.args(["-avz"]);
-    cmd.arg(&remote_path);
+        let mut cmd = Command::new("rsync");
+        cmd.args(["-e", &rsync_ssh_cmd()]);
+        cmd.args(["-avz"]);
+        cmd.arg(&remote_path);
 
-    // If path ends with /, it's a directory
-    if relative_path.ends_with('/') {
-        cmd.arg(format!("{}/", local_path.display()));
-    } else {
-        // Could be file or directory - rsync handles both
-        cmd.arg(local_path.to_string_lossy().as_ref());
-    }
+        // If path ends with /, it's a directory
+        if output.ends_with('/') {
+            cmd.arg(format!("{}/", local_path.display()));
+        } else {
+            cmd.arg(local_path.to_string_lossy().as_ref());
+        }
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
+        let output_result = cmd
+            .output()
+            .await
+            .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(FlecheError::RsyncFailed(format!(
-            "rsync failed for '{relative_path}': {stderr}"
-        )));
+        if !output_result.status.success() {
+            let stderr = String::from_utf8_lossy(&output_result.stderr);
+            return Err(FlecheError::RsyncFailed(format!(
+                "rsync failed for '{output}': {stderr}"
+            )));
+        }
     }
 
     Ok(())
 }
 
-/// Calculates the relative symlink target path from a job subdirectory to the cache.
-///
-/// The path needs enough `..` components to navigate from the symlink location
-/// back to the fleche base directory where `cache/` lives.
-fn symlink_target_for_cache(normalized_path: &str) -> String {
-    let depth = normalized_path.matches('/').count() + 1;
-    let dotdots = "../".repeat(depth);
-    format!("{dotdots}cache/{normalized_path}")
-}
-
-/// Syncs an input path to a shared cache and creates a symlink in the job directory.
-///
-/// This enables sharing large input files (like datasets) across multiple jobs
-/// without copying them each time. The cache is stored at:
-///
-/// ```text
-/// <fleche_base>/cache/<input-path>
-/// ```
-///
-/// Each job directory gets a symlink pointing to the cached data. The relative
-/// path depth is calculated based on the input path:
-///
-/// ```text
-/// <fleche_base>/<job-id>/data -> ../cache/data
-/// <fleche_base>/<job-id>/output/models -> ../../cache/output/models
-/// ```
-pub async fn sync_input_cached(
-    source_base: &Path,
-    relative_path: &str,
+/// Downloads a specific path from the remote workspace to local.
+pub async fn download_path(
     host: &str,
-    fleche_base: &str,
-    job_id: &str,
-    ssh: &SshClient,
-) -> Result<SyncStats> {
-    let source_path = source_base.join(relative_path);
-    let is_dir = source_path.is_dir();
-
-    // Normalize the path (remove trailing slashes for consistent cache keys)
-    let normalized_path = relative_path.trim_end_matches('/');
-
-    // Cache destination: .fleche/cache/<path>
-    let cache_path = format!("{fleche_base}/cache/{normalized_path}");
-
-    // Ensure cache parent directory exists
-    let cache_parent = Path::new(&cache_path).parent().map_or_else(
-        || format!("{fleche_base}/cache"),
-        |p| p.to_string_lossy().to_string(),
-    );
-    ssh.mkdir(&cache_parent).await?;
-
-    // Sync to cache
-    let mut cmd = Command::new("rsync");
-    cmd.args(["-e", &rsync_ssh_cmd()]);
-    cmd.args(["-avz", "--stats"]);
-
-    if is_dir {
-        let source_str = format!("{}/", source_path.display());
-        let dest_str = format!("{host}:{cache_path}/");
-        cmd.arg(&source_str);
-        cmd.arg(&dest_str);
-    } else {
-        cmd.arg(source_path.to_string_lossy().as_ref());
-        cmd.arg(format!("{host}:{cache_path}"));
-    }
-
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(FlecheError::RsyncFailed(format!(
-            "rsync failed for '{relative_path}': {stderr}"
-        )));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Create symlink in job directory pointing to cache
-    let link_path = format!("{fleche_base}/{job_id}/{normalized_path}");
-    let symlink_target = symlink_target_for_cache(normalized_path);
-
-    // Ensure parent directory of symlink exists
-    if let Some(parent) = Path::new(&link_path).parent()
-        && !parent.as_os_str().is_empty()
-    {
-        ssh.mkdir(&parent.to_string_lossy()).await?;
-    }
-
-    ssh.symlink(&symlink_target, &link_path).await?;
-
-    Ok(SyncStats::parse_from_rsync_output(&stdout))
+    workspace: &str,
+    path: &str,
+    local_base: &Path,
+) -> Result<()> {
+    download_outputs(host, workspace, &[path.to_string()], local_base).await
 }
 
 #[cfg(test)]
@@ -446,38 +325,5 @@ total size is 125,432  speedup is 7.88
     fn test_human_readable_zero() {
         let stats = SyncStats { bytes_sent: 0 };
         assert_eq!(stats.human_readable(), "0 B");
-    }
-
-    #[test]
-    fn test_symlink_target_single_level() {
-        // data -> ../cache/data
-        assert_eq!(symlink_target_for_cache("data"), "../cache/data");
-    }
-
-    #[test]
-    fn test_symlink_target_two_levels() {
-        // output/models -> ../../cache/output/models
-        assert_eq!(
-            symlink_target_for_cache("output/models"),
-            "../../cache/output/models"
-        );
-    }
-
-    #[test]
-    fn test_symlink_target_three_levels() {
-        // output/baselines/llama_data -> ../../../cache/output/baselines/llama_data
-        assert_eq!(
-            symlink_target_for_cache("output/baselines/llama_data"),
-            "../../../cache/output/baselines/llama_data"
-        );
-    }
-
-    #[test]
-    fn test_symlink_target_deep_nesting() {
-        // a/b/c/d/e -> ../../../../../cache/a/b/c/d/e
-        assert_eq!(
-            symlink_target_for_cache("a/b/c/d/e"),
-            "../../../../../cache/a/b/c/d/e"
-        );
     }
 }

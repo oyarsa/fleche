@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.0] - 2026-01-15
+
+### Breaking Changes
+- `fleche sync` renamed to `fleche download`
+- `fleche list` merged into `fleche status` (list is now the default)
+- Removed isolated job directories - all jobs now share a workspace
+- Removed input file caching/symlinks - files are copied directly
+
+### Added
+- `fleche exec` - execute commands directly via SSH without Slurm
+- `--bg` flag for `fleche run` to run in background (streaming is now default)
+- Job ID is now optional for `logs`, `download`, `cancel` (defaults to most recent)
+- `--filter` option for `fleche status` to filter by job status
+- `--path` option for `fleche download` to download specific paths
+- `--workspace` flag for `fleche clean` to also delete the shared workspace
+
+### Changed
+- Streaming output is now the default (use `--bg` to opt out)
+- All jobs run in a shared workspace directory (`.fleche/workspace/`)
+- Job logs and metadata go to separate directory (`.fleche/jobs/<id>/`)
+- Simplified sync - just rsync to workspace, no hash checking or caching
+- Input files are copied directly, not symlinked from cache
+
+### Removed
+- `--follow` flag (streaming is now default)
+- `fleche list` (merged into `fleche status`)
+- Input caching and symlinks
+
 ## [4.6.0] - 2026-01-15
 
 ### Added

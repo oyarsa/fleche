@@ -340,6 +340,7 @@ impl SshClient {
     /// Creates a symbolic link on the remote host.
     ///
     /// If a file or link already exists at `link_path`, it is removed first.
+    #[allow(dead_code)]
     pub async fn symlink(&self, target: &str, link_path: &str) -> Result<()> {
         self.exec(&format!(
             "rm -rf {} && ln -s {} {}",

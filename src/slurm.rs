@@ -13,14 +13,18 @@ use crate::ssh::{SshClient, shell_escape};
 /// The script includes:
 /// - SBATCH directives for job name, output files, and resource requirements
 /// - Environment variable exports
+/// - cd to workspace before running the command
 /// - The job command
-pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
+///
+/// The job runs in `workspace` but logs are written to `job_dir`.
+pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob, workspace: &str, job_dir: &str) -> String {
     let mut script = String::new();
 
     script.push_str("#!/bin/bash\n");
     script.push_str(&format!("#SBATCH --job-name={job_id}\n"));
-    script.push_str("#SBATCH --output=job.out\n");
-    script.push_str("#SBATCH --error=job.err\n");
+    // Output files go to the job directory, not the workspace
+    script.push_str(&format!("#SBATCH --output={job_dir}/job.out\n"));
+    script.push_str(&format!("#SBATCH --error={job_dir}/job.err\n"));
 
     let slurm = &job.slurm;
 
@@ -33,7 +37,9 @@ pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     }
 
     if let Some(gpus) = slurm.gpus {
-        script.push_str(&format!("#SBATCH --gpus={gpus}\n"));
+        if gpus > 0 {
+            script.push_str(&format!("#SBATCH --gpus={gpus}\n"));
+        }
     }
 
     if let Some(cpus) = slurm.cpus {
@@ -45,7 +51,9 @@ pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     }
 
     if let Some(ref constraint) = slurm.constraint {
-        script.push_str(&format!("#SBATCH --constraint={constraint}\n"));
+        if !constraint.is_empty() {
+            script.push_str(&format!("#SBATCH --constraint={constraint}\n"));
+        }
     }
 
     if let Some(nodes) = slurm.nodes {
@@ -53,7 +61,9 @@ pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     }
 
     if let Some(ref exclude) = slurm.exclude {
-        script.push_str(&format!("#SBATCH --exclude={exclude}\n"));
+        if !exclude.is_empty() {
+            script.push_str(&format!("#SBATCH --exclude={exclude}\n"));
+        }
     }
 
     script.push('\n');
@@ -66,6 +76,10 @@ pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
         }
         script.push('\n');
     }
+
+    // Change to workspace directory
+    script.push_str("# Change to workspace\n");
+    script.push_str(&format!("cd {}\n\n", shell_escape(workspace)));
 
     // Command
     script.push_str("# Execute command\n");
@@ -290,12 +304,13 @@ mod tests {
             env: HashMap::new(),
         };
 
-        let script = generate_sbatch_script("test-123", &job);
+        let script = generate_sbatch_script("test-123", &job, "/workspace", "/jobs/test-123");
 
         assert!(script.starts_with("#!/bin/bash\n"));
         assert!(script.contains("#SBATCH --job-name=test-123"));
-        assert!(script.contains("#SBATCH --output=job.out"));
-        assert!(script.contains("#SBATCH --error=job.err"));
+        assert!(script.contains("#SBATCH --output=/jobs/test-123/job.out"));
+        assert!(script.contains("#SBATCH --error=/jobs/test-123/job.err"));
+        assert!(script.contains("cd '/workspace'"));
         assert!(script.contains("echo hello"));
     }
 
@@ -319,7 +334,7 @@ mod tests {
             env: HashMap::new(),
         };
 
-        let script = generate_sbatch_script("train-456", &job);
+        let script = generate_sbatch_script("train-456", &job, "/workspace", "/jobs/train-456");
 
         assert!(script.contains("#SBATCH --partition=gpu"));
         assert!(script.contains("#SBATCH --time=8:00:00"));
@@ -346,7 +361,7 @@ mod tests {
             env,
         };
 
-        let script = generate_sbatch_script("test-789", &job);
+        let script = generate_sbatch_script("test-789", &job, "/ws", "/jobs/test-789");
 
         assert!(script.contains("export FOO=\"bar\""));
         assert!(script.contains("export PATH_VAR=\"/some/path\""));
@@ -366,7 +381,7 @@ mod tests {
             env,
         };
 
-        let script = generate_sbatch_script("test-esc", &job);
+        let script = generate_sbatch_script("test-esc", &job, "/ws", "/jobs/test-esc");
 
         assert!(script.contains("export QUOTED=\"value\\\"with\\\"quotes\""));
     }

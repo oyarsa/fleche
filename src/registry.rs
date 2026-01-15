@@ -271,6 +271,98 @@ impl Registry {
         Ok(JobRecord { tags, ..job })
     }
 
+    /// Retrieves the most recent job, optionally filtered by project path.
+    ///
+    /// Returns `None` if no jobs match the filter.
+    pub fn get_most_recent_job(&self, project_filter: Option<&str>) -> Result<Option<JobRecord>> {
+        let (sql, param): (&str, Option<String>) = match project_filter {
+            Some(project) => (
+                r"
+                SELECT id, slurm_id, job_name, project_name, project_path,
+                       remote_host, remote_path, command, status, config_json,
+                       created_at, updated_at, outputs_synced
+                FROM jobs
+                WHERE project_path LIKE ?1
+                ORDER BY created_at DESC
+                LIMIT 1
+                ",
+                Some(format!("%{project}%")),
+            ),
+            None => (
+                r"
+                SELECT id, slurm_id, job_name, project_name, project_path,
+                       remote_host, remote_path, command, status, config_json,
+                       created_at, updated_at, outputs_synced
+                FROM jobs
+                ORDER BY created_at DESC
+                LIMIT 1
+                ",
+                None,
+            ),
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+
+        let result = if let Some(ref p) = param {
+            stmt.query_row(params![p], |row| {
+                Ok(JobRecord {
+                    id: row.get(0)?,
+                    slurm_id: row.get(1)?,
+                    job_name: row.get(2)?,
+                    project_name: row.get(3)?,
+                    project_path: row.get(4)?,
+                    remote_host: row.get(5)?,
+                    remote_path: row.get(6)?,
+                    command: row.get(7)?,
+                    status: row
+                        .get::<_, String>(8)?
+                        .parse()
+                        .unwrap_or(JobStatus::Pending),
+                    config_json: row.get(9)?,
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    outputs_synced: row.get::<_, i32>(12)? == 1,
+                    tags: HashMap::new(),
+                })
+            })
+        } else {
+            stmt.query_row([], |row| {
+                Ok(JobRecord {
+                    id: row.get(0)?,
+                    slurm_id: row.get(1)?,
+                    job_name: row.get(2)?,
+                    project_name: row.get(3)?,
+                    project_path: row.get(4)?,
+                    remote_host: row.get(5)?,
+                    remote_path: row.get(6)?,
+                    command: row.get(7)?,
+                    status: row
+                        .get::<_, String>(8)?
+                        .parse()
+                        .unwrap_or(JobStatus::Pending),
+                    config_json: row.get(9)?,
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                    outputs_synced: row.get::<_, i32>(12)? == 1,
+                    tags: HashMap::new(),
+                })
+            })
+        };
+
+        match result {
+            Ok(job) => {
+                let tags = self.get_tags(&job.id)?;
+                Ok(Some(JobRecord { tags, ..job }))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Retrieves tags for a job.
     fn get_tags(&self, job_id: &str) -> Result<HashMap<String, String>> {
         let mut stmt = self

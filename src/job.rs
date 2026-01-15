@@ -1,10 +1,11 @@
 //! Job operations for running, monitoring, and managing remote jobs.
 //!
 //! This module contains the core business logic for fleche, including:
-//! - Running jobs (syncing files, submitting to Slurm, following output)
+//! - Running jobs (syncing files, submitting to Slurm, streaming output)
+//! - Executing commands directly via SSH
 //! - Querying job status
 //! - Viewing logs
-//! - Syncing outputs back to local
+//! - Downloading outputs back to local
 //! - Listing, cancelling, and cleaning up jobs
 
 use crate::config::{Config, ResolvedJob, SlurmConfig};
@@ -13,7 +14,10 @@ use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::{cancel_job, generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::SshClient;
 use crate::sync::{
-    SyncStats, estimate_sync_size, sync_from_remote, sync_input_cached, sync_to_remote,
+    download_outputs as sync_download_outputs,
+    download_path as sync_download_path,
+    sync_inputs_to_workspace,
+    sync_project_to_workspace,
 };
 use chrono::Utc;
 use console::style;
@@ -21,46 +25,73 @@ use rand::Rng;
 use std::io::Write;
 use std::time::Duration;
 
-/// Runs a job on the remote cluster.
+/// Returns the workspace path for a project on the remote host.
+fn workspace_path(config: &Config) -> String {
+    format!(
+        "{}/{}/.fleche/workspace",
+        config.remote.base_path, config.project_name
+    )
+}
+
+/// Returns the jobs directory path for a project on the remote host.
+fn jobs_base_path(config: &Config) -> String {
+    format!(
+        "{}/{}/.fleche/jobs",
+        config.remote.base_path, config.project_name
+    )
+}
+
+/// Returns the path for a specific job's metadata/logs directory.
+fn job_path(config: &Config, job_id: &str) -> String {
+    format!("{}/{}", jobs_base_path(config), job_id)
+}
+
+/// Runs a job on the remote cluster via Slurm.
 ///
 /// This is the main entry point for job submission. It:
 /// 1. Resolves the job configuration with all overrides applied
-/// 2. Creates a remote directory for the job
-/// 3. Syncs project code to the remote
-/// 4. Syncs input files to a shared cache (with symlinks in the job directory)
+/// 2. Syncs project code to the shared workspace
+/// 3. Syncs input files to the workspace
+/// 4. Creates a job directory for logs/metadata
 /// 5. Uploads the generated sbatch script
 /// 6. Submits the job to Slurm
-/// 7. Optionally follows the job output
+/// 7. Streams the job output (unless --bg is specified)
+#[allow(clippy::too_many_arguments)]
 pub async fn run_job(
     config: &Config,
-    job_name: Option<&str>,
+    job_or_command: Option<&str>,
     command_override: Option<&str>,
     env_overrides: &[(String, String)],
     tags: &[(String, String)],
     slurm_overrides: SlurmConfig,
-    follow: bool,
+    background: bool,
     dry_run: bool,
     debug: bool,
 ) -> Result<()> {
-    let job = config.resolve_job(job_name, command_override, env_overrides, &slurm_overrides)?;
+    // Determine if job_or_command is a job name or a command
+    let (job_name, actual_command) = if let Some(joc) = job_or_command {
+        if config.jobs.contains_key(joc) {
+            // It's a job name
+            (Some(joc), command_override)
+        } else {
+            // It's a command (or unrecognized job name - will be used as command)
+            (None, Some(joc))
+        }
+    } else {
+        (None, command_override)
+    };
+
+    let job = config.resolve_job(job_name, actual_command, env_overrides, &slurm_overrides)?;
     let job_id = generate_job_id(&job.name);
 
-    let remote_path = format!(
-        "{}/{}/.fleche/{}",
-        config.remote.base_path, config.project_name, job_id
-    );
+    let workspace = workspace_path(config);
+    let job_dir = job_path(config, &job_id);
 
-    // Generate script
-    let script = generate_sbatch_script(&job_id, &job);
+    // Generate script - runs in workspace, logs go to job directory
+    let script = generate_sbatch_script(&job_id, &job, &workspace, &job_dir);
 
     if dry_run {
-        // Estimate sync size
-        let stats = estimate_sync_size(&config.project_path, true).await?;
-        println!(
-            "{} Estimated sync: {}",
-            style("[dry-run]").bold().yellow(),
-            stats.human_readable()
-        );
+        println!("{}", style("[dry-run] Generated sbatch script:").bold().yellow());
         println!();
         println!("{script}");
         return Ok(());
@@ -68,68 +99,54 @@ pub async fn run_job(
 
     let ssh = SshClient::new(&config.remote.host, debug);
 
-    // Create remote directory
+    // Create directories
     println!(
-        "{} Creating remote directory...",
-        style("[1/5]").bold().dim()
+        "{} Creating remote directories...",
+        style("[1/4]").bold().dim()
     );
-    ssh.mkdir(&remote_path).await?;
+    ssh.mkdir(&workspace).await?;
+    ssh.mkdir(&job_dir).await?;
 
-    // Sync project code
-    print!("{} Syncing project code...", style("[2/5]").bold().dim());
+    // Sync project code to workspace
+    print!("{} Syncing project code...", style("[2/4]").bold().dim());
     let _ = std::io::stdout().flush();
-    let stats = sync_to_remote(
+    let stats = sync_project_to_workspace(
         &config.project_path,
         &config.remote.host,
-        &remote_path,
-        true,
+        &workspace,
     )
     .await?;
     println!(" {}", style(format!("({})", stats.human_readable())).dim());
 
-    // Sync explicit inputs to shared cache
-    let fleche_base = format!(
-        "{}/{}/.fleche",
-        config.remote.base_path, config.project_name
-    );
+    // Sync inputs to workspace
     if job.inputs.is_empty() {
-        println!("{} No input files to sync", style("[3/5]").bold().dim());
+        println!("{} No input files to sync", style("[3/4]").bold().dim());
     } else {
         print!(
-            "{} Syncing input files (cached)...",
-            style("[3/5]").bold().dim()
+            "{} Syncing input files...",
+            style("[3/4]").bold().dim()
         );
         let _ = std::io::stdout().flush();
-        let mut total_bytes: u64 = 0;
-        for input in &job.inputs {
-            let stats = sync_input_cached(
-                &config.project_path,
-                input,
-                &config.remote.host,
-                &fleche_base,
-                &job_id,
-                &ssh,
-            )
-            .await?;
-            total_bytes += stats.bytes_sent;
-        }
-        let total_stats = SyncStats {
-            bytes_sent: total_bytes,
-        };
+        let stats = sync_inputs_to_workspace(
+            &config.project_path,
+            &job.inputs,
+            &config.remote.host,
+            &workspace,
+        )
+        .await?;
         println!(
             " {}",
-            style(format!("({})", total_stats.human_readable())).dim()
+            style(format!("({})", stats.human_readable())).dim()
         );
     }
 
-    // Upload script
-    println!("{} Uploading job script...", style("[4/5]").bold().dim());
-    ssh.write_file(&format!("{remote_path}/job.sbatch"), &script)
+    // Upload script to job directory
+    println!("{} Submitting job to Slurm...", style("[4/4]").bold().dim());
+    ssh.write_file(&format!("{job_dir}/job.sbatch"), &script)
         .await?;
 
     // Submit job
-    println!("{} Submitting job to Slurm...", style("[5/5]").bold().dim());
-    let slurm_id = submit_job(&ssh, &remote_path).await?;
+    let slurm_id = submit_job(&ssh, &job_dir).await?;
 
     // Record in registry
     let registry = Registry::open()?;
@@ -140,29 +157,120 @@ pub async fn run_job(
         &config.project_name,
         &config.project_path.to_string_lossy(),
         &config.remote.host,
-        &remote_path,
+        &workspace,
         tags,
     )?;
 
     println!();
     println!("{} {}", style("Job ID:").green().bold(), job_id);
     println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
-    println!("{} {}", style("Remote path:").dim(), remote_path);
 
-    if follow {
+    if !background {
         println!();
-        let log_path = format!("{remote_path}/job.out");
+        let log_path = format!("{job_dir}/job.out");
         follow_job_logs(&config.remote.host, &slurm_id, &log_path, debug).await?;
     }
 
     Ok(())
 }
 
-/// Shows the status of a specific job or lists recent jobs.
+/// Executes a command directly via SSH (no Slurm).
 ///
-/// If a job ID is provided, shows detailed information about that job and
-/// queries Slurm for the current status. Otherwise, lists the 20 most recent jobs.
-pub async fn show_status(job_id: Option<&str>, debug: bool) -> Result<()> {
+/// Syncs the project and inputs, then runs the command directly over SSH.
+/// Useful for quick tests or interactive work.
+pub async fn exec_command(
+    config: &Config,
+    command: &str,
+    env_overrides: &[(String, String)],
+    debug: bool,
+) -> Result<()> {
+    let workspace = workspace_path(config);
+    let ssh = SshClient::new(&config.remote.host, debug);
+
+    // Create workspace if needed
+    println!(
+        "{} Creating remote directories...",
+        style("[1/3]").bold().dim()
+    );
+    ssh.mkdir(&workspace).await?;
+
+    // Sync project code to workspace
+    print!("{} Syncing project code...", style("[2/3]").bold().dim());
+    let _ = std::io::stdout().flush();
+    let stats = sync_project_to_workspace(
+        &config.project_path,
+        &config.remote.host,
+        &workspace,
+    )
+    .await?;
+    println!(" {}", style(format!("({})", stats.human_readable())).dim());
+
+    // Sync global inputs
+    let global_inputs: Vec<String> = config
+        .jobs
+        .values()
+        .flat_map(|j| j.inputs.clone())
+        .collect();
+
+    if global_inputs.is_empty() {
+        println!("{} Executing command...", style("[3/3]").bold().dim());
+    } else {
+        print!(
+            "{} Syncing input files...",
+            style("[3/3]").bold().dim()
+        );
+        let _ = std::io::stdout().flush();
+        let stats = sync_inputs_to_workspace(
+            &config.project_path,
+            &global_inputs,
+            &config.remote.host,
+            &workspace,
+        )
+        .await?;
+        println!(
+            " {}",
+            style(format!("({})", stats.human_readable())).dim()
+        );
+    }
+
+    // Build environment string
+    let env_str = if env_overrides.is_empty() {
+        String::new()
+    } else {
+        let vars: Vec<String> = env_overrides
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, shell_escape(v)))
+            .collect();
+        format!("{} ", vars.join(" "))
+    };
+
+    // Execute command in workspace
+    println!();
+    let full_command = format!("cd {} && {}{}", shell_escape(&workspace), env_str, command);
+    let (success, stdout, stderr) = ssh.exec_allow_failure(&full_command).await?;
+
+    // Print output
+    if !stdout.is_empty() {
+        print!("{stdout}");
+    }
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+    }
+
+    if !success {
+        return Err(FlecheError::Other("Command failed".to_string()));
+    }
+
+    Ok(())
+}
+
+/// Simple shell escape - wraps in single quotes.
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Shows the status of a specific job or lists recent jobs.
+pub async fn show_status(job_id: Option<&str>, filter: Option<&str>, debug: bool) -> Result<()> {
     let registry = Registry::open()?;
 
     if let Some(id) = job_id {
@@ -184,11 +292,20 @@ pub async fn show_status(job_id: Option<&str>, debug: bool) -> Result<()> {
 
         print_job_details(&job, current_status);
     } else {
-        // Show recent jobs
-        let jobs = registry.list_jobs(None, None, &[], 20)?;
+        // Refresh status for all pending/running jobs
+        refresh_active_job_statuses(&registry, debug).await?;
+
+        // Determine status filter
+        let status_filter = if let Some(f) = filter {
+            Some(f.parse()?)
+        } else {
+            None
+        };
+
+        let jobs = registry.list_jobs(None, status_filter, &[], 20)?;
 
         if jobs.is_empty() {
-            println!("No jobs found. Run `rjob run` to submit a job.");
+            println!("No jobs found. Run `fleche run` to submit a job.");
             return Ok(());
         }
 
@@ -199,12 +316,9 @@ pub async fn show_status(job_id: Option<&str>, debug: bool) -> Result<()> {
 }
 
 /// Displays logs from a job's stdout or stderr.
-///
-/// Can show the current content, follow in real-time, or show both streams.
-/// Optionally limits output to the last N lines with `tail`.
 #[allow(clippy::fn_params_excessive_bools)]
 pub async fn show_logs(
-    job_id: &str,
+    job_id: Option<&str>,
     follow: bool,
     only_stdout: bool,
     only_stderr: bool,
@@ -212,24 +326,34 @@ pub async fn show_logs(
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
-    let job = registry.get_job(job_id)?;
+
+    // If no job ID provided, use most recent job
+    let job = if let Some(id) = job_id {
+        registry.get_job(id)?
+    } else {
+        registry.get_most_recent_job(None)?
+            .ok_or_else(|| FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string()))?
+    };
+
     let ssh = SshClient::new(&job.remote_host, debug);
 
+    // Job logs are in the job directory, not workspace
+    // remote_path is the workspace, job logs are in ../jobs/<job_id>/
+    let base = job.remote_path.trim_end_matches("/workspace");
+    let log_base = format!("{}/jobs/{}", base, job.id);
+
     // Determine which streams to show
-    // Default: show both. If --stdout or --stderr specified, show only that one.
     let show_stdout = !only_stderr || only_stdout;
     let show_stderr = !only_stdout || only_stderr;
     let show_both = show_stdout && show_stderr;
 
     if follow {
-        // Follow mode: can only follow one file at a time
         let log_file = if only_stderr { "job.err" } else { "job.out" };
-        let log_path = format!("{}/{}", job.remote_path, log_file);
+        let log_path = format!("{log_base}/{log_file}");
 
         if let Some(ref slurm_id) = job.slurm_id {
             follow_job_logs(&job.remote_host, slurm_id, &log_path, debug).await?;
         } else {
-            // No slurm ID, just follow without status monitoring
             println!(
                 "{}",
                 style("Following output (Ctrl+C to disconnect)...").yellow()
@@ -239,7 +363,7 @@ pub async fn show_logs(
         }
     } else if show_both {
         println!("{}", style("=== STDOUT ===").bold());
-        let stdout_path = format!("{}/job.out", job.remote_path);
+        let stdout_path = format!("{log_base}/job.out");
         match ssh.cat_tail(&stdout_path, tail).await {
             Ok(content) => print!("{content}"),
             Err(e) => eprintln!("Error reading stdout: {e}"),
@@ -247,14 +371,14 @@ pub async fn show_logs(
 
         println!();
         println!("{}", style("=== STDERR ===").bold());
-        let stderr_path = format!("{}/job.err", job.remote_path);
+        let stderr_path = format!("{log_base}/job.err");
         match ssh.cat_tail(&stderr_path, tail).await {
             Ok(content) => print!("{content}"),
             Err(e) => eprintln!("Error reading stderr: {e}"),
         }
     } else {
         let log_file = if show_stderr { "job.err" } else { "job.out" };
-        let log_path = format!("{}/{}", job.remote_path, log_file);
+        let log_path = format!("{log_base}/{log_file}");
 
         let content = ssh.cat_tail(&log_path, tail).await?;
         print!("{content}");
@@ -263,90 +387,61 @@ pub async fn show_logs(
     Ok(())
 }
 
-/// Syncs output files from a completed job back to the local project directory.
-///
-/// Warns if the job is still running unless `--partial` is specified.
-pub async fn sync_outputs(job_id: &str, partial: bool, debug: bool) -> Result<()> {
-    let registry = Registry::open()?;
-    let job = registry.get_job(job_id)?;
-
-    // Check job status
-    if !partial
-        && matches!(job.status, JobStatus::Pending | JobStatus::Running)
-        && let Some(ref slurm_id) = job.slurm_id
-    {
-        let ssh = SshClient::new(&job.remote_host, debug);
-        let current_status = get_job_status(&ssh, slurm_id).await.unwrap_or(job.status);
-        if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
-            eprintln!(
-                "{}",
-                style("Warning: Job is still running. Use --partial to sync anyway.").yellow()
-            );
-            return Ok(());
-        }
-    }
-
-    // Parse config to get outputs
-    let resolved: ResolvedJob = serde_json::from_str(&job.config_json)?;
-
-    if resolved.outputs.is_empty() {
-        println!("No outputs defined for this job.");
-        return Ok(());
-    }
-
-    let local_path = std::path::PathBuf::from(&job.project_path);
-
-    println!("Syncing outputs from {}...", job.remote_path);
-    for output in &resolved.outputs {
-        println!("  {output}");
-        sync_from_remote(&job.remote_host, &job.remote_path, output, &local_path).await?;
-    }
-
-    registry.set_outputs_synced(job_id)?;
-    println!("{}", style("Outputs synced successfully.").green());
-
-    Ok(())
-}
-
-/// Lists jobs from the registry with optional filters.
-///
-/// Automatically refreshes the status of pending/running jobs from Slurm.
-#[allow(clippy::fn_params_excessive_bools)]
-pub async fn list_jobs(
-    project_filter: Option<&str>,
-    status_filter: Option<&str>,
-    tags: &[(String, String)],
-    failed: bool,
-    running: bool,
-    completed: bool,
+/// Downloads output files from a job's workspace back to the local project.
+pub async fn download_outputs(
+    job_id: Option<&str>,
+    partial: bool,
+    specific_path: Option<&str>,
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
-    // Refresh status for all pending/running jobs before applying filters
-    refresh_active_job_statuses(&registry, debug).await?;
-
-    // Determine status filter
-    let status = if failed {
-        Some(JobStatus::Failed)
-    } else if running {
-        Some(JobStatus::Running)
-    } else if completed {
-        Some(JobStatus::Completed)
-    } else if let Some(s) = status_filter {
-        Some(s.parse()?)
+    // If no job ID provided, use most recent job
+    let job = if let Some(id) = job_id {
+        registry.get_job(id)?
     } else {
-        None
+        registry.get_most_recent_job(None)?
+            .ok_or_else(|| FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string()))?
     };
 
-    let jobs = registry.list_jobs(project_filter, status, tags, 100)?;
-
-    if jobs.is_empty() {
-        println!("No jobs found.");
-        return Ok(());
+    // Check job status
+    if !partial && matches!(job.status, JobStatus::Pending | JobStatus::Running) {
+        if let Some(ref slurm_id) = job.slurm_id {
+            let ssh = SshClient::new(&job.remote_host, debug);
+            let current_status = get_job_status(&ssh, slurm_id).await.unwrap_or(job.status);
+            if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
+                eprintln!(
+                    "{}",
+                    style("Warning: Job is still running. Use --partial to download anyway.").yellow()
+                );
+                return Ok(());
+            }
+        }
     }
 
-    print_job_table(&jobs);
+    let local_path = std::path::PathBuf::from(&job.project_path);
+
+    if let Some(path) = specific_path {
+        println!("Downloading {path} from workspace...");
+        sync_download_path(&job.remote_host, &job.remote_path, path, &local_path).await?;
+    } else {
+        // Parse config to get outputs
+        let resolved: ResolvedJob = serde_json::from_str(&job.config_json)?;
+
+        if resolved.outputs.is_empty() {
+            println!("No outputs defined for this job.");
+            return Ok(());
+        }
+
+        println!("Downloading outputs from workspace...");
+        for output in &resolved.outputs {
+            println!("  {output}");
+        }
+        sync_download_outputs(&job.remote_host, &job.remote_path, &resolved.outputs, &local_path).await?;
+    }
+
+    registry.set_outputs_synced(&job.id)?;
+    println!("{}", style("Download complete.").green());
 
     Ok(())
 }
@@ -370,9 +465,6 @@ async fn refresh_active_job_statuses(registry: &Registry, debug: bool) -> Result
 }
 
 /// Cancels running or pending Slurm jobs.
-///
-/// Can cancel a single job by ID, or all active jobs with `--all`.
-/// When cancelling multiple jobs, requires confirmation unless `--yes` is passed.
 pub async fn cancel_jobs(
     job_id: Option<&str>,
     all: bool,
@@ -396,8 +488,13 @@ pub async fn cancel_jobs(
     } else if all {
         registry.list_active_jobs()?
     } else {
-        println!("Specify a job ID or --all");
-        return Ok(());
+        // Cancel most recent running job
+        let active = registry.list_active_jobs()?;
+        if active.is_empty() {
+            println!("No active jobs to cancel.");
+            return Ok(());
+        }
+        vec![active.into_iter().next().unwrap()]
     };
 
     if jobs_to_cancel.is_empty() {
@@ -442,7 +539,7 @@ pub async fn cancel_jobs(
     Ok(())
 }
 
-/// Prompts the user for confirmation. Returns true if they answer 'y' or 'yes'.
+/// Prompts the user for confirmation.
 fn confirm(prompt: &str) -> Result<bool> {
     use std::io::{self, Write};
 
@@ -455,14 +552,13 @@ fn confirm(prompt: &str) -> Result<bool> {
     Ok(matches!(input.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
-/// Cleans up jobs by removing them from the registry and deleting remote files.
-///
-/// Can clean a specific job, all finished jobs, or jobs older than a duration.
-/// When cleaning multiple jobs, requires confirmation unless `--yes` is passed.
+/// Cleans up jobs by removing them from the registry and deleting remote job files.
+#[allow(clippy::fn_params_excessive_bools)]
 pub async fn clean_jobs(
     job_id: Option<&str>,
     all: bool,
     older_than: Option<&str>,
+    clean_workspace: bool,
     skip_confirm: bool,
     debug: bool,
 ) -> Result<()> {
@@ -480,13 +576,13 @@ pub async fn clean_jobs(
         return Ok(());
     };
 
-    if jobs_to_clean.is_empty() {
+    if jobs_to_clean.is_empty() && !clean_workspace {
         println!("No jobs to clean.");
         return Ok(());
     }
 
-    // Show jobs and confirm if multiple
-    if jobs_to_clean.len() > 1 || all || older_than.is_some() {
+    // Show jobs and confirm
+    if !jobs_to_clean.is_empty() && (jobs_to_clean.len() > 1 || all || older_than.is_some()) {
         println!("Jobs to clean:");
         for job in &jobs_to_clean {
             println!(
@@ -497,32 +593,56 @@ pub async fn clean_jobs(
             );
         }
         println!();
-
-        if !skip_confirm && !confirm("Delete these jobs and their remote files?")? {
-            println!("Cancelled.");
-            return Ok(());
-        }
     }
 
+    if clean_workspace {
+        println!("{}", style("WARNING: This will also delete the shared workspace!").red().bold());
+    }
+
+    if !skip_confirm && !confirm("Proceed with cleanup?")? {
+        println!("Cancelled.");
+        return Ok(());
+    }
+
+    // Clean job directories
     for job in &jobs_to_clean {
         print!("Cleaning {}... ", job.id);
 
-        // Delete remote directory
+        // Delete job directory (logs/metadata only, not workspace)
         let ssh = SshClient::new(&job.remote_host, debug);
-        if let Err(e) = ssh.rm_rf(&job.remote_path).await {
-            eprintln!("warning: could not delete remote directory: {e}");
+        let job_dir = format!(
+            "{}/.fleche/jobs/{}",
+            job.remote_path.trim_end_matches("/workspace").trim_end_matches("/.fleche/workspace"),
+            job.id
+        );
+        if let Err(e) = ssh.rm_rf(&job_dir).await {
+            eprintln!("warning: could not delete job directory: {e}");
         }
 
-        // Delete from registry
         registry.delete_job(&job.id)?;
         println!("{}", style("done").green());
     }
 
-    println!(
-        "\n{} Cleaned {} job(s)",
-        style("✓").green(),
-        jobs_to_clean.len()
-    );
+    // Clean workspace if requested
+    if clean_workspace {
+        if let Some(job) = jobs_to_clean.first() {
+            let ssh = SshClient::new(&job.remote_host, debug);
+            print!("Cleaning workspace... ");
+            if let Err(e) = ssh.rm_rf(&job.remote_path).await {
+                eprintln!("warning: could not delete workspace: {e}");
+            } else {
+                println!("{}", style("done").green());
+            }
+        }
+    }
+
+    if !jobs_to_clean.is_empty() {
+        println!(
+            "\n{} Cleaned {} job(s)",
+            style("✓").green(),
+            jobs_to_clean.len()
+        );
+    }
 
     Ok(())
 }
@@ -545,14 +665,10 @@ fn generate_job_id(job_name: &str) -> String {
 }
 
 /// Follows job logs and automatically exits when the job finishes.
-///
-/// Starts a tail -f process and monitors the job status in parallel.
-/// When the job reaches a terminal state (completed, failed, cancelled),
-/// the tail process is killed and this function returns.
 async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool) -> Result<()> {
     println!(
         "{}",
-        style("Following output (will exit when job completes)...").yellow()
+        style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
     );
 
     let ssh = SshClient::new(host, debug);
@@ -596,7 +712,6 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool
                 _ => "Job finished.",
             };
 
-            // Print status message
             match status {
                 JobStatus::Completed => {
                     println!("{}", style(message).green().bold());
@@ -636,7 +751,7 @@ fn print_job_details(job: &JobRecord, status: JobStatus) {
         format_status(status)
     );
     println!("  {:<14} {}", style("Remote Host:").bold(), job.remote_host);
-    println!("  {:<14} {}", style("Remote Path:").bold(), job.remote_path);
+    println!("  {:<14} {}", style("Workspace:").bold(), job.remote_path);
     println!(
         "  {:<14} {}",
         style("Created:").bold(),
@@ -660,7 +775,6 @@ fn print_job_details(job: &JobRecord, status: JobStatus) {
 
 /// Prints a table of jobs.
 fn print_job_table(jobs: &[JobRecord]) {
-    // Header
     println!(
         "{:<45} {:<12} {:<12} {:<20}",
         style("ID").bold().underlined(),
@@ -682,7 +796,6 @@ fn print_job_table(jobs: &[JobRecord]) {
 
 /// Formats a job status with appropriate colors and fixed width.
 fn format_status(status: JobStatus) -> String {
-    // Pad the text before applying color so ANSI codes don't affect alignment
     match status {
         JobStatus::Pending => style(format!("{:<12}", "pending")).yellow().to_string(),
         JobStatus::Running => style(format!("{:<12}", "running")).blue().to_string(),
