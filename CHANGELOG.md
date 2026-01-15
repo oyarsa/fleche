@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.2] - 2026-01-15
+
+### Fixed
+- Updated README for v5.0.0 changes
+
 ## [5.0.1] - 2026-01-15
 
 ### Fixed

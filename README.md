@@ -6,10 +6,12 @@ A CLI tool for submitting and managing jobs on remote Slurm clusters via SSH. El
 
 - **Submit jobs** to remote Slurm clusters via SSH
 - **Sync project code** respecting `.gitignore`, plus explicit input files
-- **Track job status** and retrieve outputs
+- **Stream output** in real-time by default
+- **Track job status** and download outputs
+- **Direct SSH execution** for quick tests without Slurm
+- **Job chaining** via shared workspace
 - **Parameterized jobs** via environment variable overrides
 - **Job tagging** for organization and filtering
-- **Centralized job registry** across all projects
 
 ## Installation
 
@@ -35,17 +37,20 @@ fleche check
 # Preview what would be submitted
 fleche run <job-name> --dry-run
 
-# Submit a job
+# Submit a job (streams output by default)
 fleche run <job-name>
+
+# Submit without streaming
+fleche run <job-name> --bg
 
 # Check status
 fleche status
 
-# View logs
-fleche logs <job-id>
+# View logs (defaults to most recent job)
+fleche logs
 
 # Download results
-fleche sync <job-id>
+fleche download
 ```
 
 ## Configuration
@@ -57,7 +62,7 @@ fleche looks for `fleche.toml` in the current directory or parent directories.
 ```toml
 [remote]
 host = "cluster"          # SSH host from ~/.ssh/config
-base_path = "~/fleche"    # Where jobs are stored on remote
+base_path = "~/fleche"    # Where projects are stored on remote
 
 [jobs.train]
 command = "python train.py"
@@ -78,19 +83,19 @@ HF_HOME = "/scratch/cache"
 PYTHONUNBUFFERED = "1"
 
 [slurm]                   # Default Slurm settings
-partition = "cpu"
-time = "1:00:00"
+partition = "gpu"
+time = "4:00:00"
+gpus = 1
 
 [jobs.train]
-command = "scripts/train.sh"
-inputs = ["data/"]        # Sync these before running (even if gitignored)
-outputs = ["results/"]    # Pull these after completion
+command = "python train.py"
+inputs = ["data/"]        # gitignored files to copy to workspace
+outputs = ["checkpoints/"]# files to download after completion
 
 [jobs.train.slurm]        # Override Slurm settings for this job
-partition = "gpu"
-gpus = 1
-time = "8:00:00"
-memory = "32G"
+gpus = 4
+time = "24:00:00"
+memory = "64G"
 
 [jobs.train.env]          # Additional env vars for this job
 CONFIG = "default"
@@ -102,25 +107,25 @@ Jobs can also be defined in `fleche/*.toml`. The filename becomes the job name:
 
 ```
 fleche/
-  train_basic.toml
-  train_advanced.toml
-  experiments/ablation_v1.toml  # -> job name: experiments/ablation_v1
+  train.toml
+  eval.toml
+  experiments/ablation.toml  # -> job name: experiments/ablation
 ```
 
 ## Commands
 
-| Command                   | Description                      |
-|---------------------------|----------------------------------|
-| `fleche run [job] [opts]` | Submit a job to the cluster      |
-| `fleche status [job-id]`  | Show job status                  |
-| `fleche logs <job-id>`    | View job output                  |
-| `fleche sync <job-id>`    | Pull output files                |
-| `fleche list`             | List all jobs                    |
-| `fleche cancel <job-id>`  | Cancel a job                     |
-| `fleche clean [job-id]`   | Remove job and remote files      |
-| `fleche init`             | Create starter config            |
-| `fleche check`            | Validate config                  |
-| `fleche guide`            | Print comprehensive usage guide  |
+| Command                      | Description                                    |
+|------------------------------|------------------------------------------------|
+| `fleche run [job\|cmd] [opts]` | Submit a job to the cluster                   |
+| `fleche exec <cmd>`          | Run command directly via SSH (no Slurm)        |
+| `fleche status [job-id]`     | Show job status (defaults to listing all)      |
+| `fleche logs [job-id]`       | View job output (defaults to most recent)      |
+| `fleche download [job-id]`   | Pull output files (defaults to most recent)    |
+| `fleche cancel [job-id]`     | Cancel a job (defaults to most recent active)  |
+| `fleche clean [job-id]`      | Remove job and remote files                    |
+| `fleche init`                | Create starter config                          |
+| `fleche check`               | Validate config                                |
+| `fleche guide`               | Print comprehensive usage guide                |
 
 ### Run Options
 
@@ -137,22 +142,17 @@ Options:
   --cpus <n>            Override CPU count
   --memory <size>       Override memory
   --constraint <str>    Override constraint
-  --follow              Tail output after submission
+  --bg                  Run in background (don't stream output)
   --dry-run             Print sbatch script without submitting
 ```
 
-### List Options
+### Status Options
 
 ```bash
-fleche list [options]
+fleche status [job-id] [options]
 
 Options:
-  --project <path>      Filter by project path
-  --status <status>     Filter by status
-  --tag <KEY=VALUE>     Filter by tag (repeatable)
-  --failed              Shorthand for --status failed
-  --running             Shorthand for --status running
-  --completed           Shorthand for --status completed
+  --filter <status>     Filter by status (pending, running, completed, failed, cancelled)
 ```
 
 ## Common Workflows
@@ -182,8 +182,31 @@ Uses train's Slurm config but runs a different command.
 Run without a job definition:
 
 ```bash
-fleche run --command "hostname" --partition cpu --time 0:05:00
+fleche run "python test.py" --partition cpu --time 0:30:00
 ```
+
+### Direct SSH Execution
+
+For quick tests without waiting in the Slurm queue:
+
+```bash
+fleche exec "python test.py"
+fleche exec "ls -la"
+```
+
+This syncs your project and runs the command directly over SSH.
+
+### Job Chaining
+
+Jobs share a workspace, so outputs from one job are available to the next:
+
+```bash
+fleche run train          # Creates checkpoints/
+fleche run eval           # Can read checkpoints/ from train
+fleche download           # Download results from eval
+```
+
+No need for explicit dependencies - files persist in the shared workspace.
 
 ### Tagging Jobs
 
@@ -191,27 +214,30 @@ Add tags to track experiments:
 
 ```bash
 fleche run train --env CONFIG=llama --tag experiment=ablation --tag model=8b
-fleche list --tag experiment=ablation
+fleche status --filter running
 ```
 
 ### Monitoring
 
 ```bash
-# View logs (shows both stdout and stderr by default)
-fleche logs <job-id>
+# View logs (defaults to most recent job)
+fleche logs
 
 # Show only the last 50 lines
-fleche logs <job-id> -n 50
+fleche logs -n 50
 
 # Show only stdout or only stderr
-fleche logs <job-id> --stdout
-fleche logs <job-id> --stderr
+fleche logs --stdout
+fleche logs --stderr
 
 # Stream logs in real-time (Ctrl+C to disconnect; job keeps running)
-fleche logs <job-id> --follow
+fleche logs --follow
 
 # Pull outputs while job is still running
-fleche sync <job-id> --partial
+fleche download --partial
+
+# Download a specific path
+fleche download --path results/metrics.json
 ```
 
 ### Cleanup
@@ -225,6 +251,9 @@ fleche clean --all
 
 # Remove jobs older than 7 days
 fleche clean --older-than 7d
+
+# Also delete the shared workspace
+fleche clean --all --workspace
 ```
 
 ## Architecture
@@ -236,6 +265,32 @@ fleche runs entirely on your local machine. All cluster interaction happens via 
 
 There is no agent or daemon on the remote server. This approach leverages your existing SSH configuration (`~/.ssh/config`), ssh-agent, ProxyJump, etc.
 
+## Remote Directory Structure
+
+All jobs share a workspace directory:
+
+```
+<base_path>/<project>/
+  .fleche/
+    workspace/          # Shared workspace (project code + inputs)
+      train.py
+      data/
+      checkpoints/
+    jobs/               # Per-job logs and metadata
+      train-abc123/
+        job.sbatch
+        job.out
+        job.err
+      eval-def456/
+        ...
+```
+
+- Project code is synced to `workspace/`, respecting `.gitignore`
+- Files in `inputs` are copied to `workspace/` (for gitignored data)
+- Job commands run with `workspace/` as their working directory
+- Job logs go to `jobs/<job-id>/`
+- `fleche download` copies `outputs` from `workspace/` to local
+
 ## File Locations
 
 | Purpose                  | Location                                     |
@@ -243,44 +298,21 @@ There is no agent or daemon on the remote server. This approach leverages your e
 | Project config           | `fleche.toml` in repository root             |
 | Job definitions          | `fleche/*.toml` in repository root           |
 | Job registry             | `~/.config/fleche/jobs.db` (SQLite)          |
-| Remote working directory | `<base_path>/<project>/.fleche/<job-id>/`    |
-| Shared input cache       | `<base_path>/<project>/.fleche/cache/`       |
-
-## Shared Input Cache
-
-Input files are stored in a shared cache to avoid duplicating large datasets across jobs.
-All job artifacts live under `.fleche/`, so you can add it to `.gitignore` on the remote:
-
-```
-<base_path>/<project>/.fleche/
-  cache/
-    data/              # Shared input data
-    models/            # Shared model files
-  train-abc123/
-    data -> ../cache/data      # Symlink to cache
-    models -> ../cache/models
-  train-def456/
-    data -> ../cache/data      # Same cache, no duplication
-```
-
-When you run a job:
-1. Inputs are synced to `.fleche/cache/<input-path>`
-2. A symlink is created in the job directory pointing to the cache
-3. Subsequent jobs reuse the cache (rsync updates changed files)
-
-This means running 10 jobs with `inputs = ["data/"]` only stores one copy of `data/` on the cluster.
+| Remote workspace         | `<base_path>/<project>/.fleche/workspace/`   |
+| Remote job logs          | `<base_path>/<project>/.fleche/jobs/<id>/`   |
 
 ## Job Lifecycle
 
 1. **Config loaded** from `fleche.toml` and `fleche/*.toml`
 2. **Job resolved** with merged settings (global -> job -> CLI)
 3. **Job ID generated** with timestamp and random suffix
-4. **Remote directory created**
-5. **Project code synced** via rsync (respects `.gitignore`)
-6. **Inputs synced to shared cache** and symlinked into job directory
-7. **sbatch script generated and uploaded**
+4. **Remote directories created** (workspace + job dir)
+5. **Project code synced** to workspace via rsync (respects `.gitignore`)
+6. **Input files synced** to workspace
+7. **sbatch script generated and uploaded** to job dir
 8. **Job submitted** to Slurm
 9. **Job recorded** in local registry
+10. **Output streamed** (unless `--bg`)
 
 ## Slurm Options
 
@@ -318,8 +350,10 @@ These can be set in config or passed via CLI:
 
 - Use `--dry-run` to preview the sbatch script before submitting
 - Use `fleche check` to validate config after editing
-- Job IDs look like `train-20260114-153042-847-x7k2`
-- Ctrl+C during `--follow` disconnects but doesn't cancel the job
+- Job IDs look like `train-20260115-153042-847-x7k2`
+- Ctrl+C during streaming disconnects but doesn't cancel the job
+- Use `fleche exec` for quick tests without Slurm queue wait
+- Jobs share workspace, so chained jobs can read each other's outputs
 - The job registry is at `~/.config/fleche/jobs.db`
 
 ## License
