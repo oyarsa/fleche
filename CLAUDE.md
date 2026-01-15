@@ -14,10 +14,11 @@ Always run `just check-all` before saying you're done. This runs clippy, rustfmt
 
 ## Versioning
 
-- Bump version in `Cargo.toml` when making changes (batch related changes together)
-- **Minor** (0.x.0): new features, significant changes
-- **Patch** (0.0.x): bug fixes, refactors, documentation, tests
-- Update `CHANGELOG.md` when bumping version (Added/Changed/Fixed/Removed sections)
+Simple incrementing: `MAJOR.MINOR.0` (e.g., `2.0.0`, `2.1.0`, `3.0.0`)
+
+- **Major**: bump for new releases with features (1.0.0 → 2.0.0)
+- **Minor**: bump for fixes/patches to a release (2.0.0 → 2.1.0)
+- Update `CHANGELOG.md` when bumping version
 
 ## Code Style
 

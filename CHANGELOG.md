@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.0] - 2025-01-15
+## [2.0.0] - 2025-01-15
 
 ### Added
 - Auto-exit follow mode when job completes (no more manual Ctrl+C needed)
@@ -20,10 +20,9 @@ All notable changes to this project will be documented in this file.
 - Suppress `tail -F` stderr to hide "file doesn't exist" messages
 - Extracted `parse_squeue_state` and `parse_sacct_state` for testability
 
-## [0.1.0] - 2025-01-15
+## [0.1.0] - 2025-01-15 (pre-CalVer)
 
-### Added
-- Initial release
+Initial release with core functionality:
 - Submit jobs to remote Slurm clusters via SSH
 - Job configuration via `fleche.toml` and `fleche/*.toml` files
 - Commands: run, status, logs, sync, list, cancel, clean, init, check, guide
