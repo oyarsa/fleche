@@ -24,10 +24,11 @@ When releasing:
 
 ## Versioning
 
-Simple incrementing: `MAJOR.MINOR.0` (e.g., `2.0.0`, `2.1.0`, `3.0.0`)
+Standard semver: `MAJOR.MINOR.PATCH` (e.g., `5.0.0`, `5.0.1`, `5.1.0`)
 
-- **Major**: bump for new releases with features (1.0.0 → 2.0.0)
-- **Minor**: bump for fixes/patches to a release (2.0.0 → 2.1.0)
+- **Major**: breaking changes or major new features (1.0.0 → 2.0.0)
+- **Minor**: new features, backwards compatible (5.0.0 → 5.1.0)
+- **Patch**: bug fixes (5.0.0 → 5.0.1)
 - Update `CHANGELOG.md` when bumping version
 
 ## Code Style
