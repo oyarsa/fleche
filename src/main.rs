@@ -106,8 +106,9 @@ async fn run() -> Result<()> {
             follow,
             stderr,
             both,
+            tail,
         } => {
-            job::show_logs(&job_id, follow, stderr, both).await?;
+            job::show_logs(&job_id, follow, stderr, both, tail).await?;
         }
 
         Commands::Sync { job_id, partial } => {

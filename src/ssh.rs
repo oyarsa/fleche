@@ -102,9 +102,14 @@ impl SshClient {
         Ok(())
     }
 
-    /// Reads the contents of a file on the remote host.
-    pub async fn cat(&self, path: &str) -> Result<String> {
-        self.exec(&format!("cat {}", shell_escape(path))).await
+    /// Reads a file, optionally limiting to the last N lines.
+    pub async fn cat_tail(&self, path: &str, tail: Option<usize>) -> Result<String> {
+        let cmd = if let Some(n) = tail {
+            format!("tail -n {n} {}", shell_escape(path))
+        } else {
+            format!("cat {}", shell_escape(path))
+        };
+        self.exec(&cmd).await
     }
 
     /// Spawns a process that follows a file on the remote host.

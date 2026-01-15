@@ -99,6 +99,10 @@ pub enum Commands {
         /// Show both stdout and stderr
         #[arg(long)]
         both: bool,
+
+        /// Show only the last N lines
+        #[arg(short = 'n', long)]
+        tail: Option<usize>,
     },
 
     /// Pull output files from a completed job to local project directory

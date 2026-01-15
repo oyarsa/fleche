@@ -200,7 +200,14 @@ pub async fn show_status(job_id: Option<&str>) -> Result<()> {
 /// Displays logs from a job's stdout or stderr.
 ///
 /// Can show the current content, follow in real-time, or show both streams.
-pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> Result<()> {
+/// Optionally limits output to the last N lines with `tail`.
+pub async fn show_logs(
+    job_id: &str,
+    follow: bool,
+    stderr: bool,
+    both: bool,
+    tail: Option<usize>,
+) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
     let ssh = SshClient::new(&job.remote_host);
@@ -208,7 +215,7 @@ pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> 
     if both {
         println!("{}", style("=== STDOUT ===").bold());
         let stdout_path = format!("{}/job.out", job.remote_path);
-        match ssh.cat(&stdout_path).await {
+        match ssh.cat_tail(&stdout_path, tail).await {
             Ok(content) => print!("{content}"),
             Err(e) => eprintln!("Error reading stdout: {e}"),
         }
@@ -216,7 +223,7 @@ pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> 
         println!();
         println!("{}", style("=== STDERR ===").bold());
         let stderr_path = format!("{}/job.err", job.remote_path);
-        match ssh.cat(&stderr_path).await {
+        match ssh.cat_tail(&stderr_path, tail).await {
             Ok(content) => print!("{content}"),
             Err(e) => eprintln!("Error reading stderr: {e}"),
         }
@@ -239,7 +246,7 @@ pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> 
         let log_file = if stderr { "job.err" } else { "job.out" };
         let log_path = format!("{}/{}", job.remote_path, log_file);
 
-        let content = ssh.cat(&log_path).await?;
+        let content = ssh.cat_tail(&log_path, tail).await?;
         print!("{content}");
     }
 
