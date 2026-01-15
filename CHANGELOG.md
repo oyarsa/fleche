@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.2.0] - 2026-01-15
+
+### Added
+- SSH verbose output now always logged to `~/.config/fleche/ssh.log` for debugging intermittent connection issues (auto-truncates at 1MB)
+
 ## [3.1.0] - 2026-01-15
 
 ### Added

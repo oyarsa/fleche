@@ -3,19 +3,61 @@
 //! This module provides a simple SSH client that wraps the system's `ssh` command
 //! to execute commands on remote hosts. It handles shell escaping and provides
 //! convenience methods for common file operations.
+//!
+//! SSH verbose output is always logged to `~/.config/fleche/ssh.log` for debugging
+//! intermittent connection issues.
 
 use crate::error::{FlecheError, Result};
+use chrono::Utc;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
+
+/// Returns the path to the SSH log file (`~/.config/fleche/ssh.log`).
+fn ssh_log_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|p| p.join("fleche").join("ssh.log"))
+}
+
+/// Appends SSH verbose output to the log file.
+fn append_to_ssh_log(host: &str, command: &str, stderr: &str) {
+    let Some(log_path) = ssh_log_path() else {
+        return;
+    };
+
+    // Ensure parent directory exists
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // Truncate log if it's too large (> 1MB)
+    if let Ok(metadata) = std::fs::metadata(&log_path) {
+        if metadata.len() > 1_000_000 {
+            let _ = File::create(&log_path); // Truncate
+        }
+    }
+
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) else {
+        return;
+    };
+
+    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    let _ = writeln!(file, "\n=== [{timestamp}] ssh {host} {command} ===");
+    let _ = writeln!(file, "{stderr}");
+}
 
 /// A client for executing commands on a remote host via SSH.
 ///
 /// Uses the system's `ssh` command under the hood, so SSH keys and config
 /// should be set up in `~/.ssh/config` for passwordless authentication.
+///
+/// All SSH commands run with `-v` for verbose output, which is logged to
+/// `~/.config/fleche/ssh.log` for debugging connection issues.
 pub struct SshClient {
     /// The remote host to connect to (can be a hostname or SSH config alias).
     host: String,
-    /// Enable verbose SSH output for debugging.
+    /// Print verbose SSH output to terminal (in addition to logging).
     debug: bool,
 }
 
@@ -23,7 +65,7 @@ impl SshClient {
     /// Creates a new SSH client for the given host.
     ///
     /// The host can be a hostname, IP address, or an alias defined in `~/.ssh/config`.
-    /// Set `debug` to true to enable verbose SSH output (`-v` flag).
+    /// Set `debug` to true to print verbose SSH output to terminal.
     pub fn new(host: &str, debug: bool) -> Self {
         SshClient {
             host: host.to_string(),
@@ -31,18 +73,16 @@ impl SshClient {
         }
     }
 
-    /// Returns the base SSH arguments, including `-v` if debug mode is enabled.
+    /// Returns the base SSH arguments (always includes `-v` for logging).
+    #[allow(clippy::unused_self)]
     fn ssh_args(&self) -> Vec<&str> {
-        let mut args = vec!["-o", "ClearAllForwardings=yes"];
-        if self.debug {
-            args.push("-v");
-        }
-        args
+        vec!["-v", "-o", "ClearAllForwardings=yes"]
     }
 
     /// Executes a command on the remote host and returns its stdout.
     ///
     /// Returns an error if the command exits with a non-zero status.
+    /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec(&self, command: &str) -> Result<String> {
         let output = Command::new("ssh")
             .args(self.ssh_args())
@@ -52,8 +92,14 @@ impl SshClient {
             .await
             .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
 
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        append_to_ssh_log(&self.host, command, &stderr);
+
+        if self.debug {
+            eprint!("{stderr}");
+        }
+
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             return Err(FlecheError::SshCommand(format!(
                 "Command failed with exit code {:?}\nstdout: {}\nstderr: {}",
@@ -70,6 +116,7 @@ impl SshClient {
     ///
     /// Returns a tuple of (success, stdout, stderr) regardless of exit status.
     /// Only returns an error if the SSH connection itself fails.
+    /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec_allow_failure(&self, command: &str) -> Result<(bool, String, String)> {
         let output = Command::new("ssh")
             .args(self.ssh_args())
@@ -81,6 +128,12 @@ impl SshClient {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        append_to_ssh_log(&self.host, command, &stderr);
+
+        if self.debug {
+            eprint!("{stderr}");
+        }
 
         Ok((output.status.success(), stdout, stderr))
     }
