@@ -204,15 +204,37 @@ pub async fn show_status(job_id: Option<&str>) -> Result<()> {
 pub async fn show_logs(
     job_id: &str,
     follow: bool,
-    stderr: bool,
-    both: bool,
+    only_stdout: bool,
+    only_stderr: bool,
     tail: Option<usize>,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
     let ssh = SshClient::new(&job.remote_host);
 
-    if both {
+    // Determine which streams to show
+    // Default: show both. If --stdout or --stderr specified, show only that one.
+    let show_stdout = !only_stderr || only_stdout;
+    let show_stderr = !only_stdout || only_stderr;
+    let show_both = show_stdout && show_stderr;
+
+    if follow {
+        // Follow mode: can only follow one file at a time
+        let log_file = if only_stderr { "job.err" } else { "job.out" };
+        let log_path = format!("{}/{}", job.remote_path, log_file);
+
+        if let Some(ref slurm_id) = job.slurm_id {
+            follow_job_logs(&job.remote_host, slurm_id, &log_path).await?;
+        } else {
+            // No slurm ID, just follow without status monitoring
+            println!(
+                "{}",
+                style("Following output (Ctrl+C to disconnect)...").yellow()
+            );
+            let mut child = ssh.tail_follow(&log_path)?;
+            let _ = child.wait().await;
+        }
+    } else if show_both {
         println!("{}", style("=== STDOUT ===").bold());
         let stdout_path = format!("{}/job.out", job.remote_path);
         match ssh.cat_tail(&stdout_path, tail).await {
@@ -227,23 +249,8 @@ pub async fn show_logs(
             Ok(content) => print!("{content}"),
             Err(e) => eprintln!("Error reading stderr: {e}"),
         }
-    } else if follow {
-        let log_file = if stderr { "job.err" } else { "job.out" };
-        let log_path = format!("{}/{}", job.remote_path, log_file);
-
-        if let Some(ref slurm_id) = job.slurm_id {
-            follow_job_logs(&job.remote_host, slurm_id, &log_path).await?;
-        } else {
-            // No slurm ID, just follow without status monitoring
-            println!(
-                "{}",
-                style("Following output (Ctrl+C to disconnect)...").yellow()
-            );
-            let mut child = ssh.tail_follow(&log_path)?;
-            let _ = child.wait().await;
-        }
     } else {
-        let log_file = if stderr { "job.err" } else { "job.out" };
+        let log_file = if show_stderr { "job.err" } else { "job.out" };
         let log_path = format!("{}/{}", job.remote_path, log_file);
 
         let content = ssh.cat_tail(&log_path, tail).await?;

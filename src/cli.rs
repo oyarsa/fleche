@@ -92,13 +92,13 @@ pub enum Commands {
         #[arg(long)]
         follow: bool,
 
-        /// Show stderr instead of stdout
+        /// Show only stdout (default shows both stdout and stderr)
+        #[arg(long)]
+        stdout: bool,
+
+        /// Show only stderr (default shows both stdout and stderr)
         #[arg(long)]
         stderr: bool,
-
-        /// Show both stdout and stderr
-        #[arg(long)]
-        both: bool,
 
         /// Show only the last N lines
         #[arg(short = 'n', long)]
