@@ -143,11 +143,18 @@ fleche list --tag experiment=ablation
 ### Monitoring
 
 ```bash
-# Stream logs (Ctrl+C to disconnect; job keeps running)
-fleche logs <job-id> --follow
+# View logs (shows both stdout and stderr by default)
+fleche logs <job-id>
 
-# Check stderr
+# Show only the last 50 lines
+fleche logs <job-id> -n 50
+
+# Show only stdout or only stderr
+fleche logs <job-id> --stdout
 fleche logs <job-id> --stderr
+
+# Stream logs in real-time (Ctrl+C to disconnect; job keeps running)
+fleche logs <job-id> --follow
 
 # Pull outputs while job is still running
 fleche sync <job-id> --partial
