@@ -78,7 +78,7 @@ impl SshClient {
     pub fn tail_follow(&self, path: &str) -> Result<tokio::process::Child> {
         let child = Command::new("ssh")
             .arg(&self.host)
-            .arg(format!("tail -f {}", shell_escape(path)))
+            .arg(format!("tail -F {}", shell_escape(path)))
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
