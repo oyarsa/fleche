@@ -40,6 +40,7 @@ pub async fn run_job(
     slurm_overrides: SlurmConfig,
     follow: bool,
     dry_run: bool,
+    debug: bool,
 ) -> Result<()> {
     let job = config.resolve_job(job_name, command_override, env_overrides, &slurm_overrides)?;
     let job_id = generate_job_id(&job.name);
@@ -65,7 +66,7 @@ pub async fn run_job(
         return Ok(());
     }
 
-    let ssh = SshClient::new(&config.remote.host);
+    let ssh = SshClient::new(&config.remote.host, debug);
 
     // Create remote directory
     println!(
@@ -151,7 +152,7 @@ pub async fn run_job(
     if follow {
         println!();
         let log_path = format!("{remote_path}/job.out");
-        follow_job_logs(&config.remote.host, &slurm_id, &log_path).await?;
+        follow_job_logs(&config.remote.host, &slurm_id, &log_path, debug).await?;
     }
 
     Ok(())
@@ -161,12 +162,12 @@ pub async fn run_job(
 ///
 /// If a job ID is provided, shows detailed information about that job and
 /// queries Slurm for the current status. Otherwise, lists the 20 most recent jobs.
-pub async fn show_status(job_id: Option<&str>) -> Result<()> {
+pub async fn show_status(job_id: Option<&str>, debug: bool) -> Result<()> {
     let registry = Registry::open()?;
 
     if let Some(id) = job_id {
         let job = registry.get_job(id)?;
-        let ssh = SshClient::new(&job.remote_host);
+        let ssh = SshClient::new(&job.remote_host, debug);
 
         // Get current status from Slurm
         let current_status = if let Some(ref slurm_id) = job.slurm_id {
@@ -201,16 +202,18 @@ pub async fn show_status(job_id: Option<&str>) -> Result<()> {
 ///
 /// Can show the current content, follow in real-time, or show both streams.
 /// Optionally limits output to the last N lines with `tail`.
+#[allow(clippy::fn_params_excessive_bools)]
 pub async fn show_logs(
     job_id: &str,
     follow: bool,
     only_stdout: bool,
     only_stderr: bool,
     tail: Option<usize>,
+    debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
-    let ssh = SshClient::new(&job.remote_host);
+    let ssh = SshClient::new(&job.remote_host, debug);
 
     // Determine which streams to show
     // Default: show both. If --stdout or --stderr specified, show only that one.
@@ -224,7 +227,7 @@ pub async fn show_logs(
         let log_path = format!("{}/{}", job.remote_path, log_file);
 
         if let Some(ref slurm_id) = job.slurm_id {
-            follow_job_logs(&job.remote_host, slurm_id, &log_path).await?;
+            follow_job_logs(&job.remote_host, slurm_id, &log_path, debug).await?;
         } else {
             // No slurm ID, just follow without status monitoring
             println!(
@@ -263,7 +266,7 @@ pub async fn show_logs(
 /// Syncs output files from a completed job back to the local project directory.
 ///
 /// Warns if the job is still running unless `--partial` is specified.
-pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
+pub async fn sync_outputs(job_id: &str, partial: bool, debug: bool) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
 
@@ -272,7 +275,7 @@ pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
         && matches!(job.status, JobStatus::Pending | JobStatus::Running)
         && let Some(ref slurm_id) = job.slurm_id
     {
-        let ssh = SshClient::new(&job.remote_host);
+        let ssh = SshClient::new(&job.remote_host, debug);
         let current_status = get_job_status(&ssh, slurm_id).await.unwrap_or(job.status);
         if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
             eprintln!(
@@ -308,6 +311,7 @@ pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
 /// Lists jobs from the registry with optional filters.
 ///
 /// Automatically refreshes the status of pending/running jobs from Slurm.
+#[allow(clippy::fn_params_excessive_bools)]
 pub async fn list_jobs(
     project_filter: Option<&str>,
     status_filter: Option<&str>,
@@ -315,11 +319,12 @@ pub async fn list_jobs(
     failed: bool,
     running: bool,
     completed: bool,
+    debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
     // Refresh status for all pending/running jobs before applying filters
-    refresh_active_job_statuses(&registry).await?;
+    refresh_active_job_statuses(&registry, debug).await?;
 
     // Determine status filter
     let status = if failed {
@@ -347,12 +352,12 @@ pub async fn list_jobs(
 }
 
 /// Refreshes the status of all pending/running jobs from Slurm.
-async fn refresh_active_job_statuses(registry: &Registry) -> Result<()> {
+async fn refresh_active_job_statuses(registry: &Registry, debug: bool) -> Result<()> {
     let active_jobs = registry.list_active_jobs()?;
 
     for job in active_jobs {
         if let Some(ref slurm_id) = job.slurm_id {
-            let ssh = SshClient::new(&job.remote_host);
+            let ssh = SshClient::new(&job.remote_host, debug);
             if let Ok(status) = get_job_status(&ssh, slurm_id).await {
                 if status != job.status {
                     registry.update_status(&job.id, status)?;
@@ -365,7 +370,7 @@ async fn refresh_active_job_statuses(registry: &Registry) -> Result<()> {
 }
 
 /// Cancels a running or pending Slurm job.
-pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
+pub async fn cancel_slurm_job(job_id: &str, debug: bool) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
 
@@ -383,7 +388,7 @@ pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
         return Err(FlecheError::Other("Job has no Slurm ID".to_string()));
     };
 
-    let ssh = SshClient::new(&job.remote_host);
+    let ssh = SshClient::new(&job.remote_host, debug);
     cancel_job(&ssh, slurm_id).await?;
     registry.update_status(job_id, JobStatus::Cancelled)?;
     println!("{} Job {} cancelled", style("✓").green(), job_id);
@@ -394,7 +399,12 @@ pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
 /// Cleans up jobs by removing them from the registry and deleting remote files.
 ///
 /// Can clean a specific job, all finished jobs, or jobs older than a duration.
-pub async fn clean_job(job_id: Option<&str>, all: bool, older_than: Option<&str>) -> Result<()> {
+pub async fn clean_job(
+    job_id: Option<&str>,
+    all: bool,
+    older_than: Option<&str>,
+    debug: bool,
+) -> Result<()> {
     let registry = Registry::open()?;
 
     let jobs_to_clean: Vec<JobRecord> = if let Some(id) = job_id {
@@ -418,7 +428,7 @@ pub async fn clean_job(job_id: Option<&str>, all: bool, older_than: Option<&str>
         println!("Cleaning {}...", job.id);
 
         // Delete remote directory
-        let ssh = SshClient::new(&job.remote_host);
+        let ssh = SshClient::new(&job.remote_host, debug);
         if let Err(e) = ssh.rm_rf(&job.remote_path).await {
             eprintln!("  Warning: Could not delete remote directory: {e}");
         }
@@ -458,13 +468,13 @@ fn generate_job_id(job_name: &str) -> String {
 /// Starts a tail -f process and monitors the job status in parallel.
 /// When the job reaches a terminal state (completed, failed, cancelled),
 /// the tail process is killed and this function returns.
-async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str) -> Result<()> {
+async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool) -> Result<()> {
     println!(
         "{}",
         style("Following output (will exit when job completes)...").yellow()
     );
 
-    let ssh = SshClient::new(host);
+    let ssh = SshClient::new(host, debug);
     let mut child = ssh.tail_follow(log_path)?;
 
     // Poll job status until it reaches a terminal state
@@ -473,7 +483,7 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str) -> Result<(
     let status_check = async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let ssh = SshClient::new(&host);
+            let ssh = SshClient::new(&host, debug);
             if let Ok(status) = get_job_status(&ssh, &slurm_id).await {
                 match status {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {

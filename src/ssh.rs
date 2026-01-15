@@ -15,16 +15,29 @@ use tokio::process::Command;
 pub struct SshClient {
     /// The remote host to connect to (can be a hostname or SSH config alias).
     host: String,
+    /// Enable verbose SSH output for debugging.
+    debug: bool,
 }
 
 impl SshClient {
     /// Creates a new SSH client for the given host.
     ///
     /// The host can be a hostname, IP address, or an alias defined in `~/.ssh/config`.
-    pub fn new(host: &str) -> Self {
+    /// Set `debug` to true to enable verbose SSH output (`-v` flag).
+    pub fn new(host: &str, debug: bool) -> Self {
         SshClient {
             host: host.to_string(),
+            debug,
         }
+    }
+
+    /// Returns the base SSH arguments, including `-v` if debug mode is enabled.
+    fn ssh_args(&self) -> Vec<&str> {
+        let mut args = vec!["-o", "ClearAllForwardings=yes"];
+        if self.debug {
+            args.push("-v");
+        }
+        args
     }
 
     /// Executes a command on the remote host and returns its stdout.
@@ -32,7 +45,7 @@ impl SshClient {
     /// Returns an error if the command exits with a non-zero status.
     pub async fn exec(&self, command: &str) -> Result<String> {
         let output = Command::new("ssh")
-            .args(["-o", "ClearAllForwardings=yes"])
+            .args(self.ssh_args())
             .arg(&self.host)
             .arg(command)
             .output()
@@ -59,7 +72,7 @@ impl SshClient {
     /// Only returns an error if the SSH connection itself fails.
     pub async fn exec_allow_failure(&self, command: &str) -> Result<(bool, String, String)> {
         let output = Command::new("ssh")
-            .args(["-o", "ClearAllForwardings=yes"])
+            .args(self.ssh_args())
             .arg(&self.host)
             .arg(command)
             .output()
@@ -117,16 +130,23 @@ impl SshClient {
     /// Uses `tail -F` which will retry if the file doesn't exist yet,
     /// making it suitable for following log files from jobs that are
     /// still pending in the queue. Stderr is suppressed to hide "file
-    /// doesn't exist" messages during the retry period.
+    /// doesn't exist" messages during the retry period (unless debug mode).
     ///
     /// The child process's stdout is inherited by the current process.
     pub fn tail_follow(&self, path: &str) -> Result<tokio::process::Child> {
+        // In debug mode, show stderr for SSH verbose output
+        let stderr_cfg = if self.debug {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        };
+
         let child = Command::new("ssh")
-            .args(["-o", "ClearAllForwardings=yes"])
+            .args(self.ssh_args())
             .arg(&self.host)
             .arg(format!("tail -F {} 2>/dev/null", shell_escape(path)))
             .stdout(Stdio::inherit())
-            .stderr(Stdio::null())
+            .stderr(stderr_cfg)
             .spawn()
             .map_err(|e| FlecheError::SshConnection(format!("Failed to spawn ssh: {e}")))?;
 
