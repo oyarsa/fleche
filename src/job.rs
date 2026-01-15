@@ -3,7 +3,9 @@ use crate::error::{FlecheError, Result};
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::{cancel_job, generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::SshClient;
-use crate::sync::{sync_from_remote, sync_input_cached, sync_to_remote};
+use crate::sync::{
+    SyncStats, estimate_sync_size, sync_from_remote, sync_input_cached, sync_to_remote,
+};
 use chrono::Utc;
 use console::style;
 use rand::Rng;
@@ -30,6 +32,14 @@ pub async fn run_job(
     let script = generate_sbatch_script(&job_id, &job);
 
     if dry_run {
+        // Estimate sync size
+        let stats = estimate_sync_size(&config.project_path, true).await?;
+        println!(
+            "{} Estimated sync: {}",
+            style("[dry-run]").bold().yellow(),
+            stats.human_readable()
+        );
+        println!();
         println!("{script}");
         return Ok(());
     }
@@ -44,14 +54,15 @@ pub async fn run_job(
     ssh.mkdir(&remote_path).await?;
 
     // Sync project code
-    println!("{} Syncing project code...", style("[2/5]").bold().dim());
-    sync_to_remote(
+    print!("{} Syncing project code...", style("[2/5]").bold().dim());
+    let stats = sync_to_remote(
         &config.project_path,
         &config.remote.host,
         &remote_path,
         true,
     )
     .await?;
+    println!(" {}", style(format!("({})", stats.human_readable())).dim());
 
     // Sync explicit inputs to shared cache
     let fleche_base = format!(
@@ -61,12 +72,13 @@ pub async fn run_job(
     if job.inputs.is_empty() {
         println!("{} No input files to sync", style("[3/5]").bold().dim());
     } else {
-        println!(
+        print!(
             "{} Syncing input files (cached)...",
             style("[3/5]").bold().dim()
         );
+        let mut total_bytes: u64 = 0;
         for input in &job.inputs {
-            sync_input_cached(
+            let stats = sync_input_cached(
                 &config.project_path,
                 input,
                 &config.remote.host,
@@ -75,7 +87,15 @@ pub async fn run_job(
                 &ssh,
             )
             .await?;
+            total_bytes += stats.bytes_sent;
         }
+        let total_stats = SyncStats {
+            bytes_sent: total_bytes,
+        };
+        println!(
+            " {}",
+            style(format!("({})", total_stats.human_readable())).dim()
+        );
     }
 
     // Upload script

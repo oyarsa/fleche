@@ -3,14 +3,51 @@ use crate::ssh::SshClient;
 use std::path::Path;
 use tokio::process::Command;
 
+/// Stats from an rsync transfer
+pub struct SyncStats {
+    pub bytes_sent: u64,
+}
+
+impl SyncStats {
+    fn parse_from_rsync_output(output: &str) -> Self {
+        // Parse "Total bytes sent: 1,234" from rsync --stats output
+        let bytes_sent = output
+            .lines()
+            .find(|line| line.starts_with("Total bytes sent:"))
+            .and_then(|line| {
+                line.strip_prefix("Total bytes sent:")
+                    .map(|s| s.trim().replace(',', "").parse().unwrap_or(0))
+            })
+            .unwrap_or(0);
+        Self { bytes_sent }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    pub fn human_readable(&self) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = 1024 * KB;
+        const GB: u64 = 1024 * MB;
+
+        if self.bytes_sent >= GB {
+            format!("{:.1} GB", self.bytes_sent as f64 / GB as f64)
+        } else if self.bytes_sent >= MB {
+            format!("{:.1} MB", self.bytes_sent as f64 / MB as f64)
+        } else if self.bytes_sent >= KB {
+            format!("{:.1} KB", self.bytes_sent as f64 / KB as f64)
+        } else {
+            format!("{} bytes", self.bytes_sent)
+        }
+    }
+}
+
 pub async fn sync_to_remote(
     source: &Path,
     host: &str,
     dest: &str,
     respect_gitignore: bool,
-) -> Result<()> {
+) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
-    cmd.args(["-avz", "--delete"]);
+    cmd.args(["-avz", "--delete", "--stats"]);
 
     if respect_gitignore {
         cmd.arg("--filter=:- .gitignore");
@@ -31,7 +68,33 @@ pub async fn sync_to_remote(
         return Err(FlecheError::RsyncFailed(format!("rsync failed: {stderr}")));
     }
 
-    Ok(())
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(SyncStats::parse_from_rsync_output(&stdout))
+}
+
+/// Estimate how much data would be transferred without actually syncing
+pub async fn estimate_sync_size(source: &Path, respect_gitignore: bool) -> Result<SyncStats> {
+    let mut cmd = Command::new("rsync");
+    // --dry-run doesn't transfer, just calculates
+    // Using /dev/null as dest since we just want to measure source
+    cmd.args(["-avz", "--dry-run", "--stats"]);
+
+    if respect_gitignore {
+        cmd.arg("--filter=:- .gitignore");
+    }
+
+    let source_str = format!("{}/", source.display());
+    cmd.arg(&source_str);
+    cmd.arg("/dev/null");
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
+
+    // Note: rsync dry-run to /dev/null may show warnings but still provides stats
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(SyncStats::parse_from_rsync_output(&stdout))
 }
 
 #[allow(dead_code)]
@@ -140,7 +203,7 @@ pub async fn sync_input_cached(
     fleche_base: &str, // e.g., ~/fleche/my-project/.fleche
     job_id: &str,
     ssh: &SshClient,
-) -> Result<()> {
+) -> Result<SyncStats> {
     let source_path = source_base.join(relative_path);
     let is_dir = source_path.is_dir();
 
@@ -159,7 +222,7 @@ pub async fn sync_input_cached(
 
     // Sync to cache
     let mut cmd = Command::new("rsync");
-    cmd.args(["-avz"]);
+    cmd.args(["-avz", "--stats"]);
 
     if is_dir {
         let source_str = format!("{}/", source_path.display());
@@ -183,6 +246,8 @@ pub async fn sync_input_cached(
         )));
     }
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
     // Create symlink in job directory
     // Job is at .fleche/<job-id>/, cache is at .fleche/cache/
     // So symlink target is: ../cache/<path>
@@ -198,5 +263,5 @@ pub async fn sync_input_cached(
 
     ssh.symlink(&symlink_target, &link_path).await?;
 
-    Ok(())
+    Ok(SyncStats::parse_from_rsync_output(&stdout))
 }
