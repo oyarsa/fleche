@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.0] - 2026-01-15
+
+### Added
+- SSH `ControlMaster` connection multiplexing to avoid rate limiting when running parallel commands
+- Automatic retry with exponential backoff for SSH connection failures (3 retries, 1s/2s/4s delays)
+- rsync now also uses `ControlMaster` for consistent connection sharing
+
+### Changed
+- SSH sockets stored in `~/.config/fleche/ssh-sockets/`
+- Connections persist for 10 minutes after last use (`ControlPersist=600`)
+
 ## [3.2.0] - 2026-01-15
 
 ### Added

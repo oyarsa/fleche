@@ -9,8 +9,23 @@ use crate::ssh::SshClient;
 use std::path::Path;
 use tokio::process::Command;
 
-/// SSH command with options to disable port forwarding from SSH config.
-const RSYNC_SSH_CMD: &str = "ssh -o ClearAllForwardings=yes";
+/// Returns the SSH command for rsync with `ControlMaster` options for connection multiplexing.
+fn rsync_ssh_cmd() -> String {
+    let mut cmd = "ssh -v -o ClearAllForwardings=yes".to_string();
+
+    // Add `ControlMaster` options if we can create the socket directory
+    if let Some(config_dir) = dirs::config_dir() {
+        let socket_dir = config_dir.join("fleche").join("ssh-sockets");
+        let _ = std::fs::create_dir_all(&socket_dir);
+        let control_path = socket_dir.join("%r@%h-%p");
+        cmd.push_str(&format!(
+            " -o `ControlMaster`=auto -o ControlPath={} -o ControlPersist=600",
+            control_path.display()
+        ));
+    }
+
+    cmd
+}
 
 /// Statistics from an rsync transfer.
 pub struct SyncStats {
@@ -67,7 +82,7 @@ pub async fn sync_to_remote(
     respect_gitignore: bool,
 ) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
-    cmd.args(["-e", RSYNC_SSH_CMD]);
+    cmd.args(["-e", &rsync_ssh_cmd()]);
     cmd.args(["-avz", "--delete", "--stats", "--exclude=.git"]);
 
     if respect_gitignore {
@@ -134,7 +149,7 @@ pub async fn sync_path_to_remote(
     let is_dir = source_path.is_dir();
 
     let mut cmd = Command::new("rsync");
-    cmd.args(["-e", RSYNC_SSH_CMD]);
+    cmd.args(["-e", &rsync_ssh_cmd()]);
     cmd.args(["-avz"]);
 
     if is_dir {
@@ -192,7 +207,7 @@ pub async fn sync_from_remote(
     }
 
     let mut cmd = Command::new("rsync");
-    cmd.args(["-e", RSYNC_SSH_CMD]);
+    cmd.args(["-e", &rsync_ssh_cmd()]);
     cmd.args(["-avz"]);
     cmd.arg(&remote_path);
 
@@ -259,7 +274,7 @@ pub async fn sync_input_cached(
 
     // Sync to cache
     let mut cmd = Command::new("rsync");
-    cmd.args(["-e", RSYNC_SSH_CMD]);
+    cmd.args(["-e", &rsync_ssh_cmd()]);
     cmd.args(["-avz", "--stats"]);
 
     if is_dir {

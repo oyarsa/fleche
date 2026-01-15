@@ -4,8 +4,12 @@
 //! to execute commands on remote hosts. It handles shell escaping and provides
 //! convenience methods for common file operations.
 //!
-//! SSH verbose output is always logged to `~/.config/fleche/ssh.log` for debugging
-//! intermittent connection issues.
+//! ## Features
+//!
+//! - **Connection multiplexing**: Uses SSH `ControlMaster` to share connections,
+//!   avoiding rate limiting issues with concurrent commands.
+//! - **Automatic retries**: Retries failed connections with exponential backoff.
+//! - **Verbose logging**: All SSH output logged to `~/.config/fleche/ssh.log`.
 
 use crate::error::{FlecheError, Result};
 use chrono::Utc;
@@ -13,11 +17,36 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::Command;
+
+/// Maximum number of retry attempts for SSH commands.
+const MAX_RETRIES: u32 = 3;
+
+/// Base delay for exponential backoff (doubles each retry).
+const RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
 /// Returns the path to the SSH log file (`~/.config/fleche/ssh.log`).
 fn ssh_log_path() -> Option<PathBuf> {
     dirs::config_dir().map(|p| p.join("fleche").join("ssh.log"))
+}
+
+/// Returns the directory for SSH `ControlMaster` sockets.
+/// Creates the directory if it doesn't exist.
+fn ssh_socket_dir() -> Option<PathBuf> {
+    let dir = dirs::config_dir().map(|p| p.join("fleche").join("ssh-sockets"))?;
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir)
+}
+
+/// Checks if an SSH error looks like a connection/auth failure that might succeed on retry.
+fn is_retryable_error(stderr: &str) -> bool {
+    stderr.contains("Permission denied")
+        || stderr.contains("Connection refused")
+        || stderr.contains("Connection reset")
+        || stderr.contains("Connection timed out")
+        || stderr.contains("No route to host")
+        || stderr.contains("Host is down")
 }
 
 /// Appends SSH verbose output to the log file.
@@ -73,51 +102,132 @@ impl SshClient {
         }
     }
 
-    /// Returns the base SSH arguments (always includes `-v` for logging).
+    /// Returns the base SSH arguments including `ControlMaster` for connection multiplexing.
     #[allow(clippy::unused_self)]
-    fn ssh_args(&self) -> Vec<&str> {
-        vec!["-v", "-o", "ClearAllForwardings=yes"]
+    fn ssh_args(&self) -> Vec<String> {
+        let mut args = vec![
+            "-v".to_string(),
+            "-o".to_string(),
+            "ClearAllForwardings=yes".to_string(),
+        ];
+
+        // Add `ControlMaster` options if we can create the socket directory
+        if let Some(socket_dir) = ssh_socket_dir() {
+            let control_path = socket_dir.join("%r@%h-%p");
+            args.extend([
+                "-o".to_string(),
+                "`ControlMaster`=auto".to_string(),
+                "-o".to_string(),
+                format!("ControlPath={}", control_path.display()),
+                "-o".to_string(),
+                "ControlPersist=600".to_string(),
+            ]);
+        }
+
+        args
     }
 
     /// Executes a command on the remote host and returns its stdout.
     ///
-    /// Returns an error if the command exits with a non-zero status.
+    /// Automatically retries on connection failures with exponential backoff.
     /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec(&self, command: &str) -> Result<String> {
-        let output = Command::new("ssh")
-            .args(self.ssh_args())
-            .arg(&self.host)
-            .arg(command)
-            .output()
-            .await
-            .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
+        let mut last_error = None;
 
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        append_to_ssh_log(&self.host, command, &stderr);
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let delay = RETRY_BASE_DELAY * 2_u32.pow(attempt - 1);
+                append_to_ssh_log(
+                    &self.host,
+                    command,
+                    &format!("Retry attempt {attempt}/{MAX_RETRIES} after {delay:?}"),
+                );
+                tokio::time::sleep(delay).await;
+            }
 
-        if self.debug {
-            eprint!("{stderr}");
-        }
+            let output = Command::new("ssh")
+                .args(self.ssh_args())
+                .arg(&self.host)
+                .arg(command)
+                .output()
+                .await
+                .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
 
-        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            append_to_ssh_log(&self.host, command, &stderr);
+
+            if self.debug {
+                eprint!("{stderr}");
+            }
+
+            if output.status.success() {
+                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(FlecheError::SshCommand(format!(
+            let error = FlecheError::SshCommand(format!(
                 "Command failed with exit code {:?}\nstdout: {}\nstderr: {}",
                 output.status.code(),
                 stdout,
                 stderr
-            )));
+            ));
+
+            // Only retry on connection/auth errors, not command failures
+            if !is_retryable_error(&stderr) {
+                return Err(error);
+            }
+
+            last_error = Some(error);
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Err(last_error.unwrap())
     }
 
     /// Executes a command on the remote host, allowing non-zero exit codes.
     ///
     /// Returns a tuple of (success, stdout, stderr) regardless of exit status.
     /// Only returns an error if the SSH connection itself fails.
+    /// Automatically retries on connection failures with exponential backoff.
     /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec_allow_failure(&self, command: &str) -> Result<(bool, String, String)> {
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let delay = RETRY_BASE_DELAY * 2_u32.pow(attempt - 1);
+                append_to_ssh_log(
+                    &self.host,
+                    command,
+                    &format!("Retry attempt {attempt}/{MAX_RETRIES} after {delay:?}"),
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            let output = Command::new("ssh")
+                .args(self.ssh_args())
+                .arg(&self.host)
+                .arg(command)
+                .output()
+                .await
+                .map_err(|e| FlecheError::SshConnection(format!("Failed to execute ssh: {e}")))?;
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+            append_to_ssh_log(&self.host, command, &stderr);
+
+            if self.debug {
+                eprint!("{stderr}");
+            }
+
+            // If SSH connection failed (not the remote command), retry
+            // SSH connection errors have exit code 255
+            if output.status.code() == Some(255) && is_retryable_error(&stderr) {
+                continue;
+            }
+
+            return Ok((output.status.success(), stdout, stderr));
+        }
+
+        // If we get here, all retries failed - return the last attempt's result
         let output = Command::new("ssh")
             .args(self.ssh_args())
             .arg(&self.host)
@@ -128,12 +238,6 @@ impl SshClient {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        append_to_ssh_log(&self.host, command, &stderr);
-
-        if self.debug {
-            eprint!("{stderr}");
-        }
 
         Ok((output.status.success(), stdout, stderr))
     }
