@@ -1,8 +1,19 @@
+//! Slurm workload manager integration.
+//!
+//! This module provides functions for generating sbatch scripts, submitting jobs
+//! to Slurm, querying job status, and cancelling jobs.
+
 use crate::config::{ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::registry::JobStatus;
 use crate::ssh::{SshClient, shell_escape};
 
+/// Generates an sbatch script for a job.
+///
+/// The script includes:
+/// - SBATCH directives for job name, output files, and resource requirements
+/// - Environment variable exports
+/// - The job command
 pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     let mut script = String::new();
 
@@ -66,6 +77,7 @@ pub fn generate_sbatch_script(job_id: &str, job: &ResolvedJob) -> String {
     script
 }
 
+/// Escapes special characters in a string for use in a bash double-quoted string.
 fn escape_bash_value(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
@@ -73,6 +85,10 @@ fn escape_bash_value(s: &str) -> String {
         .replace('`', "\\`")
 }
 
+/// Submits a job to Slurm using sbatch.
+///
+/// Expects a `job.sbatch` file to exist in `remote_dir`. Returns the Slurm job ID
+/// assigned to the submitted job.
 pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
     let output = ssh
         .exec(&format!(
@@ -96,6 +112,10 @@ pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
     Ok(slurm_id)
 }
 
+/// Queries the status of a Slurm job.
+///
+/// First checks `squeue` to see if the job is still in the queue (pending or running).
+/// If not found in the queue, falls back to `sacct` to get the final state.
 pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus> {
     // First try squeue to see if job is still in queue
     let (success, stdout, _) = ssh
@@ -134,24 +154,26 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
             "PENDING" => JobStatus::Pending,
             "RUNNING" => JobStatus::Running,
             _ => {
-                // Unknown state, try to infer from presence of output file
+                // Unknown state, assume failed
                 JobStatus::Failed
             }
         });
     }
 
-    // Fallback: check if job.out exists (job likely ran)
-    // This handles cases where sacct isn't available
     Err(FlecheError::Other(format!(
         "Could not determine status for slurm job {slurm_id}"
     )))
 }
 
+/// Cancels a Slurm job using scancel.
 pub async fn cancel_job(ssh: &SshClient, slurm_id: &str) -> Result<()> {
     ssh.exec(&format!("scancel {slurm_id}")).await?;
     Ok(())
 }
 
+/// Creates a [`SlurmConfig`] from CLI arguments.
+///
+/// Used to pass command-line overrides for Slurm options.
 pub fn slurm_config_from_cli(
     partition: Option<String>,
     time: Option<String>,

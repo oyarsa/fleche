@@ -1,16 +1,25 @@
+//! File synchronization using rsync.
+//!
+//! This module provides functions for syncing files between the local machine
+//! and a remote host using rsync. It supports both uploading project files to
+//! the remote and downloading outputs back.
+
 use crate::error::{FlecheError, Result};
 use crate::ssh::SshClient;
 use std::path::Path;
 use tokio::process::Command;
 
-/// Stats from an rsync transfer
+/// Statistics from an rsync transfer.
 pub struct SyncStats {
+    /// The number of bytes sent during the transfer.
     pub bytes_sent: u64,
 }
 
 impl SyncStats {
+    /// Parses transfer statistics from rsync's `--stats` output.
+    ///
+    /// Looks for the "Total bytes sent: X" line and extracts the byte count.
     fn parse_from_rsync_output(output: &str) -> Self {
-        // Parse "Total bytes sent: 1,234" from rsync --stats output
         let bytes_sent = output
             .lines()
             .find(|line| line.starts_with("Total bytes sent:"))
@@ -22,6 +31,7 @@ impl SyncStats {
         Self { bytes_sent }
     }
 
+    /// Formats the byte count as a human-readable string (e.g., "1.5 MB").
     #[allow(clippy::cast_precision_loss)]
     pub fn human_readable(&self) -> String {
         const KB: u64 = 1024;
@@ -40,6 +50,13 @@ impl SyncStats {
     }
 }
 
+/// Syncs a local directory to a remote host.
+///
+/// Uses rsync with compression (`-z`), archive mode (`-a`), and verbose output (`-v`).
+/// The `--delete` flag removes files on the remote that don't exist locally.
+/// The `.git` directory is always excluded.
+///
+/// If `respect_gitignore` is true, files matching patterns in `.gitignore` are excluded.
 pub async fn sync_to_remote(
     source: &Path,
     host: &str,
@@ -72,11 +89,12 @@ pub async fn sync_to_remote(
     Ok(SyncStats::parse_from_rsync_output(&stdout))
 }
 
-/// Estimate how much data would be transferred without actually syncing
+/// Estimates how much data would be transferred without actually syncing.
+///
+/// Performs a dry-run rsync to calculate the transfer size. Useful for
+/// showing progress information before a potentially long sync operation.
 pub async fn estimate_sync_size(source: &Path, respect_gitignore: bool) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
-    // --dry-run doesn't transfer, just calculates
-    // Using /dev/null as dest since we just want to measure source
     cmd.args(["-avz", "--dry-run", "--stats", "--exclude=.git"]);
 
     if respect_gitignore {
@@ -97,6 +115,10 @@ pub async fn estimate_sync_size(source: &Path, respect_gitignore: bool) -> Resul
     Ok(SyncStats::parse_from_rsync_output(&stdout))
 }
 
+/// Syncs a specific path (file or directory) to the remote host.
+///
+/// Unlike [`sync_to_remote`], this syncs a single path relative to a base directory,
+/// preserving the directory structure on the remote.
 #[allow(dead_code)]
 pub async fn sync_path_to_remote(
     source_base: &Path,
@@ -105,15 +127,13 @@ pub async fn sync_path_to_remote(
     dest_base: &str,
 ) -> Result<()> {
     let source_path = source_base.join(relative_path);
-
-    // Determine if it's a directory or file
     let is_dir = source_path.is_dir();
 
     let mut cmd = Command::new("rsync");
     cmd.args(["-avz"]);
 
     if is_dir {
-        // For directories, ensure trailing slash
+        // For directories, ensure trailing slash to copy contents
         let source_str = format!("{}/", source_path.display());
         let dest_str = format!("{host}:{dest_base}/{relative_path}/");
         cmd.arg(&source_str);
@@ -148,6 +168,10 @@ pub async fn sync_path_to_remote(
     Ok(())
 }
 
+/// Syncs a path from the remote host to the local machine.
+///
+/// Downloads a file or directory from `remote_base/relative_path` on the remote
+/// host to `local_base/relative_path` locally. Creates parent directories as needed.
 pub async fn sync_from_remote(
     host: &str,
     remote_base: &str,
@@ -189,18 +213,25 @@ pub async fn sync_from_remote(
     Ok(())
 }
 
-/// Sync an input path to a shared cache and create a symlink in the job directory.
+/// Syncs an input path to a shared cache and creates a symlink in the job directory.
 ///
-/// Cache structure:
-///   <`base_path`>/<project>/.fleche/cache/<input-path>
+/// This enables sharing large input files (like datasets) across multiple jobs
+/// without copying them each time. The cache is stored at:
 ///
-/// Job directory gets a symlink:
-///   <`base_path`>/<project>/.fleche/<job-id>/<input-path> -> ../cache/<input-path>
+/// ```text
+/// <fleche_base>/cache/<input-path>
+/// ```
+///
+/// Each job directory gets a symlink pointing to the cached data:
+///
+/// ```text
+/// <fleche_base>/<job-id>/<input-path> -> ../cache/<input-path>
+/// ```
 pub async fn sync_input_cached(
     source_base: &Path,
     relative_path: &str,
     host: &str,
-    fleche_base: &str, // e.g., ~/fleche/my-project/.fleche
+    fleche_base: &str,
     job_id: &str,
     ssh: &SshClient,
 ) -> Result<SyncStats> {
@@ -248,9 +279,7 @@ pub async fn sync_input_cached(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Create symlink in job directory
-    // Job is at .fleche/<job-id>/, cache is at .fleche/cache/
-    // So symlink target is: ../cache/<path>
+    // Create symlink in job directory pointing to cache
     let link_path = format!("{fleche_base}/{job_id}/{normalized_path}");
     let symlink_target = format!("../cache/{normalized_path}");
 

@@ -1,14 +1,22 @@
+//! Command-line interface definition.
+//!
+//! This module defines the CLI structure using clap. All subcommands and their
+//! arguments are defined here, with argument parsing handled by clap's derive macros.
+
 use clap::{Parser, Subcommand};
 
+/// The main CLI structure for fleche.
 #[derive(Parser)]
 #[command(name = "fleche")]
 #[command(about = "Remote job runner for Slurm clusters")]
 #[command(version)]
 pub struct Cli {
+    /// The subcommand to run.
     #[command(subcommand)]
     pub command: Commands,
 }
 
+/// All available subcommands.
 #[derive(Subcommand)]
 pub enum Commands {
     /// Run a job on the remote cluster
@@ -160,6 +168,7 @@ pub enum Commands {
     Guide,
 }
 
+/// Parses a KEY=VALUE string into a tuple.
 fn parse_key_value(s: &str) -> Result<(String, String), String> {
     let parts: Vec<&str> = s.splitn(2, '=').collect();
     if parts.len() != 2 {

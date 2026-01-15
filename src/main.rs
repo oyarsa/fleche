@@ -1,3 +1,22 @@
+//! fleche - Remote job runner for Slurm clusters.
+//!
+//! This is the main entry point for the fleche CLI tool. It parses command-line
+//! arguments and dispatches to the appropriate handler in the [`job`] module.
+//!
+//! # Architecture
+//!
+//! The codebase is organized into the following modules:
+//!
+//! - [`cli`]: Command-line argument parsing using clap
+//! - [`config`]: Configuration file parsing and job resolution
+//! - [`error`]: Error types and result aliases
+//! - [`guide`]: Built-in usage guide text
+//! - [`job`]: High-level job operations (run, status, logs, sync, etc.)
+//! - [`registry`]: Local `SQLite` database for tracking submitted jobs
+//! - [`slurm`]: Slurm-specific operations (sbatch generation, status queries)
+//! - [`ssh`]: SSH client for remote command execution
+//! - [`sync`]: File synchronization using rsync
+
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(
     clippy::too_many_lines,
@@ -23,6 +42,10 @@ use console::style;
 use slurm::slurm_config_from_cli;
 use std::path::Path;
 
+/// Entry point for the fleche CLI.
+///
+/// Calls [`run`] and handles any errors by printing them to stderr and exiting
+/// with a non-zero status code.
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
@@ -31,6 +54,11 @@ async fn main() {
     }
 }
 
+/// Parses CLI arguments and dispatches to the appropriate command handler.
+///
+/// This function is the main dispatcher for all fleche subcommands. Each command
+/// is handled by calling the corresponding function in the [`job`] module, except
+/// for `init`, `check`, and `guide` which are handled inline.
 async fn run() -> Result<()> {
     let cli = Cli::parse();
 

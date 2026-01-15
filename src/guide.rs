@@ -1,3 +1,18 @@
+//! Built-in usage guide for fleche.
+//!
+//! This module contains a comprehensive usage guide that is displayed when the
+//! user runs `fleche guide`. The guide covers configuration, common workflows,
+//! and command reference.
+
+/// The full text of the fleche usage guide.
+///
+/// This is a comprehensive guide covering:
+/// - Quick start examples
+/// - Configuration file format
+/// - Common workflows and patterns
+/// - Command reference
+/// - Slurm options
+/// - File sync behavior
 pub const GUIDE_TEXT: &str = r#"# fleche - Remote Job Runner
 
 fleche submits and manages jobs on remote Slurm clusters via SSH.

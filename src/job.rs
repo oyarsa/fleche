@@ -1,3 +1,12 @@
+//! Job operations for running, monitoring, and managing remote jobs.
+//!
+//! This module contains the core business logic for fleche, including:
+//! - Running jobs (syncing files, submitting to Slurm, following output)
+//! - Querying job status
+//! - Viewing logs
+//! - Syncing outputs back to local
+//! - Listing, cancelling, and cleaning up jobs
+
 use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
@@ -12,6 +21,16 @@ use rand::Rng;
 use std::io::Write;
 use std::time::Duration;
 
+/// Runs a job on the remote cluster.
+///
+/// This is the main entry point for job submission. It:
+/// 1. Resolves the job configuration with all overrides applied
+/// 2. Creates a remote directory for the job
+/// 3. Syncs project code to the remote
+/// 4. Syncs input files to a shared cache (with symlinks in the job directory)
+/// 5. Uploads the generated sbatch script
+/// 6. Submits the job to Slurm
+/// 7. Optionally follows the job output
 pub async fn run_job(
     config: &Config,
     job_name: Option<&str>,
@@ -189,6 +208,10 @@ pub async fn run_job(
     Ok(())
 }
 
+/// Shows the status of a specific job or lists recent jobs.
+///
+/// If a job ID is provided, shows detailed information about that job and
+/// queries Slurm for the current status. Otherwise, lists the 20 most recent jobs.
 pub async fn show_status(job_id: Option<&str>) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -225,6 +248,9 @@ pub async fn show_status(job_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Displays logs from a job's stdout or stderr.
+///
+/// Can show the current content, follow in real-time, or show both streams.
 pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
@@ -266,6 +292,9 @@ pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> 
     Ok(())
 }
 
+/// Syncs output files from a completed job back to the local project directory.
+///
+/// Warns if the job is still running unless `--partial` is specified.
 pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
@@ -308,6 +337,7 @@ pub async fn sync_outputs(job_id: &str, partial: bool) -> Result<()> {
     Ok(())
 }
 
+/// Lists jobs from the registry with optional filters.
 pub fn list_jobs(
     project_filter: Option<&str>,
     status_filter: Option<&str>,
@@ -343,6 +373,7 @@ pub fn list_jobs(
     Ok(())
 }
 
+/// Cancels a running or pending Slurm job.
 pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
     let registry = Registry::open()?;
     let job = registry.get_job(job_id)?;
@@ -369,6 +400,9 @@ pub async fn cancel_slurm_job(job_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Cleans up jobs by removing them from the registry and deleting remote files.
+///
+/// Can clean a specific job, all finished jobs, or jobs older than a duration.
 pub async fn clean_job(job_id: Option<&str>, all: bool, older_than: Option<&str>) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -411,6 +445,7 @@ pub async fn clean_job(job_id: Option<&str>, all: bool, older_than: Option<&str>
     Ok(())
 }
 
+/// Generates a unique job ID from the job name and current timestamp.
 fn generate_job_id(job_name: &str) -> String {
     let now = Utc::now();
     let suffix: String = rand::thread_rng()
@@ -427,6 +462,7 @@ fn generate_job_id(job_name: &str) -> String {
     )
 }
 
+/// Prints detailed information about a single job.
 fn print_job_details(job: &JobRecord, status: JobStatus) {
     println!("{}", style("Job Details").bold().underlined());
     println!();
@@ -466,6 +502,7 @@ fn print_job_details(job: &JobRecord, status: JobStatus) {
     }
 }
 
+/// Prints a table of jobs.
 fn print_job_table(jobs: &[JobRecord]) {
     // Header
     println!(
@@ -487,6 +524,7 @@ fn print_job_table(jobs: &[JobRecord]) {
     }
 }
 
+/// Formats a job status with appropriate colors.
 fn format_status(status: JobStatus) -> String {
     match status {
         JobStatus::Pending => style("pending").yellow().to_string(),
@@ -497,6 +535,7 @@ fn format_status(status: JobStatus) -> String {
     }
 }
 
+/// Truncates a string to a maximum length, adding "..." if truncated.
 fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()

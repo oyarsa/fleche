@@ -1,32 +1,59 @@
+//! Configuration parsing and job resolution.
+//!
+//! This module handles loading the `fleche.toml` configuration file, discovering
+//! job definitions (both inline and from separate files), and resolving job
+//! parameters with proper precedence (global -> job -> CLI overrides).
+
 use crate::error::{FlecheError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Project-level configuration from the `[project]` section.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectConfig {
+    /// Project name (defaults to directory name if not specified).
     pub name: Option<String>,
 }
 
+/// Remote host configuration from the `[remote]` section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteConfig {
+    /// SSH host (hostname, IP, or ~/.ssh/config alias).
     pub host: String,
+    /// Base directory on the remote host for fleche data.
     pub base_path: String,
 }
 
+/// Slurm resource configuration.
+///
+/// All fields are optional; unset fields inherit from the parent configuration
+/// (global -> job definition -> CLI overrides).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SlurmConfig {
+    /// Slurm partition to submit to.
     pub partition: Option<String>,
+    /// Time limit (e.g., "1:00:00" for 1 hour).
     pub time: Option<String>,
+    /// Number of GPUs requested.
     pub gpus: Option<u32>,
+    /// Number of CPUs per task.
     pub cpus: Option<u32>,
+    /// Memory limit (e.g., "32G").
     pub memory: Option<String>,
+    /// Node constraint expression.
     pub constraint: Option<String>,
+    /// Number of nodes.
     pub nodes: Option<u32>,
+    /// Nodes to exclude.
     pub exclude: Option<String>,
 }
 
 impl SlurmConfig {
+    /// Merges this config with another, with `other` taking precedence.
+    ///
+    /// Fields set in `other` override fields in `self`; unset fields in `other`
+    /// fall back to `self`.
     pub fn merge(&self, other: &SlurmConfig) -> SlurmConfig {
         SlurmConfig {
             partition: other.partition.clone().or_else(|| self.partition.clone()),
@@ -41,39 +68,63 @@ impl SlurmConfig {
     }
 }
 
+/// A job definition from `[jobs.<name>]` or a separate `fleche/<name>.toml` file.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobDefinition {
+    /// The shell command to execute.
     pub command: Option<String>,
+    /// Input paths to sync to a shared cache.
     #[serde(default)]
     pub inputs: Vec<String>,
+    /// Output paths to sync back after completion.
     #[serde(default)]
     pub outputs: Vec<String>,
+    /// Slurm configuration for this job.
     #[serde(default)]
     pub slurm: SlurmConfig,
+    /// Environment variables specific to this job.
     #[serde(default)]
     pub env: HashMap<String, String>,
 }
 
+/// A fully resolved job ready for submission.
+///
+/// Contains all parameters needed to generate an sbatch script and submit the job,
+/// with all inheritance and overrides applied.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedJob {
+    /// Job name (from definition or "adhoc" for command-line jobs).
     pub name: String,
+    /// The shell command to execute.
     pub command: String,
+    /// Input paths to sync to a shared cache.
     pub inputs: Vec<String>,
+    /// Output paths to sync back after completion.
     pub outputs: Vec<String>,
+    /// Final Slurm configuration after all merges.
     pub slurm: SlurmConfig,
+    /// Final environment variables after all merges.
     pub env: HashMap<String, String>,
 }
 
+/// The complete loaded configuration for a project.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Project name (for organizing jobs on the remote).
     pub project_name: String,
+    /// Local path to the project directory (where fleche.toml is).
     pub project_path: PathBuf,
+    /// Remote host configuration.
     pub remote: RemoteConfig,
+    /// Global environment variables applied to all jobs.
     pub global_env: HashMap<String, String>,
+    /// Global Slurm configuration inherited by all jobs.
     pub global_slurm: SlurmConfig,
+    /// All job definitions indexed by name.
     pub jobs: HashMap<String, JobDefinition>,
 }
 
+/// Raw config structure for TOML deserialization.
 #[derive(Debug, Deserialize)]
 struct RawConfig {
     #[serde(default)]
@@ -87,6 +138,7 @@ struct RawConfig {
     jobs: HashMap<String, JobDefinition>,
 }
 
+/// Raw job file structure for TOML deserialization.
 #[derive(Debug, Deserialize)]
 struct RawJobFile {
     command: Option<String>,
@@ -101,11 +153,13 @@ struct RawJobFile {
 }
 
 impl Config {
+    /// Finds fleche.toml in the current directory or parents and loads it.
     pub fn find_and_load() -> Result<Config> {
         let config_path = find_config_file()?;
         Self::load_from_path(&config_path)
     }
 
+    /// Loads configuration from a specific path.
     pub fn load_from_path(config_path: &Path) -> Result<Config> {
         let project_path = config_path
             .parent()
@@ -148,6 +202,12 @@ impl Config {
         })
     }
 
+    /// Resolves a job with all overrides applied.
+    ///
+    /// The resolution order is:
+    /// 1. Global settings from fleche.toml
+    /// 2. Job definition settings
+    /// 3. Command-line overrides
     pub fn resolve_job(
         &self,
         job_name: Option<&str>,
@@ -195,6 +255,7 @@ impl Config {
         })
     }
 
+    /// Returns all job names, sorted alphabetically.
     pub fn job_names(&self) -> Vec<String> {
         let mut names: Vec<_> = self.jobs.keys().cloned().collect();
         names.sort();
@@ -202,6 +263,7 @@ impl Config {
     }
 }
 
+/// Searches for fleche.toml starting from the current directory and going up.
 fn find_config_file() -> Result<PathBuf> {
     let mut current = std::env::current_dir()
         .map_err(|e| FlecheError::ConfigParse(format!("Failed to get current directory: {e}")))?;
@@ -218,6 +280,7 @@ fn find_config_file() -> Result<PathBuf> {
     }
 }
 
+/// Recursively loads job definitions from TOML files in the fleche/ directory.
 fn load_jobs_from_dir(
     base_dir: &Path,
     current_dir: &Path,
@@ -278,6 +341,7 @@ fn load_jobs_from_dir(
     Ok(())
 }
 
+/// Generates a template fleche.toml configuration file.
 pub fn generate_init_config() -> &'static str {
     r#"[project]
 # name = "my-project"  # Optional, defaults to directory name

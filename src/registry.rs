@@ -1,3 +1,9 @@
+//! Local job registry backed by `SQLite`.
+//!
+//! This module provides persistent storage for job records, including their status,
+//! configuration, and associated tags. The database is stored in the user's config
+//! directory (`~/.config/fleche/jobs.db`).
+
 use crate::config::ResolvedJob;
 use crate::error::{FlecheError, Result};
 use chrono::{DateTime, Duration, Utc};
@@ -6,31 +12,52 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// A record of a submitted job stored in the local registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
+    /// Unique identifier for the job (e.g., "train-20240115-120000-abc1").
     pub id: String,
+    /// Slurm job ID assigned by the scheduler, if submitted.
     pub slurm_id: Option<String>,
+    /// Name of the job definition from fleche.toml.
     pub job_name: String,
+    /// Name of the project (from fleche.toml).
     pub project_name: String,
+    /// Local path to the project directory.
     pub project_path: String,
+    /// Remote host where the job runs.
     pub remote_host: String,
+    /// Remote directory containing the job files.
     pub remote_path: String,
+    /// The command executed by the job.
     pub command: String,
+    /// Current status of the job.
     pub status: JobStatus,
+    /// JSON-serialized job configuration for reference.
     pub config_json: String,
+    /// When the job was created.
     pub created_at: DateTime<Utc>,
+    /// When the job record was last updated.
     pub updated_at: DateTime<Utc>,
+    /// Whether outputs have been synced back to local.
     pub outputs_synced: bool,
+    /// User-defined key-value tags for filtering jobs.
     pub tags: HashMap<String, String>,
 }
 
+/// The status of a job in its lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobStatus {
+    /// Job is waiting in the Slurm queue.
     Pending,
+    /// Job is currently executing.
     Running,
+    /// Job finished successfully.
     Completed,
+    /// Job failed or was terminated due to an error.
     Failed,
+    /// Job was cancelled by the user.
     Cancelled,
 }
 
@@ -61,11 +88,16 @@ impl std::str::FromStr for JobStatus {
     }
 }
 
+/// SQLite-backed registry for storing job records.
 pub struct Registry {
+    /// The database connection.
     conn: Connection,
 }
 
 impl Registry {
+    /// Opens the registry, creating the database file if it doesn't exist.
+    ///
+    /// The database is stored at `~/.config/fleche/jobs.db`.
     pub fn open() -> Result<Self> {
         let db_path = get_db_path()?;
 
@@ -80,6 +112,7 @@ impl Registry {
         Ok(registry)
     }
 
+    /// Initializes the database schema if it doesn't exist.
     fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
             r"
@@ -116,6 +149,7 @@ impl Registry {
         Ok(())
     }
 
+    /// Inserts a new job record into the registry.
     pub fn insert_job(
         &self,
         id: &str,
@@ -164,6 +198,7 @@ impl Registry {
         Ok(())
     }
 
+    /// Updates the status of a job.
     pub fn update_status(&self, id: &str, status: JobStatus) -> Result<()> {
         let now = Utc::now();
         self.conn.execute(
@@ -173,6 +208,7 @@ impl Registry {
         Ok(())
     }
 
+    /// Updates the Slurm job ID for a job.
     #[allow(dead_code)]
     pub fn update_slurm_id(&self, id: &str, slurm_id: &str) -> Result<()> {
         let now = Utc::now();
@@ -183,6 +219,7 @@ impl Registry {
         Ok(())
     }
 
+    /// Marks a job's outputs as synced.
     pub fn set_outputs_synced(&self, id: &str) -> Result<()> {
         let now = Utc::now();
         self.conn.execute(
@@ -192,6 +229,7 @@ impl Registry {
         Ok(())
     }
 
+    /// Retrieves a job by its ID.
     pub fn get_job(&self, id: &str) -> Result<JobRecord> {
         let mut stmt = self.conn.prepare(
             r"
@@ -233,6 +271,7 @@ impl Registry {
         Ok(JobRecord { tags, ..job })
     }
 
+    /// Retrieves tags for a job.
     fn get_tags(&self, job_id: &str) -> Result<HashMap<String, String>> {
         let mut stmt = self
             .conn
@@ -246,6 +285,10 @@ impl Registry {
         Ok(tags)
     }
 
+    /// Lists jobs matching the given filters.
+    ///
+    /// Jobs can be filtered by project path, status, and tags. Results are
+    /// ordered by creation time (newest first) and limited to `limit` results.
     pub fn list_jobs(
         &self,
         project_filter: Option<&str>,
@@ -337,6 +380,9 @@ impl Registry {
         Ok(jobs_with_tags)
     }
 
+    /// Lists finished jobs older than the given duration.
+    ///
+    /// Only returns jobs with status completed, failed, or cancelled.
     pub fn list_jobs_older_than(&self, duration: Duration) -> Result<Vec<JobRecord>> {
         let cutoff = Utc::now() - duration;
         let mut stmt = self.conn.prepare(
@@ -386,6 +432,7 @@ impl Registry {
         Ok(jobs_with_tags)
     }
 
+    /// Lists all finished jobs (completed, failed, or cancelled).
     pub fn list_finished_jobs(&self) -> Result<Vec<JobRecord>> {
         let mut stmt = self.conn.prepare(
             r"
@@ -434,20 +481,24 @@ impl Registry {
         Ok(jobs_with_tags)
     }
 
+    /// Deletes a job from the registry.
+    ///
+    /// Tags are automatically deleted via the CASCADE constraint.
     pub fn delete_job(&self, id: &str) -> Result<()> {
-        // Tags are deleted automatically via CASCADE
         self.conn
             .execute("DELETE FROM jobs WHERE id = ?1", params![id])?;
         Ok(())
     }
 }
 
+/// Returns the path to the registry database file.
 fn get_db_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| FlecheError::Other("Could not find config directory".to_string()))?;
     Ok(config_dir.join("fleche").join("jobs.db"))
 }
 
+/// Parses a duration string like "7d", "24h", or "30m".
 pub fn parse_duration(s: &str) -> Result<Duration> {
     let s = s.trim().to_lowercase();
 
