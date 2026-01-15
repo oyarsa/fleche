@@ -93,12 +93,13 @@ async fn run() -> Result<()> {
                 slurm_overrides,
                 follow,
                 dry_run,
+                cli.debug,
             )
             .await?;
         }
 
         Commands::Status { job_id } => {
-            job::show_status(job_id.as_deref()).await?;
+            job::show_status(job_id.as_deref(), cli.debug).await?;
         }
 
         Commands::Logs {
@@ -108,11 +109,11 @@ async fn run() -> Result<()> {
             stderr,
             tail,
         } => {
-            job::show_logs(&job_id, follow, stdout, stderr, tail).await?;
+            job::show_logs(&job_id, follow, stdout, stderr, tail, cli.debug).await?;
         }
 
         Commands::Sync { job_id, partial } => {
-            job::sync_outputs(&job_id, partial).await?;
+            job::sync_outputs(&job_id, partial, cli.debug).await?;
         }
 
         Commands::List {
@@ -130,12 +131,13 @@ async fn run() -> Result<()> {
                 failed,
                 running,
                 completed,
+                cli.debug,
             )
             .await?;
         }
 
         Commands::Cancel { job_id } => {
-            job::cancel_slurm_job(&job_id).await?;
+            job::cancel_slurm_job(&job_id, cli.debug).await?;
         }
 
         Commands::Clean {
@@ -143,7 +145,7 @@ async fn run() -> Result<()> {
             all,
             older_than,
         } => {
-            job::clean_job(job_id.as_deref(), all, older_than.as_deref()).await?;
+            job::clean_job(job_id.as_deref(), all, older_than.as_deref(), cli.debug).await?;
         }
 
         Commands::Init => {

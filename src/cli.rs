@@ -11,6 +11,10 @@ use clap::{Parser, Subcommand};
 #[command(about = "Remote job runner for Slurm clusters")]
 #[command(version)]
 pub struct Cli {
+    /// Enable verbose SSH output for debugging connection issues
+    #[arg(long, global = true)]
+    pub debug: bool,
+
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: Commands,
