@@ -9,6 +9,7 @@ use crate::sync::{
 use chrono::Utc;
 use console::style;
 use rand::Rng;
+use std::time::Duration;
 
 pub async fn run_job(
     config: &Config,
@@ -133,6 +134,52 @@ pub async fn run_job(
         );
         let log_path = format!("{remote_path}/job.out");
         let mut child = ssh.tail_follow(&log_path)?;
+
+        // Check job status periodically and notify when done
+        let slurm_id_clone = slurm_id.clone();
+        let host_clone = config.remote.host.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let ssh = SshClient::new(&host_clone);
+                if let Ok(status) = get_job_status(&ssh, &slurm_id_clone).await {
+                    match status {
+                        JobStatus::Completed => {
+                            println!();
+                            println!(
+                                "{}",
+                                style(">>> Job completed successfully. Press Ctrl+C to exit. <<<")
+                                    .green()
+                                    .bold()
+                            );
+                            break;
+                        }
+                        JobStatus::Failed => {
+                            println!();
+                            println!(
+                                "{}",
+                                style(">>> Job failed. Press Ctrl+C to exit. <<<")
+                                    .red()
+                                    .bold()
+                            );
+                            break;
+                        }
+                        JobStatus::Cancelled => {
+                            println!();
+                            println!(
+                                "{}",
+                                style(">>> Job cancelled. Press Ctrl+C to exit. <<<")
+                                    .yellow()
+                                    .bold()
+                            );
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
+
         let _ = child.wait().await;
     }
 
