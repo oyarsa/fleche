@@ -234,6 +234,16 @@ pub async fn sync_from_remote(
     Ok(())
 }
 
+/// Calculates the relative symlink target path from a job subdirectory to the cache.
+///
+/// The path needs enough `..` components to navigate from the symlink location
+/// back to the fleche base directory where `cache/` lives.
+fn symlink_target_for_cache(normalized_path: &str) -> String {
+    let depth = normalized_path.matches('/').count() + 1;
+    let dotdots = "../".repeat(depth);
+    format!("{dotdots}cache/{normalized_path}")
+}
+
 /// Syncs an input path to a shared cache and creates a symlink in the job directory.
 ///
 /// This enables sharing large input files (like datasets) across multiple jobs
@@ -243,10 +253,12 @@ pub async fn sync_from_remote(
 /// <fleche_base>/cache/<input-path>
 /// ```
 ///
-/// Each job directory gets a symlink pointing to the cached data:
+/// Each job directory gets a symlink pointing to the cached data. The relative
+/// path depth is calculated based on the input path:
 ///
 /// ```text
-/// <fleche_base>/<job-id>/<input-path> -> ../cache/<input-path>
+/// <fleche_base>/<job-id>/data -> ../cache/data
+/// <fleche_base>/<job-id>/output/models -> ../../cache/output/models
 /// ```
 pub async fn sync_input_cached(
     source_base: &Path,
@@ -303,7 +315,7 @@ pub async fn sync_input_cached(
 
     // Create symlink in job directory pointing to cache
     let link_path = format!("{fleche_base}/{job_id}/{normalized_path}");
-    let symlink_target = format!("../cache/{normalized_path}");
+    let symlink_target = symlink_target_for_cache(normalized_path);
 
     // Ensure parent directory of symlink exists
     if let Some(parent) = Path::new(&link_path).parent()
@@ -421,5 +433,38 @@ total size is 125,432  speedup is 7.88
     fn test_human_readable_zero() {
         let stats = SyncStats { bytes_sent: 0 };
         assert_eq!(stats.human_readable(), "0 B");
+    }
+
+    #[test]
+    fn test_symlink_target_single_level() {
+        // data -> ../cache/data
+        assert_eq!(symlink_target_for_cache("data"), "../cache/data");
+    }
+
+    #[test]
+    fn test_symlink_target_two_levels() {
+        // output/models -> ../../cache/output/models
+        assert_eq!(
+            symlink_target_for_cache("output/models"),
+            "../../cache/output/models"
+        );
+    }
+
+    #[test]
+    fn test_symlink_target_three_levels() {
+        // output/baselines/llama_data -> ../../../cache/output/baselines/llama_data
+        assert_eq!(
+            symlink_target_for_cache("output/baselines/llama_data"),
+            "../../../cache/output/baselines/llama_data"
+        );
+    }
+
+    #[test]
+    fn test_symlink_target_deep_nesting() {
+        // a/b/c/d/e -> ../../../../../cache/a/b/c/d/e
+        assert_eq!(
+            symlink_target_for_cache("a/b/c/d/e"),
+            "../../../../../cache/a/b/c/d/e"
+        );
     }
 }

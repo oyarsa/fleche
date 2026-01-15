@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.1.0] - 2026-01-15
+
+### Fixed
+- Input symlinks now use correct relative path depth for nested directories (e.g., `output/baselines/data` now correctly links to `../../../cache/...` instead of `../cache/...`)
+
 ## [4.0.0] - 2026-01-15
 
 ### Added
