@@ -150,59 +150,8 @@ pub async fn run_job(
 
     if follow {
         println!();
-        println!(
-            "{}",
-            style("Following output (Ctrl+C to disconnect)...").yellow()
-        );
         let log_path = format!("{remote_path}/job.out");
-        let mut child = ssh.tail_follow(&log_path)?;
-
-        // Check job status periodically and notify when done
-        let slurm_id_clone = slurm_id.clone();
-        let host_clone = config.remote.host.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                let ssh = SshClient::new(&host_clone);
-                if let Ok(status) = get_job_status(&ssh, &slurm_id_clone).await {
-                    match status {
-                        JobStatus::Completed => {
-                            println!();
-                            println!(
-                                "{}",
-                                style(">>> Job completed successfully. Press Ctrl+C to exit. <<<")
-                                    .green()
-                                    .bold()
-                            );
-                            break;
-                        }
-                        JobStatus::Failed => {
-                            println!();
-                            println!(
-                                "{}",
-                                style(">>> Job failed. Press Ctrl+C to exit. <<<")
-                                    .red()
-                                    .bold()
-                            );
-                            break;
-                        }
-                        JobStatus::Cancelled => {
-                            println!();
-                            println!(
-                                "{}",
-                                style(">>> Job cancelled. Press Ctrl+C to exit. <<<")
-                                    .yellow()
-                                    .bold()
-                            );
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        });
-
-        let _ = child.wait().await;
+        follow_job_logs(&config.remote.host, &slurm_id, &log_path).await?;
     }
 
     Ok(())
@@ -275,12 +224,17 @@ pub async fn show_logs(job_id: &str, follow: bool, stderr: bool, both: bool) -> 
         let log_file = if stderr { "job.err" } else { "job.out" };
         let log_path = format!("{}/{}", job.remote_path, log_file);
 
-        println!(
-            "{}",
-            style("Following output (Ctrl+C to disconnect)...").yellow()
-        );
-        let mut child = ssh.tail_follow(&log_path)?;
-        let _ = child.wait().await;
+        if let Some(ref slurm_id) = job.slurm_id {
+            follow_job_logs(&job.remote_host, slurm_id, &log_path).await?;
+        } else {
+            // No slurm ID, just follow without status monitoring
+            println!(
+                "{}",
+                style("Following output (Ctrl+C to disconnect)...").yellow()
+            );
+            let mut child = ssh.tail_follow(&log_path)?;
+            let _ = child.wait().await;
+        }
     } else {
         let log_file = if stderr { "job.err" } else { "job.out" };
         let log_path = format!("{}/{}", job.remote_path, log_file);
@@ -483,6 +437,69 @@ fn generate_job_id(job_name: &str) -> String {
         now.format("%Y%m%d-%H%M%S-%3f"),
         suffix
     )
+}
+
+/// Follows job logs and automatically exits when the job finishes.
+///
+/// Starts a tail -f process and monitors the job status in parallel.
+/// When the job reaches a terminal state (completed, failed, cancelled),
+/// the tail process is killed and this function returns.
+async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str) -> Result<()> {
+    println!(
+        "{}",
+        style("Following output (will exit when job completes)...").yellow()
+    );
+
+    let ssh = SshClient::new(host);
+    let mut child = ssh.tail_follow(log_path)?;
+
+    // Poll job status until it reaches a terminal state
+    let slurm_id = slurm_id.to_string();
+    let host = host.to_string();
+    let status_check = async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let ssh = SshClient::new(&host);
+            if let Ok(status) = get_job_status(&ssh, &slurm_id).await {
+                match status {
+                    JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
+                        return status;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    };
+
+    // Wait for either the tail process to exit or the job to finish
+    tokio::select! {
+        _ = child.wait() => {
+            // Tail exited on its own (unlikely unless error)
+        }
+        status = status_check => {
+            // Job finished, kill tail and print status
+            let _ = child.kill().await;
+
+            // Give a moment for any final output to flush
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            println!();
+            match status {
+                JobStatus::Completed => {
+                    println!("{}", style("Job completed successfully.").green().bold());
+                }
+                JobStatus::Failed => {
+                    println!("{}", style("Job failed.").red().bold());
+                }
+                JobStatus::Cancelled => {
+                    println!("{}", style("Job cancelled.").yellow().bold());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Prints detailed information about a single job.
