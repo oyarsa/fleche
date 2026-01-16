@@ -4,7 +4,7 @@ Project-specific instructions for working on fleche.
 
 ## Before Completing Any Task
 
-1. Run `just check-all` (runs clippy, rustfmt check, and tests)
+1. Run `just fix` (formats code, autofixes clippy warnings, and runs tests)
 2. Commit changes (do NOT bump version or tag unless explicitly asked)
 
 ## Releasing

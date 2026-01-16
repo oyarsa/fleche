@@ -38,3 +38,9 @@ lint: clippy fmt-check
 
 # Check all: lint and test
 check-all: lint test
+
+# Fix formatting and clippy warnings, then run tests
+fix:
+    cargo fmt
+    cargo clippy --fix --allow-dirty --allow-staged -- -D warnings
+    cargo test
