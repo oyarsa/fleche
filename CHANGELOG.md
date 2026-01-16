@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.2.0] - 2026-01-16
+
+### Added
+- `fleche tags` command to list all unique tags across jobs
+- `fleche rerun <job-id>` command to re-run a previous job with same settings
+- `-n/--last <N>` option for `fleche status` to limit number of jobs shown (default: 20)
+- Support multiple `--filter` values for status (e.g., `--filter running --filter pending`)
+
+### Fixed
+- Streaming race condition: quick jobs could complete before output was captured
+- Tag filtering with `--all` no longer silently truncates at 100/1000 jobs
+
+### Changed
+- Job name now shown on second line in status when different from job ID prefix
+- Improved visibility of job names and tags in status output
+
 ## [5.1.0] - 2026-01-16
 
 ### Added
