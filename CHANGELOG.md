@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.1.0] - 2026-01-16
+
+### Added
+- Tag filtering for `status`, `logs`, `download`, `cancel`, and `clean` commands
+- Tags now displayed in status table output (dimmed second line below each job)
+- `--tag` option is repeatable to filter by multiple tags
+
+### Examples
+```bash
+fleche status --tag experiment=ablation
+fleche logs --tag model=8b
+fleche download --tag experiment=ablation
+fleche cancel --all --tag experiment=test
+fleche clean --older-than 7d --tag experiment=old
+```
+
 ## [5.0.4] - 2026-01-15
 
 ### Added
