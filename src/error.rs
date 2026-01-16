@@ -50,8 +50,12 @@ pub enum FlecheError {
     SbatchFailed(String),
 
     /// The specified job ID was not found in the local registry.
-    #[error("Job '{0}' not found in registry. Run `fleche list` to see available jobs.")]
+    #[error("Job '{0}' not found in registry. Run `fleche status` to see available jobs.")]
     JobIdNotFound(String),
+
+    /// Multiple jobs match the given suffix.
+    #[error("Multiple jobs match '{0}':\n  {1}\nUse a longer suffix to disambiguate.")]
+    AmbiguousJobId(String, String),
 
     /// A database operation failed.
     #[error("Database error: {0}")]

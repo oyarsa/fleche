@@ -229,8 +229,14 @@ impl Registry {
         Ok(())
     }
 
-    /// Retrieves a job by its ID.
+    /// Retrieves a job by its ID or unique suffix.
+    ///
+    /// If `id` exactly matches a job ID, that job is returned. Otherwise, we search
+    /// for jobs whose ID ends with `id`. If exactly one match is found, that job is
+    /// returned. If multiple matches are found, an error is returned listing the
+    /// ambiguous matches.
     pub fn get_job(&self, id: &str) -> Result<JobRecord> {
+        // First try exact match
         let mut stmt = self.conn.prepare(
             r"
             SELECT id, slurm_id, job_name, project_name, project_path,
@@ -240,8 +246,47 @@ impl Registry {
             ",
         )?;
 
-        let job = stmt
-            .query_row(params![id], |row| {
+        if let Ok(job) = stmt.query_row(params![id], |row| {
+            Ok(JobRecord {
+                id: row.get(0)?,
+                slurm_id: row.get(1)?,
+                job_name: row.get(2)?,
+                project_name: row.get(3)?,
+                project_path: row.get(4)?,
+                remote_host: row.get(5)?,
+                remote_path: row.get(6)?,
+                command: row.get(7)?,
+                status: row
+                    .get::<_, String>(8)?
+                    .parse()
+                    .unwrap_or(JobStatus::Pending),
+                config_json: row.get(9)?,
+                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+                outputs_synced: row.get::<_, i32>(12)? == 1,
+                tags: HashMap::new(),
+            })
+        }) {
+            let tags = self.get_tags(&job.id)?;
+            return Ok(JobRecord { tags, ..job });
+        }
+
+        // Try suffix match
+        let suffix_pattern = format!("%{id}");
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT id, slurm_id, job_name, project_name, project_path,
+                   remote_host, remote_path, command, status, config_json,
+                   created_at, updated_at, outputs_synced
+            FROM jobs WHERE id LIKE ?1
+            ORDER BY created_at DESC
+            ",
+        )?;
+
+        let matches: Vec<JobRecord> = stmt
+            .query_map(params![suffix_pattern], |row| {
                 Ok(JobRecord {
                     id: row.get(0)?,
                     slurm_id: row.get(1)?,
@@ -263,12 +308,22 @@ impl Registry {
                     outputs_synced: row.get::<_, i32>(12)? == 1,
                     tags: HashMap::new(),
                 })
-            })
-            .map_err(|_| FlecheError::JobIdNotFound(id.to_string()))?;
+            })?
+            .filter_map(std::result::Result::ok)
+            .collect();
 
-        // Load tags
-        let tags = self.get_tags(&job.id)?;
-        Ok(JobRecord { tags, ..job })
+        match matches.len() {
+            0 => Err(FlecheError::JobIdNotFound(id.to_string())),
+            1 => {
+                let job = matches.into_iter().next().unwrap();
+                let tags = self.get_tags(&job.id)?;
+                Ok(JobRecord { tags, ..job })
+            }
+            _ => {
+                let ids: Vec<&str> = matches.iter().map(|j| j.id.as_str()).collect();
+                Err(FlecheError::AmbiguousJobId(id.to_string(), ids.join(", ")))
+            }
+        }
     }
 
     /// Retrieves tags for a job.
