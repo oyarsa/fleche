@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - `fleche ping` command to check Slurm cluster health via `scontrol ping`
+- `fleche wait` command to wait for a job to complete (with optional `--notify`)
+- `--notify` flag for `fleche run` to send terminal notification when background job completes
 - `--raw` flag for `fleche logs` to strip ANSI escape codes from output
 - Auto-strip ANSI codes when logs output is piped (detected via `isatty`)
 - Short job ID matching by suffix (e.g., `fleche logs 7rhh` instead of full ID)

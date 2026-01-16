@@ -54,6 +54,10 @@ pub enum Commands {
         #[arg(long)]
         bg: bool,
 
+        /// Send terminal notification when job completes (useful with --bg)
+        #[arg(long)]
+        notify: bool,
+
         /// Set environment variable (repeatable)
         #[arg(long = "env", value_parser = parse_key_value)]
         env_vars: Vec<(String, String)>,
@@ -265,6 +269,23 @@ pub enum Commands {
     /// Runs `scontrol ping` on the remote host to verify the Slurm
     /// scheduler is responsive. Useful for diagnosing timeout issues.
     Ping,
+
+    /// Wait for a job to complete
+    ///
+    /// Polls job status until it reaches a terminal state (completed, failed, cancelled).
+    /// Useful for scripting or waiting on background jobs.
+    Wait {
+        /// Job ID to wait for (default: most recent job)
+        job_id: Option<String>,
+
+        /// Send terminal notification when job completes
+        #[arg(long)]
+        notify: bool,
+
+        /// Filter by tag when using default job (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
+    },
 }
 
 /// Parses a KEY=VALUE string into a tuple.

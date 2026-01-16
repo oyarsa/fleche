@@ -67,6 +67,7 @@ async fn run() -> Result<()> {
             job_or_command,
             command,
             bg,
+            notify,
             env_vars,
             tags,
             partition,
@@ -92,6 +93,7 @@ async fn run() -> Result<()> {
                 &tags,
                 slurm_overrides,
                 bg,
+                notify,
                 dry_run,
                 cli.debug,
             )
@@ -253,6 +255,14 @@ async fn run() -> Result<()> {
         Commands::Ping => {
             let config = Config::find_and_load()?;
             job::ping_cluster(&config, cli.debug).await?;
+        }
+
+        Commands::Wait {
+            job_id,
+            notify,
+            tags,
+        } => {
+            job::wait_for_job(job_id.as_deref(), notify, &tags, cli.debug).await?;
         }
     }
 

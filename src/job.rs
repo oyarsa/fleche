@@ -54,7 +54,7 @@ fn job_path(config: &Config, job_id: &str) -> String {
 /// 5. Uploads the generated sbatch script
 /// 6. Submits the job to Slurm
 /// 7. Streams the job output (unless --bg is specified)
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub async fn run_job(
     config: &Config,
     job_or_command: Option<&str>,
@@ -63,6 +63,7 @@ pub async fn run_job(
     tags: &[(String, String)],
     slurm_overrides: SlurmConfig,
     background: bool,
+    notify: bool,
     dry_run: bool,
     debug: bool,
 ) -> Result<()> {
@@ -160,6 +161,9 @@ pub async fn run_job(
         println!();
         let log_path = format!("{job_dir}/job.out");
         follow_job_logs(&config.remote.host, &slurm_id, &log_path, debug).await?;
+    } else if notify {
+        // Wait for job completion in background and notify
+        wait_and_notify(&job_id, &config.remote.host, debug).await?;
     }
 
     Ok(())
@@ -995,10 +999,7 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool
                 _ => {}
             }
 
-            // Send terminal notification (OSC 9)
-            // Supports iTerm2, Windows Terminal, and other compatible terminals
-            print!("\x1b]9;fleche: {message}\x07");
-            let _ = std::io::stdout().flush();
+            send_notification(message);
         }
     }
 
@@ -1097,6 +1098,126 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len - 3])
     }
+}
+
+/// Waits for a job to complete and sends a terminal notification.
+///
+/// Polls the job status every few seconds until it reaches a terminal state.
+async fn wait_and_notify(job_id: &str, remote_host: &str, debug: bool) -> Result<()> {
+    println!(
+        "{}",
+        style("Waiting for job to complete (will notify when done)...").dim()
+    );
+
+    let registry = Registry::open()?;
+    let ssh = SshClient::new(remote_host, debug);
+
+    loop {
+        let job = registry.get_job(job_id)?;
+        if let Some(ref slurm_id) = job.slurm_id {
+            let status = get_job_status(&ssh, slurm_id).await?;
+            registry.update_status(job_id, status)?;
+
+            match status {
+                JobStatus::Completed => {
+                    let message = format!("Job {job_id} completed successfully.");
+                    println!("{}", style(&message).green().bold());
+                    send_notification(&message);
+                    return Ok(());
+                }
+                JobStatus::Failed => {
+                    let message = format!("Job {job_id} failed.");
+                    println!("{}", style(&message).red().bold());
+                    send_notification(&message);
+                    return Ok(());
+                }
+                JobStatus::Cancelled => {
+                    let message = format!("Job {job_id} was cancelled.");
+                    println!("{}", style(&message).yellow().bold());
+                    send_notification(&message);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
+/// Waits for a job to complete.
+///
+/// Polls the job status until it reaches a terminal state (completed, failed, cancelled).
+pub async fn wait_for_job(
+    job_id: Option<&str>,
+    notify: bool,
+    tags: &[(String, String)],
+    debug: bool,
+) -> Result<()> {
+    let registry = Registry::open()?;
+
+    // Resolve job ID
+    let job = if let Some(id) = job_id {
+        registry.get_job(id)?
+    } else {
+        registry
+            .list_jobs(None, &[], tags, 1)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
+            })?
+    };
+
+    let ssh = SshClient::new(&job.remote_host, debug);
+
+    println!("Waiting for job {}...", style(&job.id).bold());
+
+    loop {
+        if let Some(ref slurm_id) = job.slurm_id {
+            let status = get_job_status(&ssh, slurm_id).await?;
+            registry.update_status(&job.id, status)?;
+
+            let message = match status {
+                JobStatus::Completed => {
+                    let msg = format!("Job {} completed successfully.", job.id);
+                    println!("{}", style(&msg).green().bold());
+                    Some(msg)
+                }
+                JobStatus::Failed => {
+                    let msg = format!("Job {} failed.", job.id);
+                    println!("{}", style(&msg).red().bold());
+                    Some(msg)
+                }
+                JobStatus::Cancelled => {
+                    let msg = format!("Job {} was cancelled.", job.id);
+                    println!("{}", style(&msg).yellow().bold());
+                    Some(msg)
+                }
+                _ => None,
+            };
+
+            if let Some(msg) = message {
+                if notify {
+                    send_notification(&msg);
+                }
+                return Ok(());
+            }
+        } else {
+            return Err(FlecheError::Other(format!(
+                "Job {} has no Slurm ID",
+                job.id
+            )));
+        }
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
+/// Sends a terminal notification using OSC 9.
+fn send_notification(message: &str) {
+    print!("\x1b]9;fleche: {message}\x07");
+    let _ = std::io::stdout().flush();
 }
 
 /// Pings the Slurm controller to check cluster health.

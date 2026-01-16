@@ -35,6 +35,12 @@ fleche run <job-name>
 # Submit without streaming (returns immediately)
 fleche run <job-name> --bg
 
+# Submit in background but get notified when done
+fleche run <job-name> --bg --notify
+
+# Wait for a job to complete
+fleche wait <job-id>
+
 # Check status
 fleche status
 
@@ -218,6 +224,7 @@ No need for explicit dependencies - files persist in the shared workspace.
 | `fleche status --filter running` | Filter by status (repeatable) |
 | `fleche status --tag <k=v>` | Filter jobs by tag |
 | `fleche logs [job-id]` | View job output (defaults to most recent) |
+| `fleche logs --raw` | Strip ANSI codes (auto when piped) |
 | `fleche logs --tag <k=v>` | Logs from most recent job with tag |
 | `fleche download [job-id]` | Pull output files (defaults to most recent) |
 | `fleche download --tag <k=v>` | Download from most recent job with tag |
@@ -228,6 +235,9 @@ No need for explicit dependencies - files persist in the shared workspace.
 | `fleche clean --older-than <dur>` | Clean jobs older than duration |
 | `fleche clean --workspace` | Also delete shared workspace |
 | `fleche tags` | List all unique tags across jobs |
+| `fleche wait [job-id]` | Wait for job to complete |
+| `fleche wait --notify` | Wait and send notification when done |
+| `fleche ping` | Check Slurm cluster health |
 | `fleche init` | Create starter config |
 | `fleche check` | Validate config |
 
@@ -276,7 +286,7 @@ All jobs share a workspace directory:
 
 - Use `--dry-run` to preview the sbatch script before submitting
 - Use `fleche check` to validate config after editing
-- Job IDs look like `train-20260115-153042-847-x7k2`
+- Job IDs look like `train-20260115-153042-847-x7k2` (use suffix like `x7k2` for short)
 - The job registry is at `~/.config/fleche/jobs.db`
 - Ctrl+C during streaming disconnects but doesn't cancel the job
 - Use `fleche exec` for quick tests without Slurm queue wait
