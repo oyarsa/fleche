@@ -118,6 +118,7 @@ async fn run() -> Result<()> {
             stdout,
             stderr,
             tail,
+            raw,
             tags,
         } => {
             job::show_logs(
@@ -126,6 +127,7 @@ async fn run() -> Result<()> {
                 stdout,
                 stderr,
                 tail,
+                raw,
                 &tags,
                 cli.debug,
             )

@@ -455,6 +455,7 @@ pub async fn show_logs(
     only_stdout: bool,
     only_stderr: bool,
     tail: Option<usize>,
+    raw: bool,
     tags: &[(String, String)],
     debug: bool,
 ) -> Result<()> {
@@ -485,6 +486,9 @@ pub async fn show_logs(
     let show_stderr = !only_stdout || only_stderr;
     let show_both = show_stdout && show_stderr;
 
+    // Strip ANSI codes if --raw is set or if stdout is not a terminal (piped)
+    let strip_ansi = raw || !std::io::IsTerminal::is_terminal(&std::io::stdout());
+
     if follow {
         let log_file = if only_stderr { "job.err" } else { "job.out" };
         let log_path = format!("{log_base}/{log_file}");
@@ -503,7 +507,7 @@ pub async fn show_logs(
         println!("{}", style("=== STDOUT ===").bold());
         let stdout_path = format!("{log_base}/job.out");
         match ssh.cat_tail(&stdout_path, tail).await {
-            Ok(content) => print!("{content}"),
+            Ok(content) => print!("{}", maybe_strip_ansi(&content, strip_ansi)),
             Err(e) => eprintln!("Error reading stdout: {e}"),
         }
 
@@ -511,7 +515,7 @@ pub async fn show_logs(
         println!("{}", style("=== STDERR ===").bold());
         let stderr_path = format!("{log_base}/job.err");
         match ssh.cat_tail(&stderr_path, tail).await {
-            Ok(content) => print!("{content}"),
+            Ok(content) => print!("{}", maybe_strip_ansi(&content, strip_ansi)),
             Err(e) => eprintln!("Error reading stderr: {e}"),
         }
     } else {
@@ -519,10 +523,76 @@ pub async fn show_logs(
         let log_path = format!("{log_base}/{log_file}");
 
         let content = ssh.cat_tail(&log_path, tail).await?;
-        print!("{content}");
+        print!("{}", maybe_strip_ansi(&content, strip_ansi));
     }
 
     Ok(())
+}
+
+/// Strips ANSI escape codes from a string if `strip` is true.
+fn maybe_strip_ansi(s: &str, strip: bool) -> std::borrow::Cow<'_, str> {
+    if strip {
+        strip_ansi_codes(s).into()
+    } else {
+        s.into()
+    }
+}
+
+/// Strips ANSI escape codes from a string.
+///
+/// Handles common ANSI sequences: CSI (ESC [), OSC (ESC ]), and basic escape codes.
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // ESC character - start of escape sequence
+            match chars.peek() {
+                Some('[') => {
+                    // CSI sequence: ESC [ ... (ends with letter or @-~)
+                    chars.next(); // consume '['
+                    while let Some(&nc) = chars.peek() {
+                        chars.next();
+                        if nc.is_ascii_alphabetic() || ('@'..='~').contains(&nc) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    // OSC sequence: ESC ] ... (ends with BEL or ST)
+                    chars.next(); // consume ']'
+                    while let Some(&nc) = chars.peek() {
+                        chars.next();
+                        if nc == '\x07' {
+                            // BEL
+                            break;
+                        }
+                        if nc == '\x1b' {
+                            // ST (ESC \)
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                Some('(' | ')') => {
+                    // Character set selection: ESC ( or ESC )
+                    chars.next();
+                    chars.next(); // skip the designator
+                }
+                _ => {
+                    // Single-character escape or unknown - skip next char
+                    chars.next();
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
 }
 
 /// Downloads output files from a job's workspace back to the local project.
@@ -1081,4 +1151,57 @@ pub async fn ping_cluster(config: &Config, debug: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_ansi_codes_csi_colors() {
+        // Basic color codes
+        assert_eq!(strip_ansi_codes("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(
+            strip_ansi_codes("\x1b[1;32mbold green\x1b[0m"),
+            "bold green"
+        );
+        assert_eq!(
+            strip_ansi_codes("\x1b[38;5;196mextended\x1b[0m"),
+            "extended"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_csi_cursor() {
+        // Cursor movement
+        assert_eq!(strip_ansi_codes("\x1b[2Jclear"), "clear");
+        assert_eq!(strip_ansi_codes("\x1b[10;20Hposition"), "position");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_osc() {
+        // OSC sequences (terminal title, notifications)
+        assert_eq!(strip_ansi_codes("\x1b]0;title\x07text"), "text");
+        assert_eq!(strip_ansi_codes("\x1b]9;notification\x07text"), "text");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_preserves_text() {
+        assert_eq!(strip_ansi_codes("plain text"), "plain text");
+        assert_eq!(strip_ansi_codes("line1\nline2"), "line1\nline2");
+        assert_eq!(strip_ansi_codes(""), "");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_complex() {
+        let input = "\x1b[1mBold\x1b[0m and \x1b[31mred\x1b[0m text";
+        assert_eq!(strip_ansi_codes(input), "Bold and red text");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_progress_bar() {
+        // Common progress bar output with cursor control
+        let input = "Progress: \x1b[32m50%\x1b[0m \x1b[K";
+        assert_eq!(strip_ansi_codes(input), "Progress: 50% ");
+    }
 }

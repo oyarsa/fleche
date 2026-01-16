@@ -156,6 +156,10 @@ pub enum Commands {
         #[arg(short = 'n', long)]
         tail: Option<usize>,
 
+        /// Strip ANSI escape codes from output (auto-detected when piped)
+        #[arg(long)]
+        raw: bool,
+
         /// Filter by tag when using default job (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
