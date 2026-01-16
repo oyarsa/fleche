@@ -62,6 +62,25 @@ fn is_retryable_error(stderr: &str) -> bool {
         || stderr.contains("Host is down")
 }
 
+/// Formats a timeout error with helpful context and suggestions.
+fn format_timeout_error(command: &str) -> String {
+    let is_sbatch = command.contains("sbatch");
+
+    let mut msg = format!("Command timed out after {EXEC_TIMEOUT:?}");
+
+    if is_sbatch {
+        msg.push_str("\n\nThis usually means the Slurm scheduler is overloaded or down.");
+        msg.push_str("\nRun 'fleche ping' to check cluster status.");
+    } else {
+        msg.push_str("\n\nThis may indicate:");
+        msg.push_str("\n  - The remote host is slow or overloaded");
+        msg.push_str("\n  - Network connectivity issues");
+        msg.push_str("\n  - A stale SSH connection");
+    }
+
+    msg
+}
+
 /// Appends SSH verbose output to the log file.
 fn append_to_ssh_log(host: &str, command: &str, stderr: &str) {
     let Some(log_path) = ssh_log_path() else {
@@ -232,9 +251,7 @@ impl SshClient {
                         command,
                         &format!("Command timed out after {EXEC_TIMEOUT:?}"),
                     );
-                    return Err(FlecheError::SshTimeout(format!(
-                        "SSH command timed out after {EXEC_TIMEOUT:?}: {command}"
-                    )));
+                    return Err(FlecheError::SshTimeout(format_timeout_error(command)));
                 }
             };
 
@@ -319,9 +336,7 @@ impl SshClient {
                         command,
                         &format!("Command timed out after {EXEC_TIMEOUT:?}"),
                     );
-                    return Err(FlecheError::SshTimeout(format!(
-                        "SSH command timed out after {EXEC_TIMEOUT:?}: {command}"
-                    )));
+                    return Err(FlecheError::SshTimeout(format_timeout_error(command)));
                 }
             };
 
@@ -358,9 +373,7 @@ impl SshClient {
                 )));
             }
             Err(_) => {
-                return Err(FlecheError::SshTimeout(format!(
-                    "SSH command timed out after {EXEC_TIMEOUT:?}: {command}"
-                )));
+                return Err(FlecheError::SshTimeout(format_timeout_error(command)));
             }
         };
 
