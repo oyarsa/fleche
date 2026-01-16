@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = \"web\" ] || [ \"$USER\" = \"sprite\" ]",
+        "command": ".claude/setup.sh"
+      }
+    ]
+  }
+}
