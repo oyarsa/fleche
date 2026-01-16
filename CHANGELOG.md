@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.3.0] - 2026-01-16
+
+### Added
+- `fleche ping` command to check Slurm cluster health via `scontrol ping`
+- `--raw` flag for `fleche logs` to strip ANSI escape codes from output
+- Auto-strip ANSI codes when logs output is piped (detected via `isatty`)
+- Short job ID matching by suffix (e.g., `fleche logs 7rhh` instead of full ID)
+
+### Changed
+- Timeout error messages now provide context-specific suggestions (sbatch timeouts suggest `fleche ping`)
+- Terminal notifications now prefixed with "fleche:" for clarity
+- Job not found error now suggests `fleche status` instead of `fleche list`
+
 ## [5.2.1] - 2026-01-16
 
 ### Changed
