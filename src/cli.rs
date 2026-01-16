@@ -106,13 +106,17 @@ pub enum Commands {
         /// Job ID to check (default: list recent jobs)
         job_id: Option<String>,
 
-        /// Filter by status (pending, running, completed, failed, cancelled)
+        /// Filter by status (pending, running, completed, failed, cancelled) - repeatable
         #[arg(long)]
-        filter: Option<String>,
+        filter: Vec<String>,
 
         /// Filter by tag (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
+
+        /// Number of jobs to show (default: 20)
+        #[arg(short = 'n', long)]
+        last: Option<usize>,
     },
 
     /// Fetch and display job logs
@@ -208,6 +212,23 @@ pub enum Commands {
         yes: bool,
 
         /// Filter by tag (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
+    },
+
+    /// List all unique tags across jobs
+    Tags,
+
+    /// Re-run a previous job with the same settings
+    Rerun {
+        /// Job ID to re-run
+        job_id: String,
+
+        /// Run in background (don't stream output)
+        #[arg(long)]
+        bg: bool,
+
+        /// Add tag for filtering/organization (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
     },

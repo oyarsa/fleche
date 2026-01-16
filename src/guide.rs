@@ -211,8 +211,11 @@ No need for explicit dependencies - files persist in the shared workspace.
 | Command | Description |
 |---------|-------------|
 | `fleche run [job\|cmd] [opts]` | Submit a job via Slurm |
+| `fleche rerun <job-id>` | Re-run a previous job with same settings |
 | `fleche exec <cmd>` | Run command directly via SSH (no Slurm) |
 | `fleche status [job-id]` | Show job status (defaults to listing all) |
+| `fleche status -n 50` | Show last 50 jobs |
+| `fleche status --filter running` | Filter by status (repeatable) |
 | `fleche status --tag <k=v>` | Filter jobs by tag |
 | `fleche logs [job-id]` | View job output (defaults to most recent) |
 | `fleche logs --tag <k=v>` | Logs from most recent job with tag |
@@ -224,6 +227,7 @@ No need for explicit dependencies - files persist in the shared workspace.
 | `fleche clean --all [--tag <k=v>]` | Clean all (or tagged) finished jobs |
 | `fleche clean --older-than <dur>` | Clean jobs older than duration |
 | `fleche clean --workspace` | Also delete shared workspace |
+| `fleche tags` | List all unique tags across jobs |
 | `fleche init` | Create starter config |
 | `fleche check` | Validate config |
 

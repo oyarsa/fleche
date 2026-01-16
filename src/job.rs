@@ -165,6 +165,125 @@ pub async fn run_job(
     Ok(())
 }
 
+/// Re-runs a previous job with the same settings.
+///
+/// Fetches the job configuration from the registry and submits a new job
+/// with the same command, Slurm settings, and environment variables.
+pub async fn rerun_job(
+    config: &Config,
+    job_id: &str,
+    tags: &[(String, String)],
+    background: bool,
+    debug: bool,
+) -> Result<()> {
+    let registry = Registry::open()?;
+    let old_job = registry.get_job(job_id)?;
+
+    // Deserialize the old job's configuration
+    let resolved: ResolvedJob = serde_json::from_str(&old_job.config_json)?;
+
+    // Merge old job's tags with new tags (new tags take precedence)
+    let mut merged_tags: Vec<(String, String)> = old_job
+        .tags
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for (k, v) in tags {
+        if let Some(pos) = merged_tags.iter().position(|(key, _)| key == k) {
+            merged_tags[pos] = (k.clone(), v.clone());
+        } else {
+            merged_tags.push((k.clone(), v.clone()));
+        }
+    }
+
+    // Run with the old job's resolved configuration
+    run_job_with_resolved(config, &resolved, &merged_tags, background, debug).await
+}
+
+/// Runs a job with an already-resolved configuration.
+async fn run_job_with_resolved(
+    config: &Config,
+    job: &ResolvedJob,
+    tags: &[(String, String)],
+    background: bool,
+    debug: bool,
+) -> Result<()> {
+    let workspace = workspace_path(config);
+    let ssh = SshClient::new(&config.remote.host, debug);
+
+    // Generate unique job ID
+    let job_id = generate_job_id(&job.name);
+    let job_dir = format!(
+        "{}/{}/.fleche/jobs/{}",
+        config.remote.base_path, config.project_name, job_id
+    );
+
+    // Create directories
+    println!(
+        "{} Creating remote directories...",
+        style("[1/4]").bold().dim()
+    );
+    ssh.mkdir(&workspace).await?;
+    ssh.mkdir(&job_dir).await?;
+
+    // Sync project code
+    print!("{} Syncing project code...", style("[2/4]").bold().dim());
+    let _ = std::io::stdout().flush();
+    let stats =
+        sync_project_to_workspace(&config.project_path, &config.remote.host, &workspace).await?;
+    println!(" {}", style(format!("({})", stats.human_readable())).dim());
+
+    // Sync inputs if any
+    if job.inputs.is_empty() {
+        println!("{} Submitting job to Slurm...", style("[3/4]").bold().dim());
+    } else {
+        print!("{} Syncing input files...", style("[3/4]").bold().dim());
+        let _ = std::io::stdout().flush();
+        let stats = sync_inputs_to_workspace(
+            &config.project_path,
+            &job.inputs,
+            &config.remote.host,
+            &workspace,
+        )
+        .await?;
+        println!(" {}", style(format!("({})", stats.human_readable())).dim());
+    }
+
+    // Generate and upload sbatch script
+    println!("{} Submitting job to Slurm...", style("[4/4]").bold().dim());
+    let script = generate_sbatch_script(&job_id, job, &workspace, &job_dir);
+    ssh.write_file(&format!("{job_dir}/job.sbatch"), &script)
+        .await?;
+
+    // Submit job
+    let slurm_id = submit_job(&ssh, &job_dir).await?;
+
+    // Record in registry
+    let registry = Registry::open()?;
+    registry.insert_job(
+        &job_id,
+        Some(&slurm_id),
+        job,
+        &config.project_name,
+        &config.project_path.to_string_lossy(),
+        &config.remote.host,
+        &workspace,
+        tags,
+    )?;
+
+    println!();
+    println!("{} {}", style("Job ID:").green().bold(), job_id);
+    println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
+
+    if !background {
+        println!();
+        let log_path = format!("{job_dir}/job.out");
+        follow_job_logs(&config.remote.host, &slurm_id, &log_path, debug).await?;
+    }
+
+    Ok(())
+}
+
 /// Executes a command directly via SSH (no Slurm).
 ///
 /// Syncs the project and inputs, then runs the command directly over SSH.
@@ -253,8 +372,9 @@ fn shell_escape(s: &str) -> String {
 /// Shows the status of a specific job or lists recent jobs.
 pub async fn show_status(
     job_id: Option<&str>,
-    filter: Option<&str>,
+    filters: &[String],
     tags: &[(String, String)],
+    last: Option<usize>,
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -281,14 +401,14 @@ pub async fn show_status(
         // Refresh status for all pending/running jobs
         refresh_active_job_statuses(&registry, debug).await?;
 
-        // Determine status filter
-        let status_filter = if let Some(f) = filter {
-            Some(f.parse()?)
-        } else {
-            None
-        };
+        // Parse status filters
+        let status_filters: Vec<JobStatus> = filters
+            .iter()
+            .map(|f| f.parse())
+            .collect::<Result<Vec<_>>>()?;
 
-        let jobs = registry.list_jobs(None, status_filter, tags, 20)?;
+        let limit = last.unwrap_or(20);
+        let jobs = registry.list_jobs(None, &status_filters, tags, limit)?;
 
         if jobs.is_empty() {
             println!("No jobs found. Run `fleche run` to submit a job.");
@@ -296,6 +416,32 @@ pub async fn show_status(
         }
 
         print_job_table(&jobs);
+    }
+
+    Ok(())
+}
+
+/// Lists all unique tags across jobs.
+pub fn list_tags() -> Result<()> {
+    let registry = Registry::open()?;
+    let tags = registry.list_unique_tags()?;
+
+    if tags.is_empty() {
+        println!("No tags found. Use --tag when running jobs to add tags.");
+        return Ok(());
+    }
+
+    // Group by key
+    let mut current_key = String::new();
+    for (key, value) in &tags {
+        if key != &current_key {
+            if !current_key.is_empty() {
+                println!();
+            }
+            println!("{}", style(key).bold());
+            current_key.clone_from(key);
+        }
+        println!("  {value}");
     }
 
     Ok(())
@@ -319,7 +465,7 @@ pub async fn show_logs(
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, None, tags, 1)?
+            .list_jobs(None, &[], tags, 1)?
             .into_iter()
             .next()
             .ok_or_else(|| {
@@ -394,7 +540,7 @@ pub async fn download_outputs(
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, None, tags, 1)?
+            .list_jobs(None, &[], tags, 1)?
             .into_iter()
             .next()
             .ok_or_else(|| {
@@ -497,7 +643,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, None, tags, 100)?
+                .list_jobs(None, &[], tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -508,7 +654,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, None, tags, 100)?
+                .list_jobs(None, &[], tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -596,7 +742,7 @@ pub async fn clean_jobs(
             registry.list_finished_jobs()?
         } else {
             registry
-                .list_jobs(None, None, tags, 1000)?
+                .list_jobs(None, &[], tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| {
                     matches!(
@@ -845,7 +991,16 @@ fn print_job_table(jobs: &[JobRecord]) {
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
         );
-        if !job.tags.is_empty() {
+        // Show job name if it differs from the ID prefix (i.e., provides useful info)
+        let id_prefix = job.id.split('-').next().unwrap_or("");
+        if job.job_name != id_prefix {
+            print!("    {}", style(&job.job_name).dim());
+            if !job.tags.is_empty() {
+                let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                print!("  {}", style(tags.join(" ")).dim());
+            }
+            println!();
+        } else if !job.tags.is_empty() {
             let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
             println!("    {}", style(tags.join(" ")).dim());
         }

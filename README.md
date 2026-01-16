@@ -117,17 +117,19 @@ fleche/
 | Command                      | Description                                    |
 |------------------------------|------------------------------------------------|
 | `fleche run [job\|cmd] [opts]` | Submit a job to the cluster                   |
+| `fleche rerun <job-id>`      | Re-run a previous job with same settings       |
 | `fleche exec <cmd>`          | Run command directly via SSH (no Slurm)        |
 | `fleche status [job-id]`     | Show job status (defaults to listing all)      |
 | `fleche logs [job-id]`       | View job output (defaults to most recent)      |
 | `fleche download [job-id]`   | Pull output files (defaults to most recent)    |
 | `fleche cancel [job-id]`     | Cancel a job (defaults to most recent active)  |
 | `fleche clean [job-id]`      | Remove job and remote files                    |
+| `fleche tags`                | List all unique tags across jobs               |
 | `fleche init`                | Create starter config                          |
 | `fleche check`               | Validate config                                |
 | `fleche guide`               | Print comprehensive usage guide                |
 
-All commands except `run`, `exec`, `init`, `check`, and `guide` support `--tag` for filtering.
+All commands except `run`, `rerun`, `exec`, `tags`, `init`, `check`, and `guide` support `--tag` for filtering.
 
 ### Run Options
 
@@ -154,8 +156,9 @@ Options:
 fleche status [job-id] [options]
 
 Options:
-  --filter <status>     Filter by status (pending, running, completed, failed, cancelled)
+  --filter <status>     Filter by status (repeatable: pending, running, completed, failed, cancelled)
   --tag <KEY=VALUE>     Filter by tag (repeatable)
+  -n, --last <N>        Number of jobs to show (default: 20)
 ```
 
 ### Filtering Options

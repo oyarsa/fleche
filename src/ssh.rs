@@ -412,10 +412,11 @@ impl SshClient {
 
     /// Spawns a process that follows a file on the remote host.
     ///
-    /// Uses `tail -F` which will retry if the file doesn't exist yet,
-    /// making it suitable for following log files from jobs that are
-    /// still pending in the queue. Stderr is suppressed to hide "file
-    /// doesn't exist" messages during the retry period (unless debug mode).
+    /// Uses `tail -F -n +1` which will retry if the file doesn't exist yet
+    /// and start from the beginning of the file. This ensures no output is
+    /// missed even if the job writes output before tail connects.
+    /// Stderr is suppressed to hide "file doesn't exist" messages during
+    /// the retry period (unless debug mode).
     ///
     /// The child process's stdout is inherited by the current process.
     pub fn tail_follow(&self, path: &str) -> Result<tokio::process::Child> {
@@ -426,10 +427,12 @@ impl SshClient {
             Stdio::null()
         };
 
+        // -F: follow by name (retry if file doesn't exist)
+        // -n +1: start from line 1 (beginning of file, not end)
         let child = Command::new("ssh")
             .args(self.ssh_args())
             .arg(&self.host)
-            .arg(format!("tail -F {} 2>/dev/null", shell_escape(path)))
+            .arg(format!("tail -F -n +1 {} 2>/dev/null", shell_escape(path)))
             .stdout(Stdio::inherit())
             .stderr(stderr_cfg)
             .spawn()

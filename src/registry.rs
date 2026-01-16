@@ -292,7 +292,7 @@ impl Registry {
     pub fn list_jobs(
         &self,
         project_filter: Option<&str>,
-        status_filter: Option<JobStatus>,
+        status_filters: &[JobStatus],
         tag_filters: &[(String, String)],
         limit: usize,
     ) -> Result<Vec<JobRecord>> {
@@ -325,9 +325,12 @@ impl Registry {
             params_vec.push(Box::new(format!("%{project}%")));
         }
 
-        if let Some(status) = status_filter {
-            conditions.push("j.status = ?".to_string());
-            params_vec.push(Box::new(status.to_string()));
+        if !status_filters.is_empty() {
+            let placeholders: Vec<&str> = status_filters.iter().map(|_| "?").collect();
+            conditions.push(format!("j.status IN ({})", placeholders.join(", ")));
+            for status in status_filters {
+                params_vec.push(Box::new(status.to_string()));
+            }
         }
 
         if !conditions.is_empty() {
@@ -539,6 +542,18 @@ impl Registry {
         self.conn
             .execute("DELETE FROM jobs WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    /// Lists all unique tag key-value pairs across all jobs.
+    pub fn list_unique_tags(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT key, value FROM job_tags ORDER BY key, value")?;
+        let tags = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(tags)
     }
 }
 

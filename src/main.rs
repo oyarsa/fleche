@@ -107,8 +107,9 @@ async fn run() -> Result<()> {
             job_id,
             filter,
             tags,
+            last,
         } => {
-            job::show_status(job_id.as_deref(), filter.as_deref(), &tags, cli.debug).await?;
+            job::show_status(job_id.as_deref(), &filter, &tags, last, cli.debug).await?;
         }
 
         Commands::Logs {
@@ -174,6 +175,15 @@ async fn run() -> Result<()> {
                 cli.debug,
             )
             .await?;
+        }
+
+        Commands::Tags => {
+            job::list_tags()?;
+        }
+
+        Commands::Rerun { job_id, bg, tags } => {
+            let config = Config::find_and_load()?;
+            job::rerun_job(&config, &job_id, &tags, bg, cli.debug).await?;
         }
 
         Commands::Init => {
