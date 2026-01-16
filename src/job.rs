@@ -251,7 +251,12 @@ fn shell_escape(s: &str) -> String {
 }
 
 /// Shows the status of a specific job or lists recent jobs.
-pub async fn show_status(job_id: Option<&str>, filter: Option<&str>, debug: bool) -> Result<()> {
+pub async fn show_status(
+    job_id: Option<&str>,
+    filter: Option<&str>,
+    tags: &[(String, String)],
+    debug: bool,
+) -> Result<()> {
     let registry = Registry::open()?;
 
     if let Some(id) = job_id {
@@ -283,7 +288,7 @@ pub async fn show_status(job_id: Option<&str>, filter: Option<&str>, debug: bool
             None
         };
 
-        let jobs = registry.list_jobs(None, status_filter, &[], 20)?;
+        let jobs = registry.list_jobs(None, status_filter, tags, 20)?;
 
         if jobs.is_empty() {
             println!("No jobs found. Run `fleche run` to submit a job.");

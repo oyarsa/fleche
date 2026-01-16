@@ -109,6 +109,10 @@ pub enum Commands {
         /// Filter by status (pending, running, completed, failed, cancelled)
         #[arg(long)]
         filter: Option<String>,
+
+        /// Filter by tag (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
     },
 
     /// Fetch and display job logs

@@ -103,8 +103,12 @@ async fn run() -> Result<()> {
             job::exec_command(&config, &command, &env_vars, cli.debug).await?;
         }
 
-        Commands::Status { job_id, filter } => {
-            job::show_status(job_id.as_deref(), filter.as_deref(), cli.debug).await?;
+        Commands::Status {
+            job_id,
+            filter,
+            tags,
+        } => {
+            job::show_status(job_id.as_deref(), filter.as_deref(), &tags, cli.debug).await?;
         }
 
         Commands::Logs {
