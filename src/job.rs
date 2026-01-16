@@ -1026,3 +1026,59 @@ fn truncate(s: &str, max_len: usize) -> String {
         format!("{}...", &s[..max_len - 3])
     }
 }
+
+/// Pings the Slurm controller to check cluster health.
+///
+/// Runs `scontrol ping` on the remote host and reports the status of the
+/// Slurm controller(s). Useful for diagnosing timeout issues.
+pub async fn ping_cluster(config: &Config, debug: bool) -> Result<()> {
+    let ssh = SshClient::new(&config.remote.host, debug);
+
+    println!(
+        "Pinging Slurm controller on {}...",
+        style(&config.remote.host).bold()
+    );
+    println!();
+
+    let (success, stdout, stderr) = ssh.exec_allow_failure("scontrol ping").await?;
+
+    if success {
+        // Parse and display the output
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // Color-code UP/DOWN status
+            if line.contains("is UP") {
+                println!("{}", style(line).green());
+            } else if line.contains("is DOWN") {
+                println!("{}", style(line).red());
+            } else {
+                println!("{line}");
+            }
+        }
+        println!();
+
+        if stdout.contains("is DOWN") {
+            println!(
+                "{}",
+                style("Warning: One or more controllers are down. Jobs may be slow or fail.")
+                    .yellow()
+            );
+        } else {
+            println!("{}", style("Cluster is healthy.").green().bold());
+        }
+    } else {
+        // scontrol ping failed entirely
+        eprintln!("{}", style("Failed to ping Slurm controller.").red());
+        if !stderr.is_empty() {
+            eprintln!("{stderr}");
+        }
+        return Err(FlecheError::Other(
+            "Could not reach Slurm controller".to_string(),
+        ));
+    }
+
+    Ok(())
+}

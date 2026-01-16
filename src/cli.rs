@@ -255,6 +255,12 @@ pub enum Commands {
 
     /// Print a comprehensive usage guide (for LLMs and humans)
     Guide,
+
+    /// Check cluster health by pinging the Slurm controller
+    ///
+    /// Runs `scontrol ping` on the remote host to verify the Slurm
+    /// scheduler is responsive. Useful for diagnosing timeout issues.
+    Ping,
 }
 
 /// Parses a KEY=VALUE string into a tuple.

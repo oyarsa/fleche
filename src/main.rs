@@ -247,6 +247,11 @@ async fn run() -> Result<()> {
         Commands::Guide => {
             println!("{}", guide::GUIDE_TEXT);
         }
+
+        Commands::Ping => {
+            let config = Config::find_and_load()?;
+            job::ping_cluster(&config, cli.debug).await?;
+        }
     }
 
     Ok(())
