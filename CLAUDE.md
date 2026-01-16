@@ -13,8 +13,9 @@ Only release when explicitly requested (e.g., "release", "cut a release", "bump 
 
 When releasing:
 1. Bump the version in `Cargo.toml` (see Versioning below)
-2. Add an entry to `CHANGELOG.md` describing what changed since last release
-3. Commit, create a git tag (e.g., `v3.1.0`), and push both
+2. Update the release date in `src/cli.rs` (`long_version()` function)
+3. Add an entry to `CHANGELOG.md` describing what changed since last release
+4. Commit, create a git tag (e.g., `v3.1.0`), and push both
 
 ## Commits
 

@@ -5,11 +5,25 @@
 
 use clap::{Parser, Subcommand};
 
+/// GNU-style long version string with copyright and license.
+///
+/// Note: Update the date literal below when cutting a new release.
+fn long_version() -> &'static str {
+    concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (2026-01-16)\n", // Update date when releasing
+        "Copyright (C) 2026 Italo Silva\n",
+        "License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>\n",
+        "This is free software: you are free to change and redistribute it.\n",
+        "There is NO WARRANTY, to the extent permitted by law."
+    )
+}
+
 /// The main CLI structure for fleche.
 #[derive(Parser)]
 #[command(name = "fleche")]
 #[command(about = "Remote job runner for Slurm clusters")]
-#[command(version)]
+#[command(version, long_version = long_version())]
 pub struct Cli {
     /// Enable verbose SSH output for debugging connection issues
     #[arg(long, global = true)]
