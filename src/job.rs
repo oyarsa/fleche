@@ -788,6 +788,10 @@ fn print_job_table(jobs: &[JobRecord]) {
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
         );
+        if !job.tags.is_empty() {
+            let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            println!("    {}", style(tags.join(" ")).dim());
+        }
     }
 }
 
