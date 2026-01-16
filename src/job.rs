@@ -309,17 +309,22 @@ pub async fn show_logs(
     only_stdout: bool,
     only_stderr: bool,
     tail: Option<usize>,
+    tags: &[(String, String)],
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
-    // If no job ID provided, use most recent job
+    // If no job ID provided, use most recent job (optionally filtered by tags)
     let job = if let Some(id) = job_id {
         registry.get_job(id)?
     } else {
-        registry.get_most_recent_job(None)?.ok_or_else(|| {
-            FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
-        })?
+        registry
+            .list_jobs(None, None, tags, 1)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
+            })?
     };
 
     let ssh = SshClient::new(&job.remote_host, debug);
@@ -379,17 +384,22 @@ pub async fn download_outputs(
     job_id: Option<&str>,
     partial: bool,
     specific_path: Option<&str>,
+    tags: &[(String, String)],
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
-    // If no job ID provided, use most recent job
+    // If no job ID provided, use most recent job (optionally filtered by tags)
     let job = if let Some(id) = job_id {
         registry.get_job(id)?
     } else {
-        registry.get_most_recent_job(None)?.ok_or_else(|| {
-            FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
-        })?
+        registry
+            .list_jobs(None, None, tags, 1)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
+            })?
     };
 
     // Check job status
@@ -464,6 +474,7 @@ pub async fn cancel_jobs(
     job_id: Option<&str>,
     all: bool,
     skip_confirm: bool,
+    tags: &[(String, String)],
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -481,10 +492,27 @@ pub async fn cancel_jobs(
         }
         vec![job]
     } else if all {
-        registry.list_active_jobs()?
+        // Get active jobs, optionally filtered by tags
+        if tags.is_empty() {
+            registry.list_active_jobs()?
+        } else {
+            registry
+                .list_jobs(None, None, tags, 100)?
+                .into_iter()
+                .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
+                .collect()
+        }
     } else {
-        // Cancel most recent running job
-        let active = registry.list_active_jobs()?;
+        // Cancel most recent active job (optionally filtered by tags)
+        let active: Vec<JobRecord> = if tags.is_empty() {
+            registry.list_active_jobs()?
+        } else {
+            registry
+                .list_jobs(None, None, tags, 100)?
+                .into_iter()
+                .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
+                .collect()
+        };
         if active.is_empty() {
             println!("No active jobs to cancel.");
             return Ok(());
@@ -555,6 +583,7 @@ pub async fn clean_jobs(
     older_than: Option<&str>,
     clean_workspace: bool,
     skip_confirm: bool,
+    tags: &[(String, String)],
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -562,10 +591,33 @@ pub async fn clean_jobs(
     let jobs_to_clean: Vec<JobRecord> = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
     } else if all {
-        registry.list_finished_jobs()?
+        // Get finished jobs, optionally filtered by tags
+        if tags.is_empty() {
+            registry.list_finished_jobs()?
+        } else {
+            registry
+                .list_jobs(None, None, tags, 1000)?
+                .into_iter()
+                .filter(|j| {
+                    matches!(
+                        j.status,
+                        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+                    )
+                })
+                .collect()
+        }
     } else if let Some(duration_str) = older_than {
         let duration = parse_duration(duration_str)?;
-        registry.list_jobs_older_than(duration)?
+        let older_jobs = registry.list_jobs_older_than(duration)?;
+        // Filter by tags if provided
+        if tags.is_empty() {
+            older_jobs
+        } else {
+            older_jobs
+                .into_iter()
+                .filter(|j| tags.iter().all(|(k, v)| j.tags.get(k) == Some(v)))
+                .collect()
+        }
     } else {
         println!("Specify a job ID, --all, or --older-than");
         return Ok(());

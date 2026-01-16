@@ -137,6 +137,10 @@ pub enum Commands {
         /// Show only the last N lines
         #[arg(short = 'n', long)]
         tail: Option<usize>,
+
+        /// Filter by tag when using default job (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
     },
 
     /// Download output files from remote to local
@@ -153,6 +157,10 @@ pub enum Commands {
         /// Specific path to download (default: all configured outputs)
         #[arg(long)]
         path: Option<String>,
+
+        /// Filter by tag when using default job (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
     },
 
     /// Cancel a running or pending job
@@ -169,6 +177,10 @@ pub enum Commands {
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+
+        /// Filter by tag (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
     },
 
     /// Remove job from registry and delete remote job files
@@ -194,6 +206,10 @@ pub enum Commands {
         /// Skip confirmation prompt
         #[arg(short, long)]
         yes: bool,
+
+        /// Filter by tag (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
     },
 
     /// Create a starter fleche.toml in current directory

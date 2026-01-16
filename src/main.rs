@@ -117,20 +117,43 @@ async fn run() -> Result<()> {
             stdout,
             stderr,
             tail,
+            tags,
         } => {
-            job::show_logs(job_id.as_deref(), follow, stdout, stderr, tail, cli.debug).await?;
+            job::show_logs(
+                job_id.as_deref(),
+                follow,
+                stdout,
+                stderr,
+                tail,
+                &tags,
+                cli.debug,
+            )
+            .await?;
         }
 
         Commands::Download {
             job_id,
             partial,
             path,
+            tags,
         } => {
-            job::download_outputs(job_id.as_deref(), partial, path.as_deref(), cli.debug).await?;
+            job::download_outputs(
+                job_id.as_deref(),
+                partial,
+                path.as_deref(),
+                &tags,
+                cli.debug,
+            )
+            .await?;
         }
 
-        Commands::Cancel { job_id, all, yes } => {
-            job::cancel_jobs(job_id.as_deref(), all, yes, cli.debug).await?;
+        Commands::Cancel {
+            job_id,
+            all,
+            yes,
+            tags,
+        } => {
+            job::cancel_jobs(job_id.as_deref(), all, yes, &tags, cli.debug).await?;
         }
 
         Commands::Clean {
@@ -139,6 +162,7 @@ async fn run() -> Result<()> {
             older_than,
             workspace,
             yes,
+            tags,
         } => {
             job::clean_jobs(
                 job_id.as_deref(),
@@ -146,6 +170,7 @@ async fn run() -> Result<()> {
                 older_than.as_deref(),
                 workspace,
                 yes,
+                &tags,
                 cli.debug,
             )
             .await?;
