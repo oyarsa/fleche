@@ -147,12 +147,32 @@ This syncs your project and runs the command directly over SSH.
 
 ### Tagging Jobs
 
-Add tags to track experiments:
+Add tags to track and filter experiments:
 
 ```bash
-fleche run train --env CONFIG=llama --tag experiment=ablation --tag model=8b
-fleche status --filter running
+# Tag jobs when submitting
+fleche run train --tag experiment=ablation --tag model=8b
+fleche run train --tag experiment=baseline --tag model=8b
+
+# Filter status by tag
+fleche status --tag experiment=ablation
+fleche status --tag model=8b --filter running
+
+# View logs from most recent job with specific tag
+fleche logs --tag experiment=ablation
+
+# Download outputs from most recent job with tag
+fleche download --tag experiment=ablation
+
+# Cancel all jobs with a specific tag
+fleche cancel --all --tag experiment=test
+
+# Clean up old experiment jobs
+fleche clean --all --tag experiment=old
+fleche clean --older-than 7d --tag experiment=ablation
 ```
+
+Tags are shown in status output below each job that has them.
 
 ### Monitoring
 
@@ -193,12 +213,16 @@ No need for explicit dependencies - files persist in the shared workspace.
 | `fleche run [job\|cmd] [opts]` | Submit a job via Slurm |
 | `fleche exec <cmd>` | Run command directly via SSH (no Slurm) |
 | `fleche status [job-id]` | Show job status (defaults to listing all) |
+| `fleche status --tag <k=v>` | Filter jobs by tag |
 | `fleche logs [job-id]` | View job output (defaults to most recent) |
+| `fleche logs --tag <k=v>` | Logs from most recent job with tag |
 | `fleche download [job-id]` | Pull output files (defaults to most recent) |
+| `fleche download --tag <k=v>` | Download from most recent job with tag |
 | `fleche cancel [job-id]` | Cancel a job (defaults to most recent active) |
-| `fleche cancel --all [-y]` | Cancel all running/pending jobs |
+| `fleche cancel --all [--tag <k=v>]` | Cancel all (or tagged) active jobs |
 | `fleche clean [job-id]` | Remove job and remote files |
-| `fleche clean --all [-y]` | Clean all finished jobs |
+| `fleche clean --all [--tag <k=v>]` | Clean all (or tagged) finished jobs |
+| `fleche clean --older-than <dur>` | Clean jobs older than duration |
 | `fleche clean --workspace` | Also delete shared workspace |
 | `fleche init` | Create starter config |
 | `fleche check` | Validate config |

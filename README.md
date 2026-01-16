@@ -127,6 +127,8 @@ fleche/
 | `fleche check`               | Validate config                                |
 | `fleche guide`               | Print comprehensive usage guide                |
 
+All commands except `run`, `exec`, `init`, `check`, and `guide` support `--tag` for filtering.
+
 ### Run Options
 
 ```bash
@@ -153,6 +155,19 @@ fleche status [job-id] [options]
 
 Options:
   --filter <status>     Filter by status (pending, running, completed, failed, cancelled)
+  --tag <KEY=VALUE>     Filter by tag (repeatable)
+```
+
+### Filtering Options
+
+Most commands support `--tag` for filtering:
+
+```bash
+fleche logs --tag <KEY=VALUE>       # Logs from most recent job with tag
+fleche download --tag <KEY=VALUE>   # Download from most recent job with tag
+fleche cancel --tag <KEY=VALUE>     # Cancel most recent active job with tag
+fleche cancel --all --tag <K=V>     # Cancel all active jobs with tag
+fleche clean --all --tag <KEY=VALUE># Clean all finished jobs with tag
 ```
 
 ## Common Workflows
@@ -210,12 +225,32 @@ No need for explicit dependencies - files persist in the shared workspace.
 
 ### Tagging Jobs
 
-Add tags to track experiments:
+Add tags to track and filter experiments:
 
 ```bash
-fleche run train --env CONFIG=llama --tag experiment=ablation --tag model=8b
-fleche status --filter running
+# Tag jobs when submitting
+fleche run train --tag experiment=ablation --tag model=8b
+fleche run train --tag experiment=baseline --tag model=8b
+
+# Filter status by tag
+fleche status --tag experiment=ablation
+fleche status --tag model=8b --filter running
+
+# View logs from most recent job with specific tag
+fleche logs --tag experiment=ablation
+
+# Download outputs from most recent job with tag
+fleche download --tag experiment=ablation
+
+# Cancel all jobs with a specific tag
+fleche cancel --all --tag experiment=test
+
+# Clean up old experiment jobs
+fleche clean --all --tag experiment=old
+fleche clean --older-than 7d --tag experiment=ablation
 ```
+
+Tags are shown in status output below each job that has them.
 
 ### Monitoring
 
