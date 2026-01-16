@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.2.1] - 2026-01-16
+
+### Changed
+- Version output now follows GNU style with copyright, license, and release date
+
 ## [5.2.0] - 2026-01-16
 
 ### Added
