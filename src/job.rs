@@ -996,7 +996,9 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool
             }
 
             // Send terminal notification (OSC 9)
-            print!("\x1b]9;{message}\x07");
+            // Supports iTerm2, Windows Terminal, and other compatible terminals
+            print!("\x1b]9;fleche: {message}\x07");
+            let _ = std::io::stdout().flush();
         }
     }
 
