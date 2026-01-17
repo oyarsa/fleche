@@ -377,6 +377,7 @@ fn shell_escape(s: &str) -> String {
 pub async fn show_status(
     job_id: Option<&str>,
     filters: &[String],
+    name_filter: Option<&str>,
     tags: &[(String, String)],
     last: Option<usize>,
     debug: bool,
@@ -412,7 +413,7 @@ pub async fn show_status(
             .collect::<Result<Vec<_>>>()?;
 
         let limit = last.unwrap_or(20);
-        let jobs = registry.list_jobs(None, &status_filters, tags, limit)?;
+        let jobs = registry.list_jobs(None, &status_filters, name_filter, tags, limit)?;
 
         if jobs.is_empty() {
             println!("No jobs found. Run `fleche run` to submit a job.");
@@ -470,7 +471,7 @@ pub async fn show_logs(
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, &[], tags, 1)?
+            .list_jobs(None, &[], None, tags, 1)?
             .into_iter()
             .next()
             .ok_or_else(|| {
@@ -614,7 +615,7 @@ pub async fn download_outputs(
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, &[], tags, 1)?
+            .list_jobs(None, &[], None, tags, 1)?
             .into_iter()
             .next()
             .ok_or_else(|| {
@@ -717,7 +718,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], tags, usize::MAX)?
+                .list_jobs(None, &[], None, tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -728,7 +729,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], tags, usize::MAX)?
+                .list_jobs(None, &[], None, tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -816,7 +817,7 @@ pub async fn clean_jobs(
             registry.list_finished_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], tags, usize::MAX)?
+                .list_jobs(None, &[], None, tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| {
                     matches!(
@@ -1161,7 +1162,7 @@ pub async fn wait_for_job(
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, &[], tags, 1)?
+            .list_jobs(None, &[], None, tags, 1)?
             .into_iter()
             .next()
             .ok_or_else(|| {

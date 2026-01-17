@@ -342,12 +342,13 @@ impl Registry {
 
     /// Lists jobs matching the given filters.
     ///
-    /// Jobs can be filtered by project path, status, and tags. Results are
+    /// Jobs can be filtered by project path, status, name prefix, and tags. Results are
     /// ordered by creation time (newest first) and limited to `limit` results.
     pub fn list_jobs(
         &self,
         project_filter: Option<&str>,
         status_filters: &[JobStatus],
+        name_filter: Option<&str>,
         tag_filters: &[(String, String)],
         limit: usize,
     ) -> Result<Vec<JobRecord>> {
@@ -386,6 +387,18 @@ impl Registry {
             for status in status_filters {
                 params_vec.push(Box::new(status.to_string()));
             }
+        }
+
+        if let Some(name) = name_filter {
+            conditions.push("j.job_name LIKE ?".to_string());
+            // Convert glob pattern to SQL LIKE pattern: * -> %, ? -> _
+            let pattern = if name.contains('*') || name.contains('?') {
+                name.replace('*', "%").replace('?', "_")
+            } else {
+                // No glob chars = prefix match
+                format!("{name}%")
+            };
+            params_vec.push(Box::new(pattern));
         }
 
         if !conditions.is_empty() {

@@ -128,6 +128,10 @@ pub enum Commands {
         #[arg(long)]
         filter: Vec<String>,
 
+        /// Filter by job name pattern (prefix or glob, e.g., "train-" or "*-ablation")
+        #[arg(long)]
+        name: Option<String>,
+
         /// Filter by tag (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,

@@ -164,6 +164,11 @@ fleche run train --tag experiment=baseline --tag model=8b
 fleche status --tag experiment=ablation
 fleche status --tag model=8b --filter running
 
+# Filter by job name (prefix or glob pattern)
+fleche status --name train-          # jobs starting with "train-"
+fleche status --name '*-ablation'    # jobs ending with "-ablation"
+fleche status --name '*eval*'        # jobs containing "eval"
+
 # View logs from most recent job with specific tag
 fleche logs --tag experiment=ablation
 
@@ -222,6 +227,7 @@ No need for explicit dependencies - files persist in the shared workspace.
 | `fleche status [job-id]` | Show job status (defaults to listing all) |
 | `fleche status -n 50` | Show last 50 jobs |
 | `fleche status --filter running` | Filter by status (repeatable) |
+| `fleche status --name <pattern>` | Filter by name (prefix or glob) |
 | `fleche status --tag <k=v>` | Filter jobs by tag |
 | `fleche logs [job-id]` | View job output (defaults to most recent) |
 | `fleche logs --raw` | Strip ANSI codes (auto when piped) |

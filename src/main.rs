@@ -108,10 +108,19 @@ async fn run() -> Result<()> {
         Commands::Status {
             job_id,
             filter,
+            name,
             tags,
             last,
         } => {
-            job::show_status(job_id.as_deref(), &filter, &tags, last, cli.debug).await?;
+            job::show_status(
+                job_id.as_deref(),
+                &filter,
+                name.as_deref(),
+                &tags,
+                last,
+                cli.debug,
+            )
+            .await?;
         }
 
         Commands::Logs {
