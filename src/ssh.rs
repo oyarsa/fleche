@@ -9,7 +9,7 @@
 //! - **Connection multiplexing**: Uses SSH `ControlMaster` to share connections,
 //!   avoiding rate limiting issues with concurrent commands.
 //! - **Automatic retries**: Retries failed connections with exponential backoff.
-//! - **Verbose logging**: All SSH output logged to `~/.config/fleche/ssh.log`.
+//! - **Debug logging**: Use `--debug` for verbose SSH output.
 
 use crate::error::{FlecheError, Result};
 use chrono::Utc;
@@ -112,13 +112,10 @@ fn append_to_ssh_log(host: &str, command: &str, stderr: &str) {
 ///
 /// Uses the system's `ssh` command under the hood, so SSH keys and config
 /// should be set up in `~/.ssh/config` for passwordless authentication.
-///
-/// All SSH commands run with `-v` for verbose output, which is logged to
-/// `~/.config/fleche/ssh.log` for debugging connection issues.
 pub struct SshClient {
     /// The remote host to connect to (can be a hostname or SSH config alias).
     host: String,
-    /// Print verbose SSH output to terminal (in addition to logging).
+    /// Enable verbose SSH output (`-v` flag).
     debug: bool,
 }
 
@@ -167,10 +164,8 @@ impl SshClient {
     }
 
     /// Returns the base SSH arguments including `ControlMaster` for connection multiplexing.
-    #[allow(clippy::unused_self)]
     fn ssh_args(&self) -> Vec<String> {
         let mut args = vec![
-            "-v".to_string(),
             "-o".to_string(),
             "ClearAllForwardings=yes".to_string(),
             // Timeout options to prevent hanging
@@ -197,6 +192,11 @@ impl SshClient {
             "ControlPersist=600".to_string(),
         ]);
 
+        // Add verbose flag only in debug mode
+        if self.debug {
+            args.insert(0, "-v".to_string());
+        }
+
         args
     }
 
@@ -204,7 +204,6 @@ impl SshClient {
     ///
     /// Automatically retries on connection failures with exponential backoff.
     /// If a command times out, kills the control socket and retries once.
-    /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec(&self, command: &str) -> Result<String> {
         match self.exec_inner(command).await {
             Ok(result) => Ok(result),
@@ -291,7 +290,6 @@ impl SshClient {
     /// Only returns an error if the SSH connection itself fails.
     /// Automatically retries on connection failures with exponential backoff.
     /// If a command times out, kills the control socket and retries once.
-    /// SSH verbose output is always logged to `~/.config/fleche/ssh.log`.
     pub async fn exec_allow_failure(&self, command: &str) -> Result<(bool, String, String)> {
         match self.exec_allow_failure_inner(command).await {
             Ok(result) => Ok(result),
