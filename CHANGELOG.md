@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.8.0] - 2026-01-17
+
+### Added
+- Built-in `${PROJECT}` variable that expands to `project.name`
+  - Enables DRY configs: `UV_PROJECT_ENVIRONMENT = "${CACHE}/${PROJECT}/.venv"`
+  - Has highest precedence (cannot be overridden by env vars)
+
 ## [5.7.0] - 2026-01-17
 
 ### Added
