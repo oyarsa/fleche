@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.8.2] - 2026-01-17
+
+### Fixed
+- SSH verbose output (`debug1:`, `OpenSSH_` lines) no longer shown without `--debug`
+  - Previously, SSH always ran with `-v` flag, causing debug output to appear in `fleche exec`
+
 ## [5.8.1] - 2026-01-17
 
 ### Fixed
