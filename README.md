@@ -103,7 +103,7 @@ CONFIG = "default"
 
 ### Environment Variable Substitution
 
-Config values support `${VAR}` patterns that expand to system environment variables or previously-defined `[env]` entries:
+Config values support `${VAR}` patterns that expand to system environment variables, previously-defined `[env]` entries, or variables from a `.env` file:
 
 ```toml
 [remote]
@@ -113,6 +113,19 @@ base_path = "/scratch/${USER}/fleche"    # Uses system $USER
 CACHE = "/scratch/${USER}/cache"         # Also uses system $USER
 UV_CACHE = "${CACHE}/uv"                 # References CACHE defined above
 HF_HOME = "${CACHE}/huggingface"
+```
+
+For project-specific variables, create a `.env` file (gitignored):
+
+```bash
+# .env
+SSH_USER=k21220155
+```
+
+```toml
+# fleche.toml
+[remote]
+base_path = "/scratch/users/${SSH_USER}/fleche"
 ```
 
 This enables user-agnostic configs that can be committed to version control. Use `${VAR:-default}` for optional variables with fallbacks.

@@ -101,9 +101,10 @@ CONFIG = "default"
 
 ### Environment Variable Substitution
 
-Config values support `${VAR}` substitution, resolved from:
+Config values support `${VAR}` substitution, resolved from (in order):
 1. Previously-defined `[env]` entries (in definition order)
 2. System environment variables (e.g., `$USER`, `$HOME`)
+3. Variables from `.env` file in the project directory
 
 ```toml
 [remote]
@@ -124,6 +125,24 @@ Use `${VAR:-default}` for optional variables:
 [remote]
 base_path = "${SCRATCH:-/tmp}/${USER}/fleche"
 ```
+
+### Using .env Files
+
+For project-specific variables, create a `.env` file:
+
+```bash
+# .env (gitignored)
+SSH_USER=k21220155
+SCRATCH=/scratch/users/k21220155
+```
+
+```toml
+# fleche.toml
+[remote]
+base_path = "${SCRATCH}/fleche"
+```
+
+This enables user-agnostic configs that can be committed to version control.
 
 ### Separate Job Files
 
