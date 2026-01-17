@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.8.1] - 2026-01-17
+
+### Fixed
+- `--env` now correctly overrides config variables during expansion
+  - Previously, `${VAR}` in commands/inputs/outputs was expanded at config load time, before CLI `--env` values were known
+  - Now expansion happens after merging: global env → job env → CLI `--env` (highest precedence)
+
 ## [5.8.0] - 2026-01-17
 
 ### Added
