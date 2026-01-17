@@ -1,6 +1,6 @@
 ---
-name: update-docs
-description: Update docs/help/guide with latest changes
+name: release
+description: Update documentation and cut a release
 ---
 
 Review the changes made in this session and update documentation, then cut a release.

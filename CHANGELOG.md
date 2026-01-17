@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.7.0] - 2026-01-17
+
+### Added
+- Automatic `.env` file loading for variable expansion
+  - Variables in `.env` are available as fallbacks after system env vars
+  - Enables project-specific defaults without external tools (mise, direnv)
+  - Resolution order: config `[env]` → system env → `.env` file
+
 ## [5.6.0] - 2026-01-17
 
 ### Added
