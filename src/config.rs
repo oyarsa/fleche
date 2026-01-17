@@ -80,49 +80,6 @@ fn expand_env_map(
     Ok(expanded)
 }
 
-/// Expands variables in a `JobDefinition`.
-fn expand_job_definition(
-    job: JobDefinition,
-    project_name: &str,
-    global_env: &IndexMap<String, String>,
-    dotenv: &HashMap<String, String>,
-) -> Result<JobDefinition> {
-    // For job env, we expand with access to global env + previously defined job env vars
-    let mut context = global_env.clone();
-    let mut expanded_env = IndexMap::new();
-    for (key, value) in job.env {
-        let expanded_value = expand_variables(&value, project_name, &context, dotenv)?;
-        context.insert(key.clone(), expanded_value.clone());
-        expanded_env.insert(key, expanded_value);
-    }
-
-    // Expand inputs and outputs
-    let inputs = job
-        .inputs
-        .into_iter()
-        .map(|v| expand_variables(&v, project_name, &context, dotenv))
-        .collect::<Result<Vec<_>>>()?;
-    let outputs = job
-        .outputs
-        .into_iter()
-        .map(|v| expand_variables(&v, project_name, &context, dotenv))
-        .collect::<Result<Vec<_>>>()?;
-
-    // Expand command if present
-    let command = job
-        .command
-        .map(|c| expand_variables(&c, project_name, &context, dotenv))
-        .transpose()?;
-
-    Ok(JobDefinition {
-        command,
-        inputs,
-        outputs,
-        slurm: job.slurm,
-        env: expanded_env,
-    })
-}
-
 /// Project-level configuration from the `[project]` section.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectConfig {
@@ -183,20 +140,23 @@ impl SlurmConfig {
 }
 
 /// A job definition from `[jobs.<name>]` or a separate `fleche/<name>.toml` file.
+///
+/// All string fields store raw (unexpanded) values. Variable expansion happens
+/// in `resolve_job` after merging with CLI overrides, ensuring `--env` takes precedence.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobDefinition {
-    /// The shell command to execute.
+    /// The shell command to execute (raw, unexpanded).
     pub command: Option<String>,
-    /// Input paths to sync to a shared cache.
+    /// Input paths to sync to a shared cache (raw, unexpanded).
     #[serde(default)]
     pub inputs: Vec<String>,
-    /// Output paths to sync back after completion.
+    /// Output paths to sync back after completion (raw, unexpanded).
     #[serde(default)]
     pub outputs: Vec<String>,
     /// Slurm configuration for this job.
     #[serde(default)]
     pub slurm: SlurmConfig,
-    /// Environment variables specific to this job.
+    /// Environment variables specific to this job (raw, unexpanded).
     #[serde(default)]
     pub env: IndexMap<String, String>,
 }
@@ -230,11 +190,14 @@ pub struct Config {
     pub project_path: PathBuf,
     /// Remote host configuration.
     pub remote: RemoteConfig,
-    /// Global environment variables applied to all jobs.
+    /// Global environment variables applied to all jobs (raw, unexpanded).
+    /// Variable expansion happens in `resolve_job` after merging with CLI overrides.
     pub global_env: IndexMap<String, String>,
+    /// Variables loaded from .env file (for expansion lookups).
+    dotenv: HashMap<String, String>,
     /// Global Slurm configuration inherited by all jobs.
     pub global_slurm: SlurmConfig,
-    /// All job definitions indexed by name.
+    /// All job definitions indexed by name (raw, unexpanded).
     pub jobs: HashMap<String, JobDefinition>,
 }
 
@@ -275,9 +238,8 @@ impl Config {
 
     /// Loads configuration from a specific path.
     ///
-    /// After parsing TOML, expands `${VAR}` patterns in string values:
-    /// - Variables resolve to previously-defined `[env]` entries, system env vars, or `.env` file
-    /// - Supports `${VAR:-default}` syntax for default values
+    /// Parses TOML and loads job definitions. Variable expansion (`${VAR}` patterns)
+    /// is deferred to `resolve_job` so that CLI `--env` overrides take precedence.
     pub fn load_from_path(config_path: &Path) -> Result<Config> {
         let project_path = config_path
             .parent()
@@ -305,42 +267,35 @@ impl Config {
                 .to_string()
         });
 
-        // Expand global env first (allows later entries to reference earlier ones)
-        let global_env = expand_env_map(raw.env, &project_name, &dotenv)?;
-
-        // Expand remote.base_path with access to global env
+        // Expand remote.base_path (needed for setup, uses only global env + system env)
+        let expanded_global_env = expand_env_map(raw.env.clone(), &project_name, &dotenv)?;
         let remote = RemoteConfig {
             host: raw_remote.host,
             base_path: expand_variables(
                 &raw_remote.base_path,
                 &project_name,
-                &global_env,
+                &expanded_global_env,
                 &dotenv,
             )?,
         };
 
+        // Store raw (unexpanded) global env - expansion happens in resolve_job
+        let global_env = raw.env;
+
         let mut jobs = raw.jobs;
 
-        // Load jobs from fleche/ directory
+        // Load jobs from fleche/ directory (stored as raw, unexpanded values)
         let fleche_dir = project_path.join("fleche");
         if fleche_dir.is_dir() {
             load_jobs_from_dir(&fleche_dir, &fleche_dir, &mut jobs)?;
         }
-
-        // Expand variables in all job definitions
-        let jobs = jobs
-            .into_iter()
-            .map(|(name, job)| {
-                expand_job_definition(job, &project_name, &global_env, &dotenv)
-                    .map(|expanded| (name, expanded))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
 
         Ok(Config {
             project_name,
             project_path,
             remote,
             global_env,
+            dotenv,
             global_slurm: raw.slurm,
             jobs,
         })
@@ -351,7 +306,10 @@ impl Config {
     /// The resolution order is:
     /// 1. Global settings from fleche.toml
     /// 2. Job definition settings
-    /// 3. Command-line overrides
+    /// 3. Command-line overrides (highest precedence)
+    ///
+    /// Variable expansion (`${VAR}` patterns) happens after merging, so CLI `--env`
+    /// overrides are available during expansion.
     pub fn resolve_job(
         &self,
         job_name: Option<&str>,
@@ -373,29 +331,52 @@ impl Config {
             ("adhoc".to_string(), JobDefinition::default())
         };
 
-        let command = command_override
-            .map(std::string::ToString::to_string)
-            .or(job_def.command.clone())
-            .ok_or_else(|| FlecheError::MissingField(format!("command for job '{name}'")))?;
-
         // Merge slurm: global -> job -> CLI
         let merged_slurm = self.global_slurm.merge(&job_def.slurm);
         let final_slurm = merged_slurm.merge(slurm_overrides);
 
-        // Merge env: global -> job -> CLI
-        let mut merged_env = self.global_env.clone();
-        merged_env.extend(job_def.env.clone());
+        // Merge raw env: global -> job -> CLI (all unexpanded)
+        let mut raw_env = self.global_env.clone();
+        raw_env.extend(job_def.env.clone());
         for (k, v) in env_overrides {
-            merged_env.insert(k.clone(), v.clone());
+            raw_env.insert(k.clone(), v.clone());
         }
+
+        // Expand env variables (earlier entries can be referenced by later ones)
+        let expanded_env = expand_env_map(raw_env, &self.project_name, &self.dotenv)?;
+
+        // Expand command, inputs, and outputs using the fully merged+expanded env
+        let raw_command = command_override
+            .map(std::string::ToString::to_string)
+            .or(job_def.command.clone())
+            .ok_or_else(|| FlecheError::MissingField(format!("command for job '{name}'")))?;
+
+        let command = expand_variables(
+            &raw_command,
+            &self.project_name,
+            &expanded_env,
+            &self.dotenv,
+        )?;
+
+        let inputs = job_def
+            .inputs
+            .iter()
+            .map(|v| expand_variables(v, &self.project_name, &expanded_env, &self.dotenv))
+            .collect::<Result<Vec<_>>>()?;
+
+        let outputs = job_def
+            .outputs
+            .iter()
+            .map(|v| expand_variables(v, &self.project_name, &expanded_env, &self.dotenv))
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(ResolvedJob {
             name,
             command,
-            inputs: job_def.inputs,
-            outputs: job_def.outputs,
+            inputs,
+            outputs,
             slurm: final_slurm,
-            env: merged_env,
+            env: expanded_env,
         })
     }
 
