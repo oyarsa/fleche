@@ -102,10 +102,14 @@ CONFIG = "default"
 ### Environment Variable Substitution
 
 Config values support `${VAR}` substitution, resolved from (highest precedence first):
-1. Built-in variables (`${PROJECT}` = value of `project.name`)
-2. Previously-defined `[env]` entries (in definition order)
-3. System environment variables (e.g., `$USER`, `$HOME`)
-4. Variables from `.env` file in the project directory
+1. CLI `--env` overrides (e.g., `--env DATASET=orc`)
+2. Built-in variables (`${PROJECT}` = value of `project.name`)
+3. Job-specific `[jobs.<name>.env]` entries
+4. Global `[env]` entries (in definition order)
+5. System environment variables (e.g., `$USER`, `$HOME`)
+6. Variables from `.env` file in the project directory
+
+This means `--env` can override any variable used in commands, inputs, or outputs.
 
 ```toml
 [project]
@@ -161,13 +165,25 @@ fleche/
 
 ### Parameterised Jobs
 
-Use `--env` to pass parameters:
+Use `--env` to pass parameters or override defaults:
 
-```bash
-fleche run train --env CONFIG=llama_basic --env EPOCHS=100
+```toml
+# fleche/train.toml
+command = "python train.py --dataset ${DATASET} --config ${CONFIG}"
+
+[env]
+DATASET = "default_dataset"   # Default value
+CONFIG = "base_config"        # Default value
 ```
 
-In your command, reference as `$CONFIG` and `$EPOCHS`.
+```bash
+# Override defaults from CLI
+fleche run train --env DATASET=orc --env CONFIG=llama_orc
+
+# The command becomes: python train.py --dataset orc --config llama_orc
+```
+
+CLI `--env` values override config defaults during `${VAR}` expansion.
 
 ### Quick GPU Test
 
