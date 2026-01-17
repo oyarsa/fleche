@@ -11,21 +11,44 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Expands `${VAR}` patterns in a string using the provided context and system env vars.
+/// Loads variables from a `.env` file if present.
+///
+/// Returns an empty `HashMap` if the file doesn't exist.
+/// Variables are loaded as literal values (no expansion).
+fn load_dotenv(project_path: &Path) -> HashMap<String, String> {
+    let dotenv_path = project_path.join(".env");
+    let mut vars = HashMap::new();
+
+    if let Ok(iter) = dotenvy::from_path_iter(&dotenv_path) {
+        for item in iter.flatten() {
+            vars.insert(item.0, item.1);
+        }
+    }
+
+    vars
+}
+
+/// Expands `${VAR}` patterns in a string.
 ///
 /// Variables are resolved in order:
 /// 1. The provided context (previously expanded config values)
 /// 2. System environment variables
+/// 3. Variables from `.env` file
 ///
 /// Supports `${VAR:-default}` syntax for default values when a variable is undefined.
-fn expand_variables(value: &str, context: &IndexMap<String, String>) -> Result<String> {
+fn expand_variables(
+    value: &str,
+    context: &IndexMap<String, String>,
+    dotenv: &HashMap<String, String>,
+) -> Result<String> {
     shellexpand::env_with_context(
         value,
         |var| -> std::result::Result<Option<Cow<'_, str>>, std::convert::Infallible> {
             Ok(context
                 .get(var)
                 .map(|v| Cow::Borrowed(v.as_str()))
-                .or_else(|| std::env::var(var).ok().map(Cow::Owned)))
+                .or_else(|| std::env::var(var).ok().map(Cow::Owned))
+                .or_else(|| dotenv.get(var).map(|v| Cow::Owned(v.clone()))))
         },
     )
     .map(std::borrow::Cow::into_owned)
@@ -33,10 +56,13 @@ fn expand_variables(value: &str, context: &IndexMap<String, String>) -> Result<S
 }
 
 /// Expands variables in an env map, allowing earlier entries to be referenced by later ones.
-fn expand_env_map(env: IndexMap<String, String>) -> Result<IndexMap<String, String>> {
+fn expand_env_map(
+    env: IndexMap<String, String>,
+    dotenv: &HashMap<String, String>,
+) -> Result<IndexMap<String, String>> {
     let mut expanded = IndexMap::new();
     for (key, value) in env {
-        let expanded_value = expand_variables(&value, &expanded)?;
+        let expanded_value = expand_variables(&value, &expanded, dotenv)?;
         expanded.insert(key, expanded_value);
     }
     Ok(expanded)
@@ -46,12 +72,13 @@ fn expand_env_map(env: IndexMap<String, String>) -> Result<IndexMap<String, Stri
 fn expand_job_definition(
     job: JobDefinition,
     global_env: &IndexMap<String, String>,
+    dotenv: &HashMap<String, String>,
 ) -> Result<JobDefinition> {
     // For job env, we expand with access to global env + previously defined job env vars
     let mut context = global_env.clone();
     let mut expanded_env = IndexMap::new();
     for (key, value) in job.env {
-        let expanded_value = expand_variables(&value, &context)?;
+        let expanded_value = expand_variables(&value, &context, dotenv)?;
         context.insert(key.clone(), expanded_value.clone());
         expanded_env.insert(key, expanded_value);
     }
@@ -60,18 +87,18 @@ fn expand_job_definition(
     let inputs = job
         .inputs
         .into_iter()
-        .map(|v| expand_variables(&v, &context))
+        .map(|v| expand_variables(&v, &context, dotenv))
         .collect::<Result<Vec<_>>>()?;
     let outputs = job
         .outputs
         .into_iter()
-        .map(|v| expand_variables(&v, &context))
+        .map(|v| expand_variables(&v, &context, dotenv))
         .collect::<Result<Vec<_>>>()?;
 
     // Expand command if present
     let command = job
         .command
-        .map(|c| expand_variables(&c, &context))
+        .map(|c| expand_variables(&c, &context, dotenv))
         .transpose()?;
 
     Ok(JobDefinition {
@@ -236,13 +263,16 @@ impl Config {
     /// Loads configuration from a specific path.
     ///
     /// After parsing TOML, expands `${VAR}` patterns in string values:
-    /// - Variables resolve to previously-defined `[env]` entries or system env vars
+    /// - Variables resolve to previously-defined `[env]` entries, system env vars, or `.env` file
     /// - Supports `${VAR:-default}` syntax for default values
     pub fn load_from_path(config_path: &Path) -> Result<Config> {
         let project_path = config_path
             .parent()
             .ok_or_else(|| FlecheError::ConfigParse("Invalid config path".to_string()))?
             .to_path_buf();
+
+        // Load .env file if present (provides defaults for variable expansion)
+        let dotenv = load_dotenv(&project_path);
 
         let content = std::fs::read_to_string(config_path)
             .map_err(|e| FlecheError::ConfigParse(format!("Failed to read config: {e}")))?;
@@ -263,12 +293,12 @@ impl Config {
         });
 
         // Expand global env first (allows later entries to reference earlier ones)
-        let global_env = expand_env_map(raw.env)?;
+        let global_env = expand_env_map(raw.env, &dotenv)?;
 
         // Expand remote.base_path with access to global env
         let remote = RemoteConfig {
             host: raw_remote.host,
-            base_path: expand_variables(&raw_remote.base_path, &global_env)?,
+            base_path: expand_variables(&raw_remote.base_path, &global_env, &dotenv)?,
         };
 
         let mut jobs = raw.jobs;
@@ -283,7 +313,7 @@ impl Config {
         let jobs = jobs
             .into_iter()
             .map(|(name, job)| {
-                expand_job_definition(job, &global_env).map(|expanded| (name, expanded))
+                expand_job_definition(job, &global_env, &dotenv).map(|expanded| (name, expanded))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
@@ -513,7 +543,8 @@ mod tests {
     fn test_expand_variables_from_system_env() {
         // USER is typically always set
         let context = IndexMap::new();
-        let result = expand_variables("/home/${USER}", &context).unwrap();
+        let dotenv = HashMap::new();
+        let result = expand_variables("/home/${USER}", &context, &dotenv).unwrap();
         assert!(result.starts_with("/home/"));
         assert!(!result.contains("${"));
     }
@@ -522,7 +553,8 @@ mod tests {
     fn test_expand_variables_from_context() {
         let mut context = IndexMap::new();
         context.insert("CACHE".to_string(), "/scratch/cache".to_string());
-        let result = expand_variables("${CACHE}/data", &context).unwrap();
+        let dotenv = HashMap::new();
+        let result = expand_variables("${CACHE}/data", &context, &dotenv).unwrap();
         assert_eq!(result, "/scratch/cache/data");
     }
 
@@ -531,14 +563,17 @@ mod tests {
         // Context should take precedence over system env
         let mut context = IndexMap::new();
         context.insert("USER".to_string(), "override_user".to_string());
-        let result = expand_variables("${USER}", &context).unwrap();
+        let dotenv = HashMap::new();
+        let result = expand_variables("${USER}", &context, &dotenv).unwrap();
         assert_eq!(result, "override_user");
     }
 
     #[test]
     fn test_expand_variables_with_default() {
         let context = IndexMap::new();
-        let result = expand_variables("${UNDEFINED_VAR:-default_value}", &context).unwrap();
+        let dotenv = HashMap::new();
+        let result =
+            expand_variables("${UNDEFINED_VAR:-default_value}", &context, &dotenv).unwrap();
         assert_eq!(result, "default_value");
     }
 
@@ -549,7 +584,8 @@ mod tests {
         env.insert("CACHE".to_string(), "${BASE}/cache".to_string());
         env.insert("UV_CACHE".to_string(), "${CACHE}/uv".to_string());
 
-        let expanded = expand_env_map(env).unwrap();
+        let dotenv = HashMap::new();
+        let expanded = expand_env_map(env, &dotenv).unwrap();
 
         assert_eq!(expanded.get("BASE").unwrap(), "/scratch");
         assert_eq!(expanded.get("CACHE").unwrap(), "/scratch/cache");
@@ -559,7 +595,39 @@ mod tests {
     #[test]
     fn test_expand_variables_no_expansion_needed() {
         let context = IndexMap::new();
-        let result = expand_variables("/plain/path/no/vars", &context).unwrap();
+        let dotenv = HashMap::new();
+        let result = expand_variables("/plain/path/no/vars", &context, &dotenv).unwrap();
         assert_eq!(result, "/plain/path/no/vars");
+    }
+
+    #[test]
+    fn test_expand_variables_from_dotenv() {
+        let context = IndexMap::new();
+        let mut dotenv = HashMap::new();
+        dotenv.insert("MY_VAR".to_string(), "from_dotenv".to_string());
+        let result = expand_variables("${MY_VAR}", &context, &dotenv).unwrap();
+        assert_eq!(result, "from_dotenv");
+    }
+
+    #[test]
+    fn test_expand_variables_system_env_beats_dotenv() {
+        // System env should take precedence over dotenv
+        let context = IndexMap::new();
+        let mut dotenv = HashMap::new();
+        dotenv.insert("USER".to_string(), "dotenv_user".to_string());
+        let result = expand_variables("${USER}", &context, &dotenv).unwrap();
+        // USER from system env should win
+        assert_ne!(result, "dotenv_user");
+    }
+
+    #[test]
+    fn test_expand_variables_context_beats_dotenv() {
+        // Context should take precedence over dotenv
+        let mut context = IndexMap::new();
+        context.insert("MY_VAR".to_string(), "from_context".to_string());
+        let mut dotenv = HashMap::new();
+        dotenv.insert("MY_VAR".to_string(), "from_dotenv".to_string());
+        let result = expand_variables("${MY_VAR}", &context, &dotenv).unwrap();
+        assert_eq!(result, "from_context");
     }
 }

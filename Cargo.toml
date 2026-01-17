@@ -23,3 +23,4 @@ libc = "0.2"
 regex = "1"
 shellexpand = "3"
 indexmap = { version = "2", features = ["serde"] }
+dotenvy = "0.15"
