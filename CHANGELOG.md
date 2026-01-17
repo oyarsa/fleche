@@ -2,13 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.5.0] - 2026-01-17
+
+### Changed
+- `--name` filter now uses regex instead of glob patterns, with implicit `.*` around
+  - `fleche status --name 123` matches jobs containing "123" (e.g., "train-123-xy")
+  - `fleche status --name '^train'` matches jobs starting with "train"
+  - `fleche status --name 'ablation$'` matches jobs ending with "ablation"
+
 ## [5.4.0] - 2026-01-17
 
 ### Added
-- `--name` filter for `fleche status` to filter jobs by name pattern (prefix or glob)
-  - `fleche status --name train-` matches jobs starting with "train-"
-  - `fleche status --name '*-ablation'` matches jobs ending with "-ablation"
-  - `fleche status --name '*eval*'` matches jobs containing "eval"
+- `--name` filter for `fleche status` to filter jobs by name pattern
 
 ## [5.3.0] - 2026-01-16
 
