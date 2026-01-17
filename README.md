@@ -103,16 +103,20 @@ CONFIG = "default"
 
 ### Environment Variable Substitution
 
-Config values support `${VAR}` patterns that expand to system environment variables, previously-defined `[env]` entries, or variables from a `.env` file:
+Config values support `${VAR}` patterns that expand to built-in variables, system environment variables, previously-defined `[env]` entries, or variables from a `.env` file:
 
 ```toml
+[project]
+name = "graphmind"
+
 [remote]
-base_path = "/scratch/${USER}/fleche"    # Uses system $USER
+base_path = "/scratch/${USER}/fleche"
 
 [env]
-CACHE = "/scratch/${USER}/cache"         # Also uses system $USER
-UV_CACHE = "${CACHE}/uv"                 # References CACHE defined above
-HF_HOME = "${CACHE}/huggingface"
+CACHE = "/scratch/${USER}/cache"
+UV_CACHE = "${CACHE}/uv"
+# ${PROJECT} expands to project.name
+UV_PROJECT_ENVIRONMENT = "${CACHE}/${PROJECT}/.venv"
 ```
 
 For project-specific variables, create a `.env` file (gitignored):

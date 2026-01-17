@@ -101,22 +101,24 @@ CONFIG = "default"
 
 ### Environment Variable Substitution
 
-Config values support `${VAR}` substitution, resolved from (in order):
-1. Previously-defined `[env]` entries (in definition order)
-2. System environment variables (e.g., `$USER`, `$HOME`)
-3. Variables from `.env` file in the project directory
+Config values support `${VAR}` substitution, resolved from (highest precedence first):
+1. Built-in variables (`${PROJECT}` = value of `project.name`)
+2. Previously-defined `[env]` entries (in definition order)
+3. System environment variables (e.g., `$USER`, `$HOME`)
+4. Variables from `.env` file in the project directory
 
 ```toml
+[project]
+name = "graphmind"
+
 [remote]
-base_path = "/scratch/${USER}/fleche"    # Uses system $USER
+base_path = "/scratch/${USER}/fleche"
 
 [env]
-CACHE = "/scratch/${USER}/cache"         # Also uses system $USER
-UV_CACHE = "${CACHE}/uv"                 # References CACHE defined above
-HF_HOME = "${CACHE}/huggingface"
-
-[jobs.train]
-inputs = ["${CACHE}/datasets/"]          # Works in job fields too
+CACHE = "/scratch/${USER}/cache"
+UV_CACHE = "${CACHE}/uv"
+# Use ${PROJECT} to avoid hardcoding the project name
+UV_PROJECT_ENVIRONMENT = "${CACHE}/${PROJECT}/.venv"
 ```
 
 Use `${VAR:-default}` for optional variables:
