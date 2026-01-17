@@ -270,13 +270,14 @@ checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
 
 [[package]]
 name = "fleche"
-version = "5.5.0"
+version = "5.5.1"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
  "console",
  "dirs",
+ "indexmap",
  "indicatif",
  "libc",
  "rand",
@@ -284,6 +285,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "shellexpand",
  "thiserror",
  "tokio",
  "toml",
@@ -362,6 +364,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -714,6 +718,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8bbf91e5a4d6315eee45e704372590b30e260ee83af6639d64557f51b067776"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "shellexpand"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b1fdf65dd6331831494dd616b30351c38e96e45921a27745cf98490458b90bb"
+dependencies = [
+ "dirs",
 ]
 
 [[package]]

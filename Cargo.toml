@@ -21,3 +21,5 @@ thiserror = "1"
 anyhow = "1"
 libc = "0.2"
 regex = "1"
+shellexpand = "3"
+indexmap = { version = "2", features = ["serde"] }

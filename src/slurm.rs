@@ -230,7 +230,7 @@ pub fn slurm_config_from_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
 
     #[test]
     fn test_escape_bash_value() {
@@ -306,7 +306,7 @@ mod tests {
             inputs: vec![],
             outputs: vec![],
             slurm: SlurmConfig::default(),
-            env: HashMap::new(),
+            env: IndexMap::new(),
         };
 
         let script = generate_sbatch_script("test-123", &job, "/workspace", "/jobs/test-123");
@@ -336,7 +336,7 @@ mod tests {
                 nodes: Some(1),
                 exclude: Some("node01".to_string()),
             },
-            env: HashMap::new(),
+            env: IndexMap::new(),
         };
 
         let script = generate_sbatch_script("train-456", &job, "/workspace", "/jobs/train-456");
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_generate_sbatch_script_with_env_vars() {
-        let mut env = HashMap::new();
+        let mut env = IndexMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
         env.insert("PATH_VAR".to_string(), "/some/path".to_string());
 
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_generate_sbatch_script_escapes_env_values() {
-        let mut env = HashMap::new();
+        let mut env = IndexMap::new();
         env.insert("QUOTED".to_string(), "value\"with\"quotes".to_string());
 
         let job = ResolvedJob {

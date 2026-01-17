@@ -5,9 +5,83 @@
 //! parameters with proper precedence (global -> job -> CLI overrides).
 
 use crate::error::{FlecheError, Result};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// Expands `${VAR}` patterns in a string using the provided context and system env vars.
+///
+/// Variables are resolved in order:
+/// 1. The provided context (previously expanded config values)
+/// 2. System environment variables
+///
+/// Supports `${VAR:-default}` syntax for default values when a variable is undefined.
+fn expand_variables(value: &str, context: &IndexMap<String, String>) -> Result<String> {
+    shellexpand::env_with_context(
+        value,
+        |var| -> std::result::Result<Option<Cow<'_, str>>, std::convert::Infallible> {
+            Ok(context
+                .get(var)
+                .map(|v| Cow::Borrowed(v.as_str()))
+                .or_else(|| std::env::var(var).ok().map(Cow::Owned)))
+        },
+    )
+    .map(std::borrow::Cow::into_owned)
+    .map_err(|e| FlecheError::ConfigParse(format!("variable expansion failed: {e}")))
+}
+
+/// Expands variables in an env map, allowing earlier entries to be referenced by later ones.
+fn expand_env_map(env: IndexMap<String, String>) -> Result<IndexMap<String, String>> {
+    let mut expanded = IndexMap::new();
+    for (key, value) in env {
+        let expanded_value = expand_variables(&value, &expanded)?;
+        expanded.insert(key, expanded_value);
+    }
+    Ok(expanded)
+}
+
+/// Expands variables in a `JobDefinition`.
+fn expand_job_definition(
+    job: JobDefinition,
+    global_env: &IndexMap<String, String>,
+) -> Result<JobDefinition> {
+    // For job env, we expand with access to global env + previously defined job env vars
+    let mut context = global_env.clone();
+    let mut expanded_env = IndexMap::new();
+    for (key, value) in job.env {
+        let expanded_value = expand_variables(&value, &context)?;
+        context.insert(key.clone(), expanded_value.clone());
+        expanded_env.insert(key, expanded_value);
+    }
+
+    // Expand inputs and outputs
+    let inputs = job
+        .inputs
+        .into_iter()
+        .map(|v| expand_variables(&v, &context))
+        .collect::<Result<Vec<_>>>()?;
+    let outputs = job
+        .outputs
+        .into_iter()
+        .map(|v| expand_variables(&v, &context))
+        .collect::<Result<Vec<_>>>()?;
+
+    // Expand command if present
+    let command = job
+        .command
+        .map(|c| expand_variables(&c, &context))
+        .transpose()?;
+
+    Ok(JobDefinition {
+        command,
+        inputs,
+        outputs,
+        slurm: job.slurm,
+        env: expanded_env,
+    })
+}
 
 /// Project-level configuration from the `[project]` section.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -84,7 +158,7 @@ pub struct JobDefinition {
     pub slurm: SlurmConfig,
     /// Environment variables specific to this job.
     #[serde(default)]
-    pub env: HashMap<String, String>,
+    pub env: IndexMap<String, String>,
 }
 
 /// A fully resolved job ready for submission.
@@ -104,7 +178,7 @@ pub struct ResolvedJob {
     /// Final Slurm configuration after all merges.
     pub slurm: SlurmConfig,
     /// Final environment variables after all merges.
-    pub env: HashMap<String, String>,
+    pub env: IndexMap<String, String>,
 }
 
 /// The complete loaded configuration for a project.
@@ -117,7 +191,7 @@ pub struct Config {
     /// Remote host configuration.
     pub remote: RemoteConfig,
     /// Global environment variables applied to all jobs.
-    pub global_env: HashMap<String, String>,
+    pub global_env: IndexMap<String, String>,
     /// Global Slurm configuration inherited by all jobs.
     pub global_slurm: SlurmConfig,
     /// All job definitions indexed by name.
@@ -131,7 +205,7 @@ struct RawConfig {
     project: ProjectConfig,
     remote: Option<RemoteConfig>,
     #[serde(default)]
-    env: HashMap<String, String>,
+    env: IndexMap<String, String>,
     #[serde(default)]
     slurm: SlurmConfig,
     #[serde(default)]
@@ -149,7 +223,7 @@ struct RawJobFile {
     #[serde(default)]
     slurm: SlurmConfig,
     #[serde(default)]
-    env: HashMap<String, String>,
+    env: IndexMap<String, String>,
 }
 
 impl Config {
@@ -160,6 +234,10 @@ impl Config {
     }
 
     /// Loads configuration from a specific path.
+    ///
+    /// After parsing TOML, expands `${VAR}` patterns in string values:
+    /// - Variables resolve to previously-defined `[env]` entries or system env vars
+    /// - Supports `${VAR:-default}` syntax for default values
     pub fn load_from_path(config_path: &Path) -> Result<Config> {
         let project_path = config_path
             .parent()
@@ -172,7 +250,7 @@ impl Config {
         let raw: RawConfig = toml::from_str(&content)
             .map_err(|e| FlecheError::ConfigParse(format!("Failed to parse TOML: {e}")))?;
 
-        let remote = raw
+        let raw_remote = raw
             .remote
             .ok_or_else(|| FlecheError::MissingField("remote".to_string()))?;
 
@@ -184,6 +262,15 @@ impl Config {
                 .to_string()
         });
 
+        // Expand global env first (allows later entries to reference earlier ones)
+        let global_env = expand_env_map(raw.env)?;
+
+        // Expand remote.base_path with access to global env
+        let remote = RemoteConfig {
+            host: raw_remote.host,
+            base_path: expand_variables(&raw_remote.base_path, &global_env)?,
+        };
+
         let mut jobs = raw.jobs;
 
         // Load jobs from fleche/ directory
@@ -192,11 +279,19 @@ impl Config {
             load_jobs_from_dir(&fleche_dir, &fleche_dir, &mut jobs)?;
         }
 
+        // Expand variables in all job definitions
+        let jobs = jobs
+            .into_iter()
+            .map(|(name, job)| {
+                expand_job_definition(job, &global_env).map(|expanded| (name, expanded))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
         Ok(Config {
             project_name,
             project_path,
             remote,
-            global_env: raw.env,
+            global_env,
             global_slurm: raw.slurm,
             jobs,
         })
@@ -412,5 +507,59 @@ mod tests {
         assert_eq!(merged.gpus, Some(1));
         assert_eq!(merged.cpus, Some(4));
         assert_eq!(merged.memory, Some("32G".to_string()));
+    }
+
+    #[test]
+    fn test_expand_variables_from_system_env() {
+        // USER is typically always set
+        let context = IndexMap::new();
+        let result = expand_variables("/home/${USER}", &context).unwrap();
+        assert!(result.starts_with("/home/"));
+        assert!(!result.contains("${"));
+    }
+
+    #[test]
+    fn test_expand_variables_from_context() {
+        let mut context = IndexMap::new();
+        context.insert("CACHE".to_string(), "/scratch/cache".to_string());
+        let result = expand_variables("${CACHE}/data", &context).unwrap();
+        assert_eq!(result, "/scratch/cache/data");
+    }
+
+    #[test]
+    fn test_expand_variables_context_takes_precedence() {
+        // Context should take precedence over system env
+        let mut context = IndexMap::new();
+        context.insert("USER".to_string(), "override_user".to_string());
+        let result = expand_variables("${USER}", &context).unwrap();
+        assert_eq!(result, "override_user");
+    }
+
+    #[test]
+    fn test_expand_variables_with_default() {
+        let context = IndexMap::new();
+        let result = expand_variables("${UNDEFINED_VAR:-default_value}", &context).unwrap();
+        assert_eq!(result, "default_value");
+    }
+
+    #[test]
+    fn test_expand_env_map_ordering() {
+        let mut env = IndexMap::new();
+        env.insert("BASE".to_string(), "/scratch".to_string());
+        env.insert("CACHE".to_string(), "${BASE}/cache".to_string());
+        env.insert("UV_CACHE".to_string(), "${CACHE}/uv".to_string());
+
+        let expanded = expand_env_map(env).unwrap();
+
+        assert_eq!(expanded.get("BASE").unwrap(), "/scratch");
+        assert_eq!(expanded.get("CACHE").unwrap(), "/scratch/cache");
+        assert_eq!(expanded.get("UV_CACHE").unwrap(), "/scratch/cache/uv");
+    }
+
+    #[test]
+    fn test_expand_variables_no_expansion_needed() {
+        let context = IndexMap::new();
+        let result = expand_variables("/plain/path/no/vars", &context).unwrap();
+        assert_eq!(result, "/plain/path/no/vars");
     }
 }
