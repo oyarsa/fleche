@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.6.0] - 2026-01-17
+
+### Added
+- Environment variable substitution in config files with `${VAR}` syntax
+  - Variables resolve to previously-defined `[env]` entries or system env vars
+  - Supports `${VAR:-default}` for fallback values
+  - Works in `remote.base_path`, `[env]`, job `inputs`/`outputs`/`command`/`env`
+  - Enables user-agnostic configs (e.g., `base_path = "/scratch/${USER}/fleche"`)
+
 ## [5.5.1] - 2026-01-17
 
 ### Fixed
