@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 fn long_version() -> &'static str {
     concat!(
         env!("CARGO_PKG_VERSION"),
-        " (2026-01-16)\n", // Update date when releasing
+        " (2026-01-17)\n", // Update date when releasing
         "Copyright (C) 2026 Italo Silva\n",
         "License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>\n",
         "This is free software: you are free to change and redistribute it.\n",

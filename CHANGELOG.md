@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.4.0] - 2026-01-17
+
+### Added
+- `--name` filter for `fleche status` to filter jobs by name pattern (prefix or glob)
+  - `fleche status --name train-` matches jobs starting with "train-"
+  - `fleche status --name '*-ablation'` matches jobs ending with "-ablation"
+  - `fleche status --name '*eval*'` matches jobs containing "eval"
+
 ## [5.3.0] - 2026-01-16
 
 ### Added
