@@ -101,6 +101,22 @@ memory = "64G"
 CONFIG = "default"
 ```
 
+### Environment Variable Substitution
+
+Config values support `${VAR}` patterns that expand to system environment variables or previously-defined `[env]` entries:
+
+```toml
+[remote]
+base_path = "/scratch/${USER}/fleche"    # Uses system $USER
+
+[env]
+CACHE = "/scratch/${USER}/cache"         # Also uses system $USER
+UV_CACHE = "${CACHE}/uv"                 # References CACHE defined above
+HF_HOME = "${CACHE}/huggingface"
+```
+
+This enables user-agnostic configs that can be committed to version control. Use `${VAR:-default}` for optional variables with fallbacks.
+
 ### Separate Job Files
 
 Jobs can also be defined in `fleche/*.toml`. The filename becomes the job name:

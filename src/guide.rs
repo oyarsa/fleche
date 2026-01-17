@@ -99,6 +99,32 @@ memory = "64G"
 CONFIG = "default"
 ```
 
+### Environment Variable Substitution
+
+Config values support `${VAR}` substitution, resolved from:
+1. Previously-defined `[env]` entries (in definition order)
+2. System environment variables (e.g., `$USER`, `$HOME`)
+
+```toml
+[remote]
+base_path = "/scratch/${USER}/fleche"    # Uses system $USER
+
+[env]
+CACHE = "/scratch/${USER}/cache"         # Also uses system $USER
+UV_CACHE = "${CACHE}/uv"                 # References CACHE defined above
+HF_HOME = "${CACHE}/huggingface"
+
+[jobs.train]
+inputs = ["${CACHE}/datasets/"]          # Works in job fields too
+```
+
+Use `${VAR:-default}` for optional variables:
+
+```toml
+[remote]
+base_path = "${SCRATCH:-/tmp}/${USER}/fleche"
+```
+
 ### Separate Job Files
 
 Jobs can also be defined in `fleche/*.toml`. The filename becomes the job name:
