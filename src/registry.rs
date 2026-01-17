@@ -7,6 +7,7 @@
 use crate::config::ResolvedJob;
 use crate::error::{FlecheError, Result};
 use chrono::{DateTime, Duration, Utc};
+use regex::Regex;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -389,25 +390,35 @@ impl Registry {
             }
         }
 
-        if let Some(name) = name_filter {
-            conditions.push("j.job_name LIKE ?".to_string());
-            // Convert glob pattern to SQL LIKE pattern: * -> %, ? -> _
-            let pattern = if name.contains('*') || name.contains('?') {
-                name.replace('*', "%").replace('?', "_")
+        // Build regex for name filtering (applied in Rust after SQL query)
+        let name_regex = name_filter.map(|pattern| {
+            // Add implicit .* around the pattern unless anchors are present
+            let pattern = if pattern.starts_with('^') {
+                pattern.to_string()
             } else {
-                // No glob chars = prefix match
-                format!("{name}%")
+                format!(".*{pattern}")
             };
-            params_vec.push(Box::new(pattern));
-        }
+            let pattern = if pattern.ends_with('$') {
+                pattern
+            } else {
+                format!("{pattern}.*")
+            };
+            Regex::new(&pattern)
+        });
 
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
         }
 
+        // When filtering by name regex, don't limit in SQL (filter in Rust)
+        let sql_limit = if name_filter.is_some() {
+            i64::MAX
+        } else {
+            i64::try_from(limit).unwrap_or(i64::MAX)
+        };
         sql.push_str(" ORDER BY j.created_at DESC LIMIT ?");
-        params_vec.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
+        params_vec.push(Box::new(sql_limit));
 
         let mut stmt = self.conn.prepare(&sql)?;
 
@@ -438,8 +449,17 @@ impl Registry {
                     tags: HashMap::new(),
                 })
             })?
-            .filter_map(std::result::Result::ok)
-            .collect::<Vec<_>>();
+            .filter_map(std::result::Result::ok);
+
+        // Apply regex name filter and limit in Rust
+        let jobs: Vec<_> = match name_regex {
+            Some(Ok(re)) => jobs
+                .filter(|job| re.is_match(&job.job_name))
+                .take(limit)
+                .collect(),
+            Some(Err(_)) => Vec::new(), // Invalid regex returns no results
+            None => jobs.collect(),
+        };
 
         // Load tags for each job
         let mut jobs_with_tags = Vec::new();

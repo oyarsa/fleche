@@ -128,7 +128,7 @@ pub enum Commands {
         #[arg(long)]
         filter: Vec<String>,
 
-        /// Filter by job name pattern (prefix or glob, e.g., "train-" or "*-ablation")
+        /// Filter by job name regex (e.g., "123" matches "train-123-xy", "^train" matches "train-foo")
         #[arg(long)]
         name: Option<String>,
 
