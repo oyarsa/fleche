@@ -454,7 +454,7 @@ impl Registry {
         // Apply regex name filter and limit in Rust
         let jobs: Vec<_> = match name_regex {
             Some(Ok(re)) => jobs
-                .filter(|job| re.is_match(&job.job_name))
+                .filter(|job| re.is_match(&job.id))
                 .take(limit)
                 .collect(),
             Some(Err(_)) => Vec::new(), // Invalid regex returns no results

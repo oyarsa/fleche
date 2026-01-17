@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.5.1] - 2026-01-17
+
+### Fixed
+- `--name` filter now correctly matches against job ID instead of job definition name
+
 ## [5.5.0] - 2026-01-17
 
 ### Changed
