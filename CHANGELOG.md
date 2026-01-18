@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.9.0] - 2026-01-18
+
+### Added
+- `--filter` flag for `fleche download` to selectively download outputs
+  - Accepts glob patterns: `--filter "*.json"` downloads only JSON files
+  - Repeatable: `--filter "*.json" --filter "*.csv"` for multiple patterns
+  - Prefix with `!` to exclude: `--filter "!checkpoints/**"` skips checkpoints
+  - Combine includes and excludes: `--filter "*.json" --filter "!debug/**"`
+
 ## [5.8.2] - 2026-01-17
 
 ### Fixed

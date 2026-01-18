@@ -149,12 +149,14 @@ async fn run() -> Result<()> {
             job_id,
             partial,
             path,
+            filter,
             tags,
         } => {
             job::download_outputs(
                 job_id.as_deref(),
                 partial,
                 path.as_deref(),
+                &filter,
                 &tags,
                 cli.debug,
             )

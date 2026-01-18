@@ -19,6 +19,7 @@ use crate::sync::{
 };
 use chrono::Utc;
 use console::style;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use rand::Rng;
 use std::io::Write;
 use std::time::Duration;
@@ -600,11 +601,92 @@ fn strip_ansi_codes(s: &str) -> String {
     result
 }
 
+/// Builds include and exclude glob sets from filter patterns.
+///
+/// Patterns prefixed with `!` are exclusions, others are inclusions.
+fn build_filter_glob_sets(filters: &[String]) -> Result<(Option<GlobSet>, Option<GlobSet>)> {
+    let mut includes = GlobSetBuilder::new();
+    let mut excludes = GlobSetBuilder::new();
+    let mut has_includes = false;
+    let mut has_excludes = false;
+
+    for pattern in filters {
+        if let Some(exclude_pattern) = pattern.strip_prefix('!') {
+            excludes.add(Glob::new(exclude_pattern).map_err(|e| {
+                FlecheError::Other(format!("Invalid exclude pattern '{exclude_pattern}': {e}"))
+            })?);
+            has_excludes = true;
+        } else {
+            includes.add(Glob::new(pattern).map_err(|e| {
+                FlecheError::Other(format!("Invalid filter pattern '{pattern}': {e}"))
+            })?);
+            has_includes = true;
+        }
+    }
+
+    let include_set =
+        if has_includes {
+            Some(includes.build().map_err(|e| {
+                FlecheError::Other(format!("Failed to build include glob set: {e}"))
+            })?)
+        } else {
+            None
+        };
+
+    let exclude_set =
+        if has_excludes {
+            Some(excludes.build().map_err(|e| {
+                FlecheError::Other(format!("Failed to build exclude glob set: {e}"))
+            })?)
+        } else {
+            None
+        };
+
+    Ok((include_set, exclude_set))
+}
+
+/// Filters outputs based on include/exclude glob sets.
+///
+/// Semantics:
+/// - No filters: return all outputs
+/// - Include patterns only: output must match at least one
+/// - Exclude patterns only: output must not match any
+/// - Both: output must match an include AND not match any exclude
+fn filter_outputs(
+    outputs: &[String],
+    includes: Option<&GlobSet>,
+    excludes: Option<&GlobSet>,
+) -> Vec<String> {
+    outputs
+        .iter()
+        .filter(|output| {
+            // Strip trailing slash for matching (directories like "output/" should match "output/**")
+            let path = output.trim_end_matches('/');
+
+            // Check include patterns
+            let matches_include = match includes {
+                Some(set) => set.is_match(path),
+                None => true, // No includes means all match
+            };
+
+            // Check exclude patterns
+            let matches_exclude = match excludes {
+                Some(set) => set.is_match(path),
+                None => false, // No excludes means none excluded
+            };
+
+            matches_include && !matches_exclude
+        })
+        .cloned()
+        .collect()
+}
+
 /// Downloads output files from a job's workspace back to the local project.
 pub async fn download_outputs(
     job_id: Option<&str>,
     partial: bool,
     specific_path: Option<&str>,
+    filters: &[String],
     tags: &[(String, String)],
     debug: bool,
 ) -> Result<()> {
@@ -653,17 +735,20 @@ pub async fn download_outputs(
             return Ok(());
         }
 
+        // Apply filters if provided
+        let (includes, excludes) = build_filter_glob_sets(filters)?;
+        let outputs = filter_outputs(&resolved.outputs, includes.as_ref(), excludes.as_ref());
+
+        if outputs.is_empty() {
+            println!("No outputs match the specified filters.");
+            return Ok(());
+        }
+
         println!("Downloading outputs from workspace...");
-        for output in &resolved.outputs {
+        for output in &outputs {
             println!("  {output}");
         }
-        sync_download_outputs(
-            &job.remote_host,
-            &job.remote_path,
-            &resolved.outputs,
-            &local_path,
-        )
-        .await?;
+        sync_download_outputs(&job.remote_host, &job.remote_path, &outputs, &local_path).await?;
     }
 
     registry.set_outputs_synced(&job.id)?;
@@ -1327,5 +1412,80 @@ mod tests {
         // Common progress bar output with cursor control
         let input = "Progress: \x1b[32m50%\x1b[0m \x1b[K";
         assert_eq!(strip_ansi_codes(input), "Progress: 50% ");
+    }
+
+    #[test]
+    fn test_filter_outputs_no_filters() {
+        let outputs = vec!["a.json".to_string(), "b.csv".to_string()];
+        let result = filter_outputs(&outputs, None, None);
+        assert_eq!(result, outputs);
+    }
+
+    #[test]
+    fn test_filter_outputs_include_only() {
+        let outputs = vec![
+            "predictions.json".to_string(),
+            "model.pt".to_string(),
+            "data.csv".to_string(),
+        ];
+        let (includes, excludes) = build_filter_glob_sets(&["*.json".to_string()]).unwrap();
+        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
+        assert_eq!(result, vec!["predictions.json"]);
+    }
+
+    #[test]
+    fn test_filter_outputs_multiple_includes() {
+        let outputs = vec![
+            "predictions.json".to_string(),
+            "model.pt".to_string(),
+            "data.csv".to_string(),
+        ];
+        let (includes, excludes) =
+            build_filter_glob_sets(&["*.json".to_string(), "*.csv".to_string()]).unwrap();
+        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
+        assert_eq!(result, vec!["predictions.json", "data.csv"]);
+    }
+
+    #[test]
+    fn test_filter_outputs_exclude_only() {
+        let outputs = vec![
+            "predictions.json".to_string(),
+            "checkpoints/model.pt".to_string(),
+            "checkpoints/final.pt".to_string(),
+        ];
+        let (includes, excludes) =
+            build_filter_glob_sets(&["!checkpoints/**".to_string()]).unwrap();
+        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
+        assert_eq!(result, vec!["predictions.json"]);
+    }
+
+    #[test]
+    fn test_filter_outputs_include_and_exclude() {
+        let outputs = vec![
+            "results/predictions.json".to_string(),
+            "results/debug.json".to_string(),
+            "checkpoints/model.json".to_string(),
+        ];
+        let (includes, excludes) =
+            build_filter_glob_sets(&["*.json".to_string(), "!checkpoints/**".to_string()]).unwrap();
+        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
+        assert_eq!(
+            result,
+            vec!["results/predictions.json", "results/debug.json"]
+        );
+    }
+
+    #[test]
+    fn test_filter_outputs_directory_with_trailing_slash() {
+        let outputs = vec!["output/".to_string(), "checkpoints/".to_string()];
+        let (includes, excludes) = build_filter_glob_sets(&["output".to_string()]).unwrap();
+        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
+        assert_eq!(result, vec!["output/"]);
+    }
+
+    #[test]
+    fn test_build_filter_glob_sets_invalid_pattern() {
+        let result = build_filter_glob_sets(&["[invalid".to_string()]);
+        assert!(result.is_err());
     }
 }
