@@ -77,6 +77,30 @@ pub enum FlecheError {
     #[error("Cannot cancel job '{0}': status is {1}")]
     CannotCancel(String, String),
 
+    /// No jobs found when trying to use the most recent job.
+    #[error("No jobs found. Run 'fleche run' to submit a job.")]
+    NoRecentJob,
+
+    /// Invalid duration format for time-based operations.
+    #[error("Invalid duration: {0}. Use format like 7d, 24h, 30m")]
+    InvalidDuration(String),
+
+    /// Invalid glob pattern for filtering files.
+    #[error("Invalid glob pattern: {0}")]
+    InvalidGlobPattern(String),
+
+    /// Unknown job status string from database.
+    #[error("Unknown job status: {0}")]
+    UnknownJobStatus(String),
+
+    /// Failed to query Slurm job status.
+    #[error("Could not query Slurm job status: {0}")]
+    SlurmQueryFailed(String),
+
+    /// Could not find the system config directory.
+    #[error("Could not find config directory")]
+    ConfigDirNotFound,
+
     /// A generic error for cases not covered by other variants.
     #[error("{0}")]
     Other(String),

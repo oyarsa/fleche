@@ -120,7 +120,7 @@ impl std::str::FromStr for JobStatus {
             "completed" => Ok(JobStatus::Completed),
             "failed" => Ok(JobStatus::Failed),
             "cancelled" => Ok(JobStatus::Cancelled),
-            _ => Err(FlecheError::Other(format!("Unknown status: {s}"))),
+            _ => Err(FlecheError::UnknownJobStatus(s.to_string())),
         }
     }
 }
@@ -489,8 +489,7 @@ impl Registry {
 
 /// Returns the path to the registry database file.
 fn get_db_path() -> Result<PathBuf> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| FlecheError::Other("Could not find config directory".to_string()))?;
+    let config_dir = dirs::config_dir().ok_or(FlecheError::ConfigDirNotFound)?;
     Ok(config_dir.join("fleche").join("jobs.db"))
 }
 
@@ -501,27 +500,25 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
     if let Some(days) = s.strip_suffix('d') {
         let n: i64 = days
             .parse()
-            .map_err(|_| FlecheError::Other(format!("Invalid duration: {s}")))?;
+            .map_err(|_| FlecheError::InvalidDuration(s.clone()))?;
         return Ok(Duration::days(n));
     }
 
     if let Some(hours) = s.strip_suffix('h') {
         let n: i64 = hours
             .parse()
-            .map_err(|_| FlecheError::Other(format!("Invalid duration: {s}")))?;
+            .map_err(|_| FlecheError::InvalidDuration(s.clone()))?;
         return Ok(Duration::hours(n));
     }
 
     if let Some(minutes) = s.strip_suffix('m') {
         let n: i64 = minutes
             .parse()
-            .map_err(|_| FlecheError::Other(format!("Invalid duration: {s}")))?;
+            .map_err(|_| FlecheError::InvalidDuration(s.clone()))?;
         return Ok(Duration::minutes(n));
     }
 
-    Err(FlecheError::Other(format!(
-        "Invalid duration format: {s}. Use format like 7d, 24h, 30m"
-    )))
+    Err(FlecheError::InvalidDuration(s))
 }
 
 #[cfg(test)]

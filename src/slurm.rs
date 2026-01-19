@@ -191,9 +191,7 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
         return Ok(parse_sacct_state(stdout.trim()));
     }
 
-    Err(FlecheError::Other(format!(
-        "Could not determine status for slurm job {slurm_id}"
-    )))
+    Err(FlecheError::SlurmQueryFailed(slurm_id.to_string()))
 }
 
 /// Cancels a Slurm job using scancel.

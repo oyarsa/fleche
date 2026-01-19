@@ -140,9 +140,7 @@ pub async fn show_logs(
             .list_jobs(None, &[], None, tags, 1)?
             .into_iter()
             .next()
-            .ok_or_else(|| {
-                FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
-            })?
+            .ok_or(FlecheError::NoRecentJob)?
     };
 
     let ssh = SshClient::new(&job.remote_host, opts.debug);
@@ -221,9 +219,7 @@ pub async fn download_outputs(
             .list_jobs(None, &[], None, tags, 1)?
             .into_iter()
             .next()
-            .ok_or_else(|| {
-                FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
-            })?
+            .ok_or(FlecheError::NoRecentJob)?
     };
 
     // Check job status
@@ -514,9 +510,7 @@ pub async fn wait_for_job(
             .list_jobs(None, &[], None, tags, 1)?
             .into_iter()
             .next()
-            .ok_or_else(|| {
-                FlecheError::Other("No jobs found. Run `fleche run` to submit a job.".to_string())
-            })?
+            .ok_or(FlecheError::NoRecentJob)?
     };
 
     let ssh = SshClient::new(&job.remote_host, debug);
@@ -737,34 +731,37 @@ fn build_filter_glob_sets(filters: &[String]) -> Result<(Option<GlobSet>, Option
     for pattern in filters {
         if let Some(exclude_pattern) = pattern.strip_prefix('!') {
             excludes.add(Glob::new(exclude_pattern).map_err(|e| {
-                FlecheError::Other(format!("Invalid exclude pattern '{exclude_pattern}': {e}"))
+                FlecheError::InvalidGlobPattern(format!("'{exclude_pattern}': {e}"))
             })?);
             has_excludes = true;
         } else {
-            includes.add(Glob::new(pattern).map_err(|e| {
-                FlecheError::Other(format!("Invalid filter pattern '{pattern}': {e}"))
-            })?);
+            includes.add(
+                Glob::new(pattern)
+                    .map_err(|e| FlecheError::InvalidGlobPattern(format!("'{pattern}': {e}")))?,
+            );
             has_includes = true;
         }
     }
 
-    let include_set =
-        if has_includes {
-            Some(includes.build().map_err(|e| {
-                FlecheError::Other(format!("Failed to build include glob set: {e}"))
-            })?)
-        } else {
-            None
-        };
+    let include_set = if has_includes {
+        Some(
+            includes
+                .build()
+                .map_err(|e| FlecheError::InvalidGlobPattern(e.to_string()))?,
+        )
+    } else {
+        None
+    };
 
-    let exclude_set =
-        if has_excludes {
-            Some(excludes.build().map_err(|e| {
-                FlecheError::Other(format!("Failed to build exclude glob set: {e}"))
-            })?)
-        } else {
-            None
-        };
+    let exclude_set = if has_excludes {
+        Some(
+            excludes
+                .build()
+                .map_err(|e| FlecheError::InvalidGlobPattern(e.to_string()))?,
+        )
+    } else {
+        None
+    };
 
     Ok((include_set, exclude_set))
 }
