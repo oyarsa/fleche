@@ -2,6 +2,7 @@
 
 use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
+use crate::local;
 use crate::registry::{JobStatus, Registry};
 use crate::slurm::{generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::{SshClient, shell_escape};
@@ -28,15 +29,15 @@ pub struct RunJobOptions {
     pub debug: bool,
 }
 
-/// Runs a job on the remote cluster via Slurm.
+/// Runs a job on the remote cluster via Slurm (or locally if host is "local").
 ///
 /// This is the main entry point for job submission. It:
 /// 1. Resolves the job configuration with all overrides applied
-/// 2. Syncs project code to the shared workspace
-/// 3. Syncs input files to the workspace
+/// 2. Syncs project code to the shared workspace (remote only)
+/// 3. Syncs input files to the workspace (remote only)
 /// 4. Creates a job directory for logs/metadata
-/// 5. Uploads the generated sbatch script
-/// 6. Submits the job to Slurm
+/// 5. Uploads the generated sbatch script (remote only)
+/// 6. Submits the job to Slurm (or runs locally)
 /// 7. Streams the job output (unless --bg is specified)
 pub async fn run_job(
     config: &Config,
@@ -45,6 +46,7 @@ pub async fn run_job(
     env_overrides: &[(String, String)],
     tags: &[(String, String)],
     slurm_overrides: SlurmConfig,
+    host_override: Option<&str>,
     opts: RunJobOptions,
 ) -> Result<()> {
     // Determine if job_or_command is a job name or a command
@@ -61,6 +63,16 @@ pub async fn run_job(
     };
 
     let job = config.resolve_job(job_name, actual_command, env_overrides, &slurm_overrides)?;
+
+    // Determine final host: CLI override -> job definition -> remote.host
+    let host = host_override.map_or_else(|| job.host.clone(), String::from);
+
+    // Branch based on host
+    if host == "local" {
+        return run_job_locally(config, &job, tags, &opts);
+    }
+
+    // Remote execution path
     let job_id = generate_job_id(&job.name);
 
     let workspace = workspace_path(config);
@@ -79,7 +91,7 @@ pub async fn run_job(
         return Ok(());
     }
 
-    let ssh = SshClient::new(&config.remote.host, opts.debug);
+    let ssh = SshClient::new(&host, opts.debug);
 
     // Create directories
     println!(
@@ -92,8 +104,7 @@ pub async fn run_job(
     // Sync project code to workspace
     print!("{} Syncing project code...", style("[2/4]").bold().dim());
     let _ = std::io::stdout().flush();
-    let stats =
-        sync_project_to_workspace(&config.project_path, &config.remote.host, &workspace).await?;
+    let stats = sync_project_to_workspace(&config.project_path, &host, &workspace).await?;
     println!(" {}", style(format!("({})", stats.human_readable())).dim());
 
     // Sync inputs to workspace
@@ -102,13 +113,8 @@ pub async fn run_job(
     } else {
         print!("{} Syncing input files...", style("[3/4]").bold().dim());
         let _ = std::io::stdout().flush();
-        let stats = sync_inputs_to_workspace(
-            &config.project_path,
-            &job.inputs,
-            &config.remote.host,
-            &workspace,
-        )
-        .await?;
+        let stats =
+            sync_inputs_to_workspace(&config.project_path, &job.inputs, &host, &workspace).await?;
         println!(" {}", style(format!("({})", stats.human_readable())).dim());
     }
 
@@ -128,7 +134,7 @@ pub async fn run_job(
         &job,
         &config.project_name,
         &config.project_path.to_string_lossy(),
-        &config.remote.host,
+        &host,
         &workspace,
         tags,
     )?;
@@ -140,10 +146,172 @@ pub async fn run_job(
     if !opts.background {
         println!();
         let log_path = format!("{job_dir}/job.out");
-        follow_job_logs(&config.remote.host, &slurm_id, &log_path, opts.debug).await?;
+        follow_job_logs(&host, &slurm_id, &log_path, opts.debug).await?;
     } else if opts.notify {
         // Wait for job completion in background and notify
-        wait_and_notify(&job_id, &config.remote.host, opts.debug).await?;
+        wait_and_notify(&job_id, &host, opts.debug).await?;
+    }
+
+    Ok(())
+}
+
+/// Runs a job locally (when host is "local").
+fn run_job_locally(
+    config: &Config,
+    job: &ResolvedJob,
+    tags: &[(String, String)],
+    opts: &RunJobOptions,
+) -> Result<()> {
+    let job_id = generate_job_id(&job.name);
+
+    // Warn about features that don't apply locally
+    if !job.inputs.is_empty() {
+        eprintln!(
+            "{}",
+            style("Warning: inputs are ignored for local jobs (files are already local)").yellow()
+        );
+    }
+    if !job.outputs.is_empty() {
+        eprintln!(
+            "{}",
+            style("Warning: outputs are ignored for local jobs (files are already local)").yellow()
+        );
+    }
+    if job.slurm.partition.is_some()
+        || job.slurm.time.is_some()
+        || job.slurm.gpus.is_some()
+        || job.slurm.cpus.is_some()
+        || job.slurm.memory.is_some()
+    {
+        eprintln!(
+            "{}",
+            style("Warning: Slurm options are ignored for local jobs").yellow()
+        );
+    }
+
+    if opts.dry_run {
+        println!("{}", style("[dry-run] Would run locally:").bold().yellow());
+        println!();
+        println!("  Command: {}", job.command);
+        println!("  Working directory: {}", config.project_path.display());
+        if !job.env.is_empty() {
+            println!("  Environment:");
+            for (k, v) in &job.env {
+                println!("    {k}={v}");
+            }
+        }
+        return Ok(());
+    }
+
+    // Create local job directory
+    let job_dir = local::ensure_job_dir(&config.project_path, &job_id)?;
+
+    // Record in registry (with remote_host="local" and remote_path=project_path)
+    let registry = Registry::open()?;
+    registry.insert_job(
+        &job_id,
+        None, // No Slurm ID for local jobs
+        job,
+        &config.project_name,
+        &config.project_path.to_string_lossy(),
+        "local",
+        &config.project_path.to_string_lossy(),
+        tags,
+    )?;
+
+    println!("{} {}", style("Job ID:").green().bold(), job_id);
+    println!("{} {}", style("Job directory:").dim(), job_dir.display());
+    println!();
+
+    if opts.background {
+        // Run in background
+        let pid = local::run_background(&config.project_path, &job_id, &job.command, &job.env)?;
+        println!("{} {}", style("PID:").green().bold(), pid);
+        println!(
+            "{}",
+            style("Job running in background. Use 'fleche logs' to view output.").dim()
+        );
+
+        // Update status to running
+        registry.update_status(&job_id, JobStatus::Running)?;
+
+        if opts.notify {
+            // Spawn a background task to wait and notify
+            let project_path = config.project_path.clone();
+            let job_id_clone = job_id.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    match local::get_local_job_status(&project_path, &job_id_clone) {
+                        Ok(status) => {
+                            if let Ok(registry) = Registry::open() {
+                                let _ = registry.update_status(&job_id_clone, status);
+                            }
+                            match status {
+                                JobStatus::Completed => {
+                                    send_notification(&format!(
+                                        "Job {job_id_clone} completed successfully."
+                                    ));
+                                    break;
+                                }
+                                JobStatus::Failed => {
+                                    send_notification(&format!("Job {job_id_clone} failed."));
+                                    break;
+                                }
+                                JobStatus::Cancelled => {
+                                    send_notification(&format!(
+                                        "Job {job_id_clone} was cancelled."
+                                    ));
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+    } else {
+        // Run in foreground
+        println!(
+            "{}",
+            style("Running locally (Ctrl+C to cancel)...").yellow()
+        );
+        println!();
+
+        // Update status to running
+        registry.update_status(&job_id, JobStatus::Running)?;
+
+        let exit_code =
+            local::run_foreground(&config.project_path, &job_id, &job.command, &job.env)?;
+
+        let final_status = if exit_code == 0 {
+            JobStatus::Completed
+        } else {
+            JobStatus::Failed
+        };
+        registry.update_status(&job_id, final_status)?;
+
+        println!();
+        if exit_code == 0 {
+            println!("{}", style("Job completed successfully.").green().bold());
+        } else {
+            println!(
+                "{} (exit code: {})",
+                style("Job failed.").red().bold(),
+                exit_code
+            );
+        }
+
+        if opts.notify {
+            let message = if exit_code == 0 {
+                format!("Job {job_id} completed successfully.")
+            } else {
+                format!("Job {job_id} failed.")
+            };
+            send_notification(&message);
+        }
     }
 
     Ok(())
@@ -268,18 +436,28 @@ async fn run_job_with_resolved(
     Ok(())
 }
 
-/// Executes a command directly via SSH (no Slurm).
+/// Executes a command directly via SSH (no Slurm), or locally if host is "local".
 ///
-/// Syncs the project and inputs, then runs the command directly over SSH.
+/// For remote: syncs the project and inputs, then runs the command directly over SSH.
+/// For local: runs the command directly in the project directory.
 /// Useful for quick tests or interactive work.
 pub async fn exec_command(
     config: &Config,
     command: &str,
     env_overrides: &[(String, String)],
+    host_override: Option<&str>,
     debug: bool,
 ) -> Result<()> {
+    let host = host_override.map_or_else(|| config.remote.host.clone(), String::from);
+
+    // Local execution path
+    if host == "local" {
+        return exec_command_locally(config, command, env_overrides);
+    }
+
+    // Remote execution path
     let workspace = workspace_path(config);
-    let ssh = SshClient::new(&config.remote.host, debug);
+    let ssh = SshClient::new(&host, debug);
 
     // Create workspace if needed
     println!(
@@ -291,8 +469,7 @@ pub async fn exec_command(
     // Sync project code to workspace
     print!("{} Syncing project code...", style("[2/3]").bold().dim());
     let _ = std::io::stdout().flush();
-    let stats =
-        sync_project_to_workspace(&config.project_path, &config.remote.host, &workspace).await?;
+    let stats = sync_project_to_workspace(&config.project_path, &host, &workspace).await?;
     println!(" {}", style(format!("({})", stats.human_readable())).dim());
 
     // Sync global inputs
@@ -307,13 +484,9 @@ pub async fn exec_command(
     } else {
         print!("{} Syncing input files...", style("[3/3]").bold().dim());
         let _ = std::io::stdout().flush();
-        let stats = sync_inputs_to_workspace(
-            &config.project_path,
-            &global_inputs,
-            &config.remote.host,
-            &workspace,
-        )
-        .await?;
+        let stats =
+            sync_inputs_to_workspace(&config.project_path, &global_inputs, &host, &workspace)
+                .await?;
         println!(" {}", style(format!("({})", stats.human_readable())).dim());
     }
 
@@ -342,6 +515,39 @@ pub async fn exec_command(
     }
 
     if !success {
+        return Err(FlecheError::SshCommand(
+            "Command exited with non-zero status".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Executes a command locally (when host is "local").
+fn exec_command_locally(
+    config: &Config,
+    command: &str,
+    env_overrides: &[(String, String)],
+) -> Result<()> {
+    use std::process::Command;
+
+    println!(
+        "{} Executing command locally...",
+        style("[1/1]").bold().dim()
+    );
+    println!();
+
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(command).current_dir(&config.project_path);
+
+    // Add environment variables
+    for (k, v) in env_overrides {
+        cmd.env(k, v);
+    }
+
+    let status = cmd.status()?;
+
+    if !status.success() {
         return Err(FlecheError::SshCommand(
             "Command exited with non-zero status".to_string(),
         ));

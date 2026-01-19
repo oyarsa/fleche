@@ -341,6 +341,7 @@ mod tests {
             outputs: vec![],
             slurm: SlurmConfig::default(),
             env: IndexMap::new(),
+            host: "test".to_string(),
         };
 
         let script = generate_sbatch_script("test-123", &job, "/workspace", "/jobs/test-123");
@@ -371,6 +372,7 @@ mod tests {
                 exclude: Some("node01".to_string()),
             },
             env: IndexMap::new(),
+            host: "test".to_string(),
         };
 
         let script = generate_sbatch_script("train-456", &job, "/workspace", "/jobs/train-456");
@@ -398,6 +400,7 @@ mod tests {
             outputs: vec![],
             slurm: SlurmConfig::default(),
             env,
+            host: "test".to_string(),
         };
 
         let script = generate_sbatch_script("test-789", &job, "/ws", "/jobs/test-789");
@@ -418,6 +421,7 @@ mod tests {
             outputs: vec![],
             slurm: SlurmConfig::default(),
             env,
+            host: "test".to_string(),
         };
 
         let script = generate_sbatch_script("test-esc", &job, "/ws", "/jobs/test-esc");

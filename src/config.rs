@@ -159,6 +159,8 @@ pub struct JobDefinition {
     /// Environment variables specific to this job (raw, unexpanded).
     #[serde(default)]
     pub env: IndexMap<String, String>,
+    /// Host to run on (defaults to remote.host, use "local" for local execution).
+    pub host: Option<String>,
 }
 
 /// A fully resolved job ready for submission.
@@ -179,6 +181,8 @@ pub struct ResolvedJob {
     pub slurm: SlurmConfig,
     /// Final environment variables after all merges.
     pub env: IndexMap<String, String>,
+    /// Target host ("local" for local execution, otherwise remote host).
+    pub host: String,
 }
 
 /// The complete loaded configuration for a project.
@@ -227,6 +231,7 @@ struct RawJobFile {
     slurm: SlurmConfig,
     #[serde(default)]
     env: IndexMap<String, String>,
+    host: Option<String>,
 }
 
 impl Config {
@@ -370,6 +375,12 @@ impl Config {
             .map(|v| expand_variables(v, &self.project_name, &expanded_env, &self.dotenv))
             .collect::<Result<Vec<_>>>()?;
 
+        // Resolve host: job definition -> remote.host
+        let host = job_def
+            .host
+            .clone()
+            .unwrap_or_else(|| self.remote.host.clone());
+
         Ok(ResolvedJob {
             name,
             command,
@@ -377,6 +388,7 @@ impl Config {
             outputs,
             slurm: final_slurm,
             env: expanded_env,
+            host,
         })
     }
 
@@ -458,6 +470,7 @@ fn load_jobs_from_dir(
                     outputs: raw.outputs,
                     slurm: raw.slurm,
                     env: raw.env,
+                    host: raw.host,
                 },
             );
         }

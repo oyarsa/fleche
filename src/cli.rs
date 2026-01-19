@@ -105,6 +105,10 @@ pub enum Commands {
         /// Print generated sbatch script without submitting
         #[arg(long)]
         dry_run: bool,
+
+        /// Run on specific host ("local" for local execution)
+        #[arg(long)]
+        host: Option<String>,
     },
 
     /// Execute a command directly via SSH (no Slurm)
@@ -118,6 +122,10 @@ pub enum Commands {
         /// Set environment variable (repeatable)
         #[arg(long = "env", value_parser = parse_key_value)]
         env_vars: Vec<(String, String)>,
+
+        /// Run on specific host ("local" for local execution)
+        #[arg(long)]
+        host: Option<String>,
     },
 
     /// Show status of jobs

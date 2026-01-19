@@ -22,6 +22,7 @@ mod config;
 mod error;
 mod guide;
 mod job;
+mod local;
 mod registry;
 mod slurm;
 mod ssh;
@@ -79,6 +80,7 @@ async fn run() -> Result<()> {
             nodes,
             exclude,
             dry_run,
+            host,
         } => {
             let config = Config::find_and_load()?;
             let slurm_overrides = slurm_config_from_cli(
@@ -92,6 +94,7 @@ async fn run() -> Result<()> {
                 &env_vars,
                 &tags,
                 slurm_overrides,
+                host.as_deref(),
                 job::RunJobOptions {
                     background: bg,
                     notify,
@@ -102,9 +105,13 @@ async fn run() -> Result<()> {
             .await?;
         }
 
-        Commands::Exec { command, env_vars } => {
+        Commands::Exec {
+            command,
+            env_vars,
+            host,
+        } => {
             let config = Config::find_and_load()?;
-            job::exec_command(&config, &command, &env_vars, cli.debug).await?;
+            job::exec_command(&config, &command, &env_vars, host.as_deref(), cli.debug).await?;
         }
 
         Commands::Status {

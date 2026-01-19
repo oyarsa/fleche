@@ -2,6 +2,7 @@
 
 use crate::config::{Config, ResolvedJob};
 use crate::error::{FlecheError, Result};
+use crate::local;
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::{cancel_job, get_job_status};
 use crate::ssh::SshClient;
@@ -11,6 +12,7 @@ use crate::sync::{
 use console::style;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use super::display::{print_job_details, print_job_table};
@@ -60,10 +62,21 @@ pub async fn show_status(
 
     if let Some(id) = job_id {
         let job = registry.get_job(id)?;
-        let ssh = SshClient::new(&job.remote_host, debug);
 
-        // Get current status from Slurm
-        let current_status = if let Some(ref slurm_id) = job.slurm_id {
+        // Get current status
+        let current_status = if job.remote_host == "local" {
+            // Local job - check local status
+            let project_path = PathBuf::from(&job.project_path);
+            match local::get_local_job_status(&project_path, &job.id) {
+                Ok(status) => {
+                    registry.update_status(&job.id, status)?;
+                    status
+                }
+                Err(_) => job.status,
+            }
+        } else if let Some(ref slurm_id) = job.slurm_id {
+            // Remote job - check Slurm status
+            let ssh = SshClient::new(&job.remote_host, debug);
             match get_job_status(&ssh, slurm_id).await {
                 Ok(status) => {
                     registry.update_status(&job.id, status)?;
@@ -145,13 +158,6 @@ pub async fn show_logs(
             .ok_or(FlecheError::NoRecentJob)?
     };
 
-    let ssh = SshClient::new(&job.remote_host, opts.debug);
-
-    // Job logs are in the job directory, not workspace
-    // remote_path is the workspace, job logs are in ../jobs/<job_id>/
-    let base = job.remote_path.trim_end_matches("/workspace");
-    let log_base = format!("{}/jobs/{}", base, job.id);
-
     // Determine which streams to show
     let show_stdout = !opts.only_stderr || opts.only_stdout;
     let show_stderr = !opts.only_stdout || opts.only_stderr;
@@ -159,6 +165,60 @@ pub async fn show_logs(
 
     // Strip ANSI codes if --raw is set or if stdout is not a terminal (piped)
     let strip_ansi = opts.raw || !std::io::IsTerminal::is_terminal(&std::io::stdout());
+
+    // Handle local jobs
+    if job.remote_host == "local" {
+        let project_path = PathBuf::from(&job.project_path);
+
+        if opts.follow {
+            println!(
+                "{}",
+                style("Following output (Ctrl+C to disconnect)...").yellow()
+            );
+            local::follow_local_logs(&project_path, &job.id)?;
+        } else if show_both {
+            println!("{}", style("=== STDOUT ===").bold());
+            match local::read_local_logs(
+                &project_path,
+                &job.id,
+                local::LogStream::Stdout,
+                opts.tail,
+            ) {
+                Ok(content) => print!("{}", maybe_strip_ansi(&content, strip_ansi)),
+                Err(e) => eprintln!("Error reading stdout: {e}"),
+            }
+
+            println!();
+            println!("{}", style("=== STDERR ===").bold());
+            match local::read_local_logs(
+                &project_path,
+                &job.id,
+                local::LogStream::Stderr,
+                opts.tail,
+            ) {
+                Ok(content) => print!("{}", maybe_strip_ansi(&content, strip_ansi)),
+                Err(e) => eprintln!("Error reading stderr: {e}"),
+            }
+        } else {
+            let stream = if show_stderr {
+                local::LogStream::Stderr
+            } else {
+                local::LogStream::Stdout
+            };
+            let content = local::read_local_logs(&project_path, &job.id, stream, opts.tail)?;
+            print!("{}", maybe_strip_ansi(&content, strip_ansi));
+        }
+
+        return Ok(());
+    }
+
+    // Remote job handling
+    let ssh = SshClient::new(&job.remote_host, opts.debug);
+
+    // Job logs are in the job directory, not workspace
+    // remote_path is the workspace, job logs are in ../jobs/<job_id>/
+    let base = job.remote_path.trim_end_matches("/workspace");
+    let log_base = format!("{}/jobs/{}", base, job.id);
 
     if opts.follow {
         let log_file = if opts.only_stderr {
@@ -224,6 +284,15 @@ pub async fn download_outputs(
             .next()
             .ok_or(FlecheError::NoRecentJob)?
     };
+
+    // Local jobs don't need downloading - files are already in place
+    if job.remote_host == "local" {
+        println!(
+            "{}",
+            style("Job ran locally - output files are already in the project directory.").green()
+        );
+        return Ok(());
+    }
 
     let ssh = SshClient::new(&job.remote_host, debug);
 
@@ -439,18 +508,36 @@ pub async fn cancel_jobs(
     }
 
     for job in &jobs_to_cancel {
-        let Some(ref slurm_id) = job.slurm_id else {
-            eprintln!("  Warning: Job {} has no Slurm ID, skipping", job.id);
-            continue;
-        };
+        if job.remote_host == "local" {
+            // Cancel local job
+            let project_path = PathBuf::from(&job.project_path);
+            match local::cancel_local_job(&project_path, &job.id) {
+                Ok(true) => {
+                    registry.update_status(&job.id, JobStatus::Cancelled)?;
+                    println!("{} Job {} cancelled", style("✓").green(), job.id);
+                }
+                Ok(false) => {
+                    eprintln!("  Warning: Could not cancel {} (process not found)", job.id);
+                }
+                Err(e) => {
+                    eprintln!("  Warning: Could not cancel {}: {e}", job.id);
+                }
+            }
+        } else {
+            // Cancel remote Slurm job
+            let Some(ref slurm_id) = job.slurm_id else {
+                eprintln!("  Warning: Job {} has no Slurm ID, skipping", job.id);
+                continue;
+            };
 
-        let ssh = SshClient::new(&job.remote_host, debug);
-        if let Err(e) = cancel_job(&ssh, slurm_id).await {
-            eprintln!("  Warning: Could not cancel {}: {e}", job.id);
-            continue;
+            let ssh = SshClient::new(&job.remote_host, debug);
+            if let Err(e) = cancel_job(&ssh, slurm_id).await {
+                eprintln!("  Warning: Could not cancel {}: {e}", job.id);
+                continue;
+            }
+            registry.update_status(&job.id, JobStatus::Cancelled)?;
+            println!("{} Job {} cancelled", style("✓").green(), job.id);
         }
-        registry.update_status(&job.id, JobStatus::Cancelled)?;
-        println!("{} Job {} cancelled", style("✓").green(), job.id);
     }
 
     Ok(())
@@ -537,32 +624,47 @@ pub async fn clean_jobs(
     for job in &jobs_to_clean {
         print!("Cleaning {}... ", job.id);
 
-        // Delete job directory (logs/metadata only, not workspace)
-        let ssh = SshClient::new(&job.remote_host, opts.debug);
-        let job_dir = format!(
-            "{}/.fleche/jobs/{}",
-            job.remote_path
-                .trim_end_matches("/workspace")
-                .trim_end_matches("/.fleche/workspace"),
-            job.id
-        );
-        if let Err(e) = ssh.rm_rf(&job_dir).await {
-            eprintln!("warning: could not delete job directory: {e}");
+        if job.remote_host == "local" {
+            // Clean local job directory
+            let project_path = PathBuf::from(&job.project_path);
+            if let Err(e) = local::clean_local_job(&project_path, &job.id) {
+                eprintln!("warning: could not delete job directory: {e}");
+            }
+        } else {
+            // Clean remote job directory (logs/metadata only, not workspace)
+            let ssh = SshClient::new(&job.remote_host, opts.debug);
+            let job_dir = format!(
+                "{}/.fleche/jobs/{}",
+                job.remote_path
+                    .trim_end_matches("/workspace")
+                    .trim_end_matches("/.fleche/workspace"),
+                job.id
+            );
+            if let Err(e) = ssh.rm_rf(&job_dir).await {
+                eprintln!("warning: could not delete job directory: {e}");
+            }
         }
 
         registry.delete_job(&job.id)?;
         println!("{}", style("done").green());
     }
 
-    // Clean workspace if requested
+    // Clean workspace if requested (only for remote jobs)
     if opts.clean_workspace {
         if let Some(job) = jobs_to_clean.first() {
-            let ssh = SshClient::new(&job.remote_host, opts.debug);
-            print!("Cleaning workspace... ");
-            if let Err(e) = ssh.rm_rf(&job.remote_path).await {
-                eprintln!("warning: could not delete workspace: {e}");
+            if job.remote_host == "local" {
+                println!(
+                    "{}",
+                    style("Note: --workspace has no effect for local jobs.").yellow()
+                );
             } else {
-                println!("{}", style("done").green());
+                let ssh = SshClient::new(&job.remote_host, opts.debug);
+                print!("Cleaning workspace... ");
+                if let Err(e) = ssh.rm_rf(&job.remote_path).await {
+                    eprintln!("warning: could not delete workspace: {e}");
+                } else {
+                    println!("{}", style("done").green());
+                }
             }
         }
     }
@@ -600,9 +702,48 @@ pub async fn wait_for_job(
             .ok_or(FlecheError::NoRecentJob)?
     };
 
-    let ssh = SshClient::new(&job.remote_host, debug);
-
     println!("Waiting for job {}...", style(&job.id).bold());
+
+    // Local job handling
+    if job.remote_host == "local" {
+        let project_path = PathBuf::from(&job.project_path);
+
+        loop {
+            let status = local::get_local_job_status(&project_path, &job.id)?;
+            registry.update_status(&job.id, status)?;
+
+            let message = match status {
+                JobStatus::Completed => {
+                    let msg = format!("Job {} completed successfully.", job.id);
+                    println!("{}", style(&msg).green().bold());
+                    Some(msg)
+                }
+                JobStatus::Failed => {
+                    let msg = format!("Job {} failed.", job.id);
+                    println!("{}", style(&msg).red().bold());
+                    Some(msg)
+                }
+                JobStatus::Cancelled => {
+                    let msg = format!("Job {} was cancelled.", job.id);
+                    println!("{}", style(&msg).yellow().bold());
+                    Some(msg)
+                }
+                _ => None,
+            };
+
+            if let Some(msg) = message {
+                if notify {
+                    send_notification(&msg);
+                }
+                return Ok(());
+            }
+
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+
+    // Remote job handling
+    let ssh = SshClient::new(&job.remote_host, debug);
 
     loop {
         if let Some(ref slurm_id) = job.slurm_id {
@@ -698,12 +839,21 @@ pub async fn ping_cluster(config: &Config, debug: bool) -> Result<()> {
 
 // --- Private helper functions ---
 
-/// Refreshes the status of all pending/running jobs from Slurm.
+/// Refreshes the status of all pending/running jobs from Slurm or local process status.
 async fn refresh_active_job_statuses(registry: &Registry, debug: bool) -> Result<()> {
     let active_jobs = registry.list_active_jobs()?;
 
     for job in active_jobs {
-        if let Some(ref slurm_id) = job.slurm_id {
+        if job.remote_host == "local" {
+            // Check local job status
+            let project_path = PathBuf::from(&job.project_path);
+            if let Ok(status) = local::get_local_job_status(&project_path, &job.id) {
+                if status != job.status {
+                    registry.update_status(&job.id, status)?;
+                }
+            }
+        } else if let Some(ref slurm_id) = job.slurm_id {
+            // Check remote Slurm job status
             let ssh = SshClient::new(&job.remote_host, debug);
             if let Ok(status) = get_job_status(&ssh, slurm_id).await {
                 if status != job.status {
