@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.0.1] - 2026-01-19
+
+### Fixed
+- Shell-escape Slurm job IDs in commands to prevent injection
+- Validate environment variable names before exporting in sbatch scripts
+- Truncate job names to fit Slurm's length limit (~200 chars)
+
+### Changed
+- Added `NoSlurmId` and `SlurmUnavailable` error variants for clearer errors
+- Removed generic `FlecheError::Other` (all usages now have specific variants)
+- Extracted SSH socket directory setup to shared function
+
 ## [6.0.0] - 2026-01-19
 
 ### Changed
