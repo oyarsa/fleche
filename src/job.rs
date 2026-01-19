@@ -12,7 +12,7 @@ use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::{cancel_job, generate_sbatch_script, get_job_status, submit_job};
-use crate::ssh::SshClient;
+use crate::ssh::{SshClient, shell_escape};
 use crate::sync::{
     download_outputs as sync_download_outputs, download_path as sync_download_path,
     sync_inputs_to_workspace, sync_project_to_workspace,
@@ -367,11 +367,6 @@ pub async fn exec_command(
     }
 
     Ok(())
-}
-
-/// Simple shell escape - wraps in single quotes.
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Shows the status of a specific job or lists recent jobs.
