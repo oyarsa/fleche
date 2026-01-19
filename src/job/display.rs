@@ -1,0 +1,98 @@
+//! Display helpers for formatting job information.
+
+use crate::registry::{JobRecord, JobStatus};
+use console::style;
+
+/// Prints detailed information about a single job.
+pub(crate) fn print_job_details(job: &JobRecord, status: JobStatus) {
+    println!("{}", style("Job Details").bold().underlined());
+    println!();
+    println!("  {:<14} {}", style("ID:").bold(), job.id);
+    println!(
+        "  {:<14} {}",
+        style("Slurm ID:").bold(),
+        job.slurm_id.as_deref().unwrap_or("-")
+    );
+    println!("  {:<14} {}", style("Job Name:").bold(), job.job_name);
+    println!("  {:<14} {}", style("Project:").bold(), job.project_name);
+    println!(
+        "  {:<14} {}",
+        style("Status:").bold(),
+        format_status(status)
+    );
+    println!("  {:<14} {}", style("Remote Host:").bold(), job.remote_host);
+    println!("  {:<14} {}", style("Workspace:").bold(), job.remote_path);
+    println!(
+        "  {:<14} {}",
+        style("Created:").bold(),
+        job.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+    );
+
+    if !job.tags.is_empty() {
+        println!();
+        println!("  {}", style("Tags:").bold());
+        for (key, value) in &job.tags {
+            println!("    {key}={value}");
+        }
+    }
+
+    println!();
+    println!("  {}", style("Command:").bold());
+    for line in job.command.lines() {
+        println!("    {line}");
+    }
+}
+
+/// Prints a table of jobs.
+pub(crate) fn print_job_table(jobs: &[JobRecord]) {
+    println!(
+        "{:<45} {:<12} {:<12} {:<20}",
+        style("ID").bold().underlined(),
+        style("STATUS").bold().underlined(),
+        style("SLURM ID").bold().underlined(),
+        style("CREATED").bold().underlined(),
+    );
+
+    for job in jobs {
+        println!(
+            "{:<45} {} {:<12} {:<20}",
+            truncate(&job.id, 44),
+            format_status(job.status),
+            job.slurm_id.as_deref().unwrap_or("-"),
+            job.created_at.format("%Y-%m-%d %H:%M"),
+        );
+        // Show job name if it differs from the ID prefix (i.e., provides useful info)
+        let id_prefix = job.id.split('-').next().unwrap_or("");
+        if job.job_name != id_prefix {
+            print!("    {}", style(&job.job_name).dim());
+            if !job.tags.is_empty() {
+                let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                print!("  {}", style(tags.join(" ")).dim());
+            }
+            println!();
+        } else if !job.tags.is_empty() {
+            let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            println!("    {}", style(tags.join(" ")).dim());
+        }
+    }
+}
+
+/// Formats a job status with appropriate colors and fixed width.
+pub(crate) fn format_status(status: JobStatus) -> String {
+    match status {
+        JobStatus::Pending => style(format!("{:<12}", "pending")).yellow().to_string(),
+        JobStatus::Running => style(format!("{:<12}", "running")).blue().to_string(),
+        JobStatus::Completed => style(format!("{:<12}", "completed")).green().to_string(),
+        JobStatus::Failed => style(format!("{:<12}", "failed")).red().to_string(),
+        JobStatus::Cancelled => style(format!("{:<12}", "cancelled")).dim().to_string(),
+    }
+}
+
+/// Truncates a string to a maximum length, adding "..." if truncated.
+fn truncate(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
+}
