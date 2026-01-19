@@ -109,6 +109,7 @@ async fn run() -> Result<()> {
             dry_run,
             host,
             retry,
+            note,
         } => {
             let config = Config::find_and_load()?;
             let slurm_overrides = slurm_config_from_cli(
@@ -130,6 +131,7 @@ async fn run() -> Result<()> {
                     debug: cli.debug,
                     after,
                     retry,
+                    note,
                 },
             )
             .await?;
@@ -327,6 +329,10 @@ async fn run() -> Result<()> {
 
         Commands::Stats { job_id, last, tags } => {
             job::show_stats(job_id.as_deref(), last, &tags, cli.debug).await?;
+        }
+
+        Commands::Note { job_id, note } => {
+            job::note_job(&job_id, note.as_deref())?;
         }
     }
 

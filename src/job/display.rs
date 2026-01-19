@@ -28,6 +28,11 @@ pub(crate) fn print_job_details(job: &JobRecord, status: JobStatus) {
         job.created_at.format("%Y-%m-%d %H:%M:%S UTC")
     );
 
+    if let Some(ref note) = job.note {
+        println!();
+        println!("  {:<14} {}", style("Note:").bold(), note);
+    }
+
     if !job.tags.is_empty() {
         println!();
         println!("  {}", style("Tags:").bold());

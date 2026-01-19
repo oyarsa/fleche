@@ -121,6 +121,10 @@ pub enum Commands {
         /// Retry failed jobs with exponential backoff (e.g., --retry 3)
         #[arg(long)]
         retry: Option<u32>,
+
+        /// Add a note/annotation to the job
+        #[arg(long)]
+        note: Option<String>,
     },
 
     /// Execute a command directly via SSH (no Slurm)
@@ -348,6 +352,18 @@ pub enum Commands {
         /// Filter by tag (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
+    },
+
+    /// Add or view a note on a job
+    ///
+    /// Without a note, displays the existing note for the job.
+    /// With a note, sets or updates the job's note.
+    Note {
+        /// Job ID to annotate
+        job_id: String,
+
+        /// Note text to set (omit to view existing note)
+        note: Option<String>,
     },
 }
 

@@ -113,6 +113,36 @@ pub async fn show_status(
     Ok(())
 }
 
+/// Adds or displays a note on a job.
+///
+/// If `note` is provided, sets or updates the job's note.
+/// If `note` is `None`, displays the existing note (if any).
+pub fn note_job(job_id: &str, note: Option<&str>) -> Result<()> {
+    let registry = Registry::open()?;
+    let job = registry.get_job(job_id)?;
+
+    if let Some(note_text) = note {
+        registry.set_note(&job.id, Some(note_text))?;
+        println!(
+            "{} Note set for job {}",
+            style("✓").green(),
+            style(&job.id).bold()
+        );
+    } else {
+        // Display existing note
+        match job.note {
+            Some(ref note_text) => {
+                println!("{} {}", style("Note:").bold(), note_text);
+            }
+            None => {
+                println!("No note set for job {}.", job.id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Lists all unique tags across jobs.
 pub fn list_tags() -> Result<()> {
     let registry = Registry::open()?;

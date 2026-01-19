@@ -17,7 +17,7 @@ use std::path::PathBuf;
 const JOB_SELECT_COLUMNS: &str = r"
     id, slurm_id, job_name, project_name, project_path,
     remote_host, remote_path, command, status, config_json,
-    created_at, updated_at, outputs_synced";
+    created_at, updated_at, outputs_synced, note";
 
 /// A record of a submitted job stored in the local registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +50,8 @@ pub struct JobRecord {
     pub outputs_synced: bool,
     /// User-defined key-value tags for filtering jobs.
     pub tags: HashMap<String, String>,
+    /// Optional user note/annotation for the job.
+    pub note: Option<String>,
 }
 
 impl JobRecord {
@@ -79,6 +81,7 @@ impl JobRecord {
                 .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
             outputs_synced: row.get::<_, i32>(12)? == 1,
             tags: HashMap::new(),
+            note: row.get(13)?,
         })
     }
 }
@@ -167,7 +170,8 @@ impl Registry {
                 config_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                outputs_synced INTEGER DEFAULT 0
+                outputs_synced INTEGER DEFAULT 0,
+                note TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -184,10 +188,17 @@ impl Registry {
             CREATE INDEX IF NOT EXISTS idx_job_tags_key_value ON job_tags(key, value);
             ",
         )?;
+
+        // Migration: add note column if it doesn't exist (for existing databases)
+        let _ = self
+            .conn
+            .execute("ALTER TABLE jobs ADD COLUMN note TEXT", []);
+
         Ok(())
     }
 
     /// Inserts a new job record into the registry.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_job(
         &self,
         id: &str,
@@ -198,6 +209,7 @@ impl Registry {
         remote_host: &str,
         remote_path: &str,
         tags: &[(String, String)],
+        note: Option<&str>,
     ) -> Result<()> {
         let now = Utc::now();
         let config_json = serde_json::to_string(job)?;
@@ -206,8 +218,8 @@ impl Registry {
             r"
             INSERT INTO jobs (id, slurm_id, job_name, project_name, project_path,
                               remote_host, remote_path, command, status, config_json,
-                              created_at, updated_at, outputs_synced)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)
+                              created_at, updated_at, outputs_synced, note)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13)
             ",
             params![
                 id,
@@ -222,6 +234,7 @@ impl Registry {
                 config_json,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
+                note,
             ],
         )?;
 
@@ -233,6 +246,16 @@ impl Registry {
             )?;
         }
 
+        Ok(())
+    }
+
+    /// Sets or updates the note for a job.
+    pub fn set_note(&self, id: &str, note: Option<&str>) -> Result<()> {
+        let now = Utc::now();
+        self.conn.execute(
+            "UPDATE jobs SET note = ?1, updated_at = ?2 WHERE id = ?3",
+            params![note, now.to_rfc3339(), id],
+        )?;
         Ok(())
     }
 

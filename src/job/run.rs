@@ -51,6 +51,8 @@ pub struct RunJobOptions {
     pub after: Option<String>,
     /// Number of times to retry on failure (with exponential backoff).
     pub retry: Option<u32>,
+    /// Note/annotation to attach to the job.
+    pub note: Option<String>,
 }
 
 /// Runs a job on the remote cluster via Slurm (or locally if host is "local").
@@ -187,8 +189,13 @@ pub async fn run_job(
         };
         let slurm_id = submit_job(&ssh, &job_dir, dep).await?;
 
-        // Record in registry
+        // Record in registry (note only on first attempt)
         let registry = Registry::open()?;
+        let job_note = if attempt == 1 {
+            opts.note.as_deref()
+        } else {
+            None
+        };
         registry.insert_job(
             &job_id,
             Some(&slurm_id),
@@ -198,6 +205,7 @@ pub async fn run_job(
             &host,
             &workspace,
             tags,
+            job_note,
         )?;
 
         println!();
@@ -330,6 +338,7 @@ async fn run_job_locally(
         "local",
         &config.project_path.to_string_lossy(),
         tags,
+        opts.note.as_deref(),
     )?;
 
     println!("{} {}", style("Job ID:").green().bold(), job_id);
@@ -417,6 +426,7 @@ async fn run_job_locally(
                     "local",
                     &config.project_path.to_string_lossy(),
                     tags,
+                    None, // Retries don't get a note
                 )?;
                 println!("{} {}", style("Job ID:").green().bold(), new_id);
                 println!();
@@ -593,6 +603,7 @@ async fn run_job_with_resolved(
         &config.remote.host,
         &workspace,
         tags,
+        None, // Reruns don't get a note
     )?;
 
     println!();
