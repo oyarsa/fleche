@@ -13,6 +13,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// SQL columns for SELECT queries on the jobs table.
+const JOB_SELECT_COLUMNS: &str = r"
+    id, slurm_id, job_name, project_name, project_path,
+    remote_host, remote_path, command, status, config_json,
+    created_at, updated_at, outputs_synced";
+
 /// A record of a submitted job stored in the local registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
@@ -44,6 +50,36 @@ pub struct JobRecord {
     pub outputs_synced: bool,
     /// User-defined key-value tags for filtering jobs.
     pub tags: HashMap<String, String>,
+}
+
+impl JobRecord {
+    /// Creates a `JobRecord` from a `SQLite` row.
+    ///
+    /// The row must have columns in the order defined by `JOB_SELECT_COLUMNS`.
+    /// Tags are initialized to an empty `HashMap` and should be loaded separately.
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(JobRecord {
+            id: row.get(0)?,
+            slurm_id: row.get(1)?,
+            job_name: row.get(2)?,
+            project_name: row.get(3)?,
+            project_path: row.get(4)?,
+            remote_host: row.get(5)?,
+            remote_path: row.get(6)?,
+            command: row.get(7)?,
+            status: row
+                .get::<_, String>(8)?
+                .parse()
+                .unwrap_or(JobStatus::Pending),
+            config_json: row.get(9)?,
+            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
+                .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+            updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
+                .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
+            outputs_synced: row.get::<_, i32>(12)? == 1,
+            tags: HashMap::new(),
+        })
+    }
 }
 
 /// The status of a job in its lifecycle.
@@ -238,78 +274,23 @@ impl Registry {
     /// ambiguous matches.
     pub fn get_job(&self, id: &str) -> Result<JobRecord> {
         // First try exact match
-        let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, slurm_id, job_name, project_name, project_path,
-                   remote_host, remote_path, command, status, config_json,
-                   created_at, updated_at, outputs_synced
-            FROM jobs WHERE id = ?1
-            ",
-        )?;
+        let sql = format!("SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id = ?1");
+        let mut stmt = self.conn.prepare(&sql)?;
 
-        if let Ok(job) = stmt.query_row(params![id], |row| {
-            Ok(JobRecord {
-                id: row.get(0)?,
-                slurm_id: row.get(1)?,
-                job_name: row.get(2)?,
-                project_name: row.get(3)?,
-                project_path: row.get(4)?,
-                remote_host: row.get(5)?,
-                remote_path: row.get(6)?,
-                command: row.get(7)?,
-                status: row
-                    .get::<_, String>(8)?
-                    .parse()
-                    .unwrap_or(JobStatus::Pending),
-                config_json: row.get(9)?,
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                outputs_synced: row.get::<_, i32>(12)? == 1,
-                tags: HashMap::new(),
-            })
-        }) {
+        if let Ok(job) = stmt.query_row(params![id], JobRecord::from_row) {
             let tags = self.get_tags(&job.id)?;
             return Ok(JobRecord { tags, ..job });
         }
 
         // Try suffix match
         let suffix_pattern = format!("%{id}");
-        let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, slurm_id, job_name, project_name, project_path,
-                   remote_host, remote_path, command, status, config_json,
-                   created_at, updated_at, outputs_synced
-            FROM jobs WHERE id LIKE ?1
-            ORDER BY created_at DESC
-            ",
-        )?;
+        let sql = format!(
+            "SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id LIKE ?1 ORDER BY created_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let matches: Vec<JobRecord> = stmt
-            .query_map(params![suffix_pattern], |row| {
-                Ok(JobRecord {
-                    id: row.get(0)?,
-                    slurm_id: row.get(1)?,
-                    job_name: row.get(2)?,
-                    project_name: row.get(3)?,
-                    project_path: row.get(4)?,
-                    remote_host: row.get(5)?,
-                    remote_path: row.get(6)?,
-                    command: row.get(7)?,
-                    status: row
-                        .get::<_, String>(8)?
-                        .parse()
-                        .unwrap_or(JobStatus::Pending),
-                    config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    outputs_synced: row.get::<_, i32>(12)? == 1,
-                    tags: HashMap::new(),
-                })
-            })?
+            .query_map(params![suffix_pattern], JobRecord::from_row)?
             .filter_map(std::result::Result::ok)
             .collect();
 
@@ -339,6 +320,16 @@ impl Registry {
             .filter_map(std::result::Result::ok)
             .collect();
         Ok(tags)
+    }
+
+    /// Loads tags for a list of jobs, returning new records with tags populated.
+    fn load_tags_for_jobs(&self, jobs: Vec<JobRecord>) -> Result<Vec<JobRecord>> {
+        jobs.into_iter()
+            .map(|job| {
+                let tags = self.get_tags(&job.id)?;
+                Ok(JobRecord { tags, ..job })
+            })
+            .collect()
     }
 
     /// Lists jobs matching the given filters.
@@ -426,29 +417,7 @@ impl Registry {
             params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
         let jobs = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                Ok(JobRecord {
-                    id: row.get(0)?,
-                    slurm_id: row.get(1)?,
-                    job_name: row.get(2)?,
-                    project_name: row.get(3)?,
-                    project_path: row.get(4)?,
-                    remote_host: row.get(5)?,
-                    remote_path: row.get(6)?,
-                    command: row.get(7)?,
-                    status: row
-                        .get::<_, String>(8)?
-                        .parse()
-                        .unwrap_or(JobStatus::Pending),
-                    config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    outputs_synced: row.get::<_, i32>(12)? == 1,
-                    tags: HashMap::new(),
-                })
-            })?
+            .query_map(params_refs.as_slice(), JobRecord::from_row)?
             .filter_map(std::result::Result::ok);
 
         // Apply regex name filter and limit in Rust
@@ -461,14 +430,7 @@ impl Registry {
             None => jobs.collect(),
         };
 
-        // Load tags for each job
-        let mut jobs_with_tags = Vec::new();
-        for job in jobs {
-            let tags = self.get_tags(&job.id)?;
-            jobs_with_tags.push(JobRecord { tags, ..job });
-        }
-
-        Ok(jobs_with_tags)
+        self.load_tags_for_jobs(jobs)
     }
 
     /// Lists finished jobs older than the given duration.
@@ -476,151 +438,55 @@ impl Registry {
     /// Only returns jobs with status completed, failed, or cancelled.
     pub fn list_jobs_older_than(&self, duration: Duration) -> Result<Vec<JobRecord>> {
         let cutoff = Utc::now() - duration;
-        let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, slurm_id, job_name, project_name, project_path,
-                   remote_host, remote_path, command, status, config_json,
-                   created_at, updated_at, outputs_synced
-            FROM jobs
-            WHERE created_at < ?1 AND status IN ('completed', 'failed', 'cancelled')
-            ORDER BY created_at DESC
-            ",
-        )?;
+        let sql = format!(
+            "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
+             WHERE created_at < ?1 AND status IN ('completed', 'failed', 'cancelled') \
+             ORDER BY created_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
 
-        let jobs = stmt
-            .query_map(params![cutoff.to_rfc3339()], |row| {
-                Ok(JobRecord {
-                    id: row.get(0)?,
-                    slurm_id: row.get(1)?,
-                    job_name: row.get(2)?,
-                    project_name: row.get(3)?,
-                    project_path: row.get(4)?,
-                    remote_host: row.get(5)?,
-                    remote_path: row.get(6)?,
-                    command: row.get(7)?,
-                    status: row
-                        .get::<_, String>(8)?
-                        .parse()
-                        .unwrap_or(JobStatus::Pending),
-                    config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    outputs_synced: row.get::<_, i32>(12)? == 1,
-                    tags: HashMap::new(),
-                })
-            })?
+        let jobs: Vec<_> = stmt
+            .query_map(params![cutoff.to_rfc3339()], JobRecord::from_row)?
             .filter_map(std::result::Result::ok)
-            .collect::<Vec<_>>();
+            .collect();
 
-        let mut jobs_with_tags = Vec::new();
-        for job in jobs {
-            let tags = self.get_tags(&job.id)?;
-            jobs_with_tags.push(JobRecord { tags, ..job });
-        }
-
-        Ok(jobs_with_tags)
+        self.load_tags_for_jobs(jobs)
     }
 
     /// Lists all finished jobs (completed, failed, or cancelled).
     pub fn list_finished_jobs(&self) -> Result<Vec<JobRecord>> {
-        let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, slurm_id, job_name, project_name, project_path,
-                   remote_host, remote_path, command, status, config_json,
-                   created_at, updated_at, outputs_synced
-            FROM jobs
-            WHERE status IN ('completed', 'failed', 'cancelled')
-            ORDER BY created_at DESC
-            ",
-        )?;
+        let sql = format!(
+            "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
+             WHERE status IN ('completed', 'failed', 'cancelled') \
+             ORDER BY created_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
 
-        let jobs = stmt
-            .query_map([], |row| {
-                Ok(JobRecord {
-                    id: row.get(0)?,
-                    slurm_id: row.get(1)?,
-                    job_name: row.get(2)?,
-                    project_name: row.get(3)?,
-                    project_path: row.get(4)?,
-                    remote_host: row.get(5)?,
-                    remote_path: row.get(6)?,
-                    command: row.get(7)?,
-                    status: row
-                        .get::<_, String>(8)?
-                        .parse()
-                        .unwrap_or(JobStatus::Pending),
-                    config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    outputs_synced: row.get::<_, i32>(12)? == 1,
-                    tags: HashMap::new(),
-                })
-            })?
+        let jobs: Vec<_> = stmt
+            .query_map([], JobRecord::from_row)?
             .filter_map(std::result::Result::ok)
-            .collect::<Vec<_>>();
+            .collect();
 
-        let mut jobs_with_tags = Vec::new();
-        for job in jobs {
-            let tags = self.get_tags(&job.id)?;
-            jobs_with_tags.push(JobRecord { tags, ..job });
-        }
-
-        Ok(jobs_with_tags)
+        self.load_tags_for_jobs(jobs)
     }
 
     /// Lists all active jobs (pending or running).
     ///
     /// Used to refresh job statuses from Slurm before displaying.
     pub fn list_active_jobs(&self) -> Result<Vec<JobRecord>> {
-        let mut stmt = self.conn.prepare(
-            r"
-            SELECT id, slurm_id, job_name, project_name, project_path,
-                   remote_host, remote_path, command, status, config_json,
-                   created_at, updated_at, outputs_synced
-            FROM jobs
-            WHERE status IN ('pending', 'running')
-            ORDER BY created_at DESC
-            ",
-        )?;
+        let sql = format!(
+            "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
+             WHERE status IN ('pending', 'running') \
+             ORDER BY created_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
 
-        let jobs = stmt
-            .query_map([], |row| {
-                Ok(JobRecord {
-                    id: row.get(0)?,
-                    slurm_id: row.get(1)?,
-                    job_name: row.get(2)?,
-                    project_name: row.get(3)?,
-                    project_path: row.get(4)?,
-                    remote_host: row.get(5)?,
-                    remote_path: row.get(6)?,
-                    command: row.get(7)?,
-                    status: row
-                        .get::<_, String>(8)?
-                        .parse()
-                        .unwrap_or(JobStatus::Pending),
-                    config_json: row.get(9)?,
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
-                        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
-                    outputs_synced: row.get::<_, i32>(12)? == 1,
-                    tags: HashMap::new(),
-                })
-            })?
+        let jobs: Vec<_> = stmt
+            .query_map([], JobRecord::from_row)?
             .filter_map(std::result::Result::ok)
-            .collect::<Vec<_>>();
+            .collect();
 
-        let mut jobs_with_tags = Vec::new();
-        for job in jobs {
-            let tags = self.get_tags(&job.id)?;
-            jobs_with_tags.push(JobRecord { tags, ..job });
-        }
-
-        Ok(jobs_with_tags)
+        self.load_tags_for_jobs(jobs)
     }
 
     /// Deletes a job from the registry.
