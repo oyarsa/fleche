@@ -4,6 +4,7 @@
 //! arguments are defined here, with argument parsing handled by clap's derive macros.
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 
 /// GNU-style long version string with copyright and license.
 ///
@@ -309,6 +310,16 @@ pub enum Commands {
         /// Filter by tag when using default job (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
+    },
+
+    /// Generate shell completions
+    ///
+    /// Prints completion script for the specified shell to stdout.
+    /// Add to your shell config, e.g.: `fleche completions bash >> ~/.bashrc`
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 

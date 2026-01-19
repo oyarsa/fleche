@@ -29,7 +29,7 @@ mod ssh;
 mod sync;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
 use config::{Config, generate_init_config};
 use console::style;
@@ -315,6 +315,10 @@ async fn run() -> Result<()> {
             tags,
         } => {
             job::wait_for_job(job_id.as_deref(), notify, &tags, cli.debug).await?;
+        }
+
+        Commands::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "fleche", &mut std::io::stdout());
         }
     }
 
