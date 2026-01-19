@@ -291,8 +291,7 @@ impl Registry {
 
         let matches: Vec<JobRecord> = stmt
             .query_map(params![suffix_pattern], JobRecord::from_row)?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         match matches.len() {
             0 => Err(FlecheError::JobIdNotFound(id.to_string())),
@@ -317,8 +316,7 @@ impl Registry {
             .query_map(params![job_id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<HashMap<_, _>, _>>()?;
         Ok(tags)
     }
 
@@ -418,7 +416,8 @@ impl Registry {
 
         let jobs: Vec<_> = stmt
             .query_map(params_refs.as_slice(), JobRecord::from_row)?
-            .filter_map(std::result::Result::ok)
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
             .filter(|job| name_regex.as_ref().is_none_or(|re| re.is_match(&job.id)))
             .take(limit)
             .collect();
@@ -440,8 +439,7 @@ impl Registry {
 
         let jobs: Vec<_> = stmt
             .query_map(params![cutoff.to_rfc3339()], JobRecord::from_row)?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         self.load_tags_for_jobs(jobs)
     }
@@ -457,8 +455,7 @@ impl Registry {
 
         let jobs: Vec<_> = stmt
             .query_map([], JobRecord::from_row)?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         self.load_tags_for_jobs(jobs)
     }
@@ -476,8 +473,7 @@ impl Registry {
 
         let jobs: Vec<_> = stmt
             .query_map([], JobRecord::from_row)?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         self.load_tags_for_jobs(jobs)
     }
@@ -498,8 +494,7 @@ impl Registry {
             .prepare("SELECT DISTINCT key, value FROM job_tags ORDER BY key, value")?;
         let tags = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(tags)
     }
 }
