@@ -281,7 +281,7 @@ impl SshClient {
             last_error = Some(error);
         }
 
-        Err(last_error.unwrap())
+        Err(last_error.expect("loop sets last_error on retryable failures"))
     }
 
     /// Executes a command on the remote host, allowing non-zero exit codes.
