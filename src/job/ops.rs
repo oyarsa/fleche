@@ -13,6 +13,38 @@ use std::time::Duration;
 
 use super::display::{print_job_details, print_job_table};
 
+/// Options for displaying job logs.
+#[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct ShowLogsOptions {
+    /// Stream logs in real-time.
+    pub follow: bool,
+    /// Show only stdout.
+    pub only_stdout: bool,
+    /// Show only stderr.
+    pub only_stderr: bool,
+    /// Show only the last N lines.
+    pub tail: Option<usize>,
+    /// Strip ANSI escape codes from output.
+    pub raw: bool,
+    /// Enable verbose SSH output.
+    pub debug: bool,
+}
+
+/// Options for cleaning up jobs.
+#[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct CleanJobsOptions {
+    /// Clean all completed/failed jobs.
+    pub all: bool,
+    /// Also delete the shared workspace.
+    pub clean_workspace: bool,
+    /// Skip confirmation prompt.
+    pub skip_confirm: bool,
+    /// Enable verbose SSH output.
+    pub debug: bool,
+}
+
 /// Shows the status of a specific job or lists recent jobs.
 pub async fn show_status(
     job_id: Option<&str>,
@@ -93,16 +125,10 @@ pub fn list_tags() -> Result<()> {
 }
 
 /// Displays logs from a job's stdout or stderr.
-#[allow(clippy::fn_params_excessive_bools)]
 pub async fn show_logs(
     job_id: Option<&str>,
-    follow: bool,
-    only_stdout: bool,
-    only_stderr: bool,
-    tail: Option<usize>,
-    raw: bool,
     tags: &[(String, String)],
-    debug: bool,
+    opts: ShowLogsOptions,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -119,7 +145,7 @@ pub async fn show_logs(
             })?
     };
 
-    let ssh = SshClient::new(&job.remote_host, debug);
+    let ssh = SshClient::new(&job.remote_host, opts.debug);
 
     // Job logs are in the job directory, not workspace
     // remote_path is the workspace, job logs are in ../jobs/<job_id>/
@@ -127,15 +153,19 @@ pub async fn show_logs(
     let log_base = format!("{}/jobs/{}", base, job.id);
 
     // Determine which streams to show
-    let show_stdout = !only_stderr || only_stdout;
-    let show_stderr = !only_stdout || only_stderr;
+    let show_stdout = !opts.only_stderr || opts.only_stdout;
+    let show_stderr = !opts.only_stdout || opts.only_stderr;
     let show_both = show_stdout && show_stderr;
 
     // Strip ANSI codes if --raw is set or if stdout is not a terminal (piped)
-    let strip_ansi = raw || !std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let strip_ansi = opts.raw || !std::io::IsTerminal::is_terminal(&std::io::stdout());
 
-    if follow {
-        let log_file = if only_stderr { "job.err" } else { "job.out" };
+    if opts.follow {
+        let log_file = if opts.only_stderr {
+            "job.err"
+        } else {
+            "job.out"
+        };
         let log_path = format!("{log_base}/{log_file}");
 
         if job.slurm_id.is_some() {
@@ -149,7 +179,7 @@ pub async fn show_logs(
     } else if show_both {
         println!("{}", style("=== STDOUT ===").bold());
         let stdout_path = format!("{log_base}/job.out");
-        match ssh.cat_tail(&stdout_path, tail).await {
+        match ssh.cat_tail(&stdout_path, opts.tail).await {
             Ok(content) => print!("{}", maybe_strip_ansi(&content, strip_ansi)),
             Err(e) => eprintln!("Error reading stdout: {e}"),
         }
@@ -157,7 +187,7 @@ pub async fn show_logs(
         println!();
         println!("{}", style("=== STDERR ===").bold());
         let stderr_path = format!("{log_base}/job.err");
-        match ssh.cat_tail(&stderr_path, tail).await {
+        match ssh.cat_tail(&stderr_path, opts.tail).await {
             Ok(content) => print!("{}", maybe_strip_ansi(&content, strip_ansi)),
             Err(e) => eprintln!("Error reading stderr: {e}"),
         }
@@ -165,7 +195,7 @@ pub async fn show_logs(
         let log_file = if show_stderr { "job.err" } else { "job.out" };
         let log_path = format!("{log_base}/{log_file}");
 
-        let content = ssh.cat_tail(&log_path, tail).await?;
+        let content = ssh.cat_tail(&log_path, opts.tail).await?;
         print!("{}", maybe_strip_ansi(&content, strip_ansi));
     }
 
@@ -344,21 +374,17 @@ pub async fn cancel_jobs(
 }
 
 /// Cleans up jobs by removing them from the registry and deleting remote job files.
-#[allow(clippy::fn_params_excessive_bools)]
 pub async fn clean_jobs(
     job_id: Option<&str>,
-    all: bool,
     older_than: Option<&str>,
-    clean_workspace: bool,
-    skip_confirm: bool,
     tags: &[(String, String)],
-    debug: bool,
+    opts: CleanJobsOptions,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
     let jobs_to_clean: Vec<JobRecord> = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
-    } else if all {
+    } else if opts.all {
         // Get finished jobs, optionally filtered by tags
         if tags.is_empty() {
             registry.list_finished_jobs()?
@@ -391,13 +417,13 @@ pub async fn clean_jobs(
         return Ok(());
     };
 
-    if jobs_to_clean.is_empty() && !clean_workspace {
+    if jobs_to_clean.is_empty() && !opts.clean_workspace {
         println!("No jobs to clean.");
         return Ok(());
     }
 
     // Show jobs and confirm
-    if !jobs_to_clean.is_empty() && (jobs_to_clean.len() > 1 || all || older_than.is_some()) {
+    if !jobs_to_clean.is_empty() && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some()) {
         println!("Jobs to clean:");
         for job in &jobs_to_clean {
             println!(
@@ -410,7 +436,7 @@ pub async fn clean_jobs(
         println!();
     }
 
-    if clean_workspace {
+    if opts.clean_workspace {
         println!(
             "{}",
             style("WARNING: This will also delete the shared workspace!")
@@ -419,7 +445,7 @@ pub async fn clean_jobs(
         );
     }
 
-    if !skip_confirm && !confirm("Proceed with cleanup?")? {
+    if !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
         println!("Cancelled.");
         return Ok(());
     }
@@ -429,7 +455,7 @@ pub async fn clean_jobs(
         print!("Cleaning {}... ", job.id);
 
         // Delete job directory (logs/metadata only, not workspace)
-        let ssh = SshClient::new(&job.remote_host, debug);
+        let ssh = SshClient::new(&job.remote_host, opts.debug);
         let job_dir = format!(
             "{}/.fleche/jobs/{}",
             job.remote_path
@@ -446,9 +472,9 @@ pub async fn clean_jobs(
     }
 
     // Clean workspace if requested
-    if clean_workspace {
+    if opts.clean_workspace {
         if let Some(job) = jobs_to_clean.first() {
-            let ssh = SshClient::new(&job.remote_host, debug);
+            let ssh = SshClient::new(&job.remote_host, opts.debug);
             print!("Cleaning workspace... ");
             if let Err(e) = ssh.rm_rf(&job.remote_path).await {
                 eprintln!("warning: could not delete workspace: {e}");

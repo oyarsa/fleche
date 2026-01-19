@@ -92,10 +92,12 @@ async fn run() -> Result<()> {
                 &env_vars,
                 &tags,
                 slurm_overrides,
-                bg,
-                notify,
-                dry_run,
-                cli.debug,
+                job::RunJobOptions {
+                    background: bg,
+                    notify,
+                    dry_run,
+                    debug: cli.debug,
+                },
             )
             .await?;
         }
@@ -134,13 +136,15 @@ async fn run() -> Result<()> {
         } => {
             job::show_logs(
                 job_id.as_deref(),
-                follow,
-                stdout,
-                stderr,
-                tail,
-                raw,
                 &tags,
-                cli.debug,
+                job::ShowLogsOptions {
+                    follow,
+                    only_stdout: stdout,
+                    only_stderr: stderr,
+                    tail,
+                    raw,
+                    debug: cli.debug,
+                },
             )
             .await?;
         }
@@ -182,12 +186,14 @@ async fn run() -> Result<()> {
         } => {
             job::clean_jobs(
                 job_id.as_deref(),
-                all,
                 older_than.as_deref(),
-                workspace,
-                yes,
                 &tags,
-                cli.debug,
+                job::CleanJobsOptions {
+                    all,
+                    clean_workspace: workspace,
+                    skip_confirm: yes,
+                    debug: cli.debug,
+                },
             )
             .await?;
         }

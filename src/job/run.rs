@@ -14,6 +14,20 @@ use std::time::Duration;
 
 use super::{job_path, workspace_path};
 
+/// Options for running a job.
+#[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct RunJobOptions {
+    /// Run in background (don't stream output).
+    pub background: bool,
+    /// Send terminal notification when job completes.
+    pub notify: bool,
+    /// Print generated sbatch script without submitting.
+    pub dry_run: bool,
+    /// Enable verbose SSH output.
+    pub debug: bool,
+}
+
 /// Runs a job on the remote cluster via Slurm.
 ///
 /// This is the main entry point for job submission. It:
@@ -24,7 +38,6 @@ use super::{job_path, workspace_path};
 /// 5. Uploads the generated sbatch script
 /// 6. Submits the job to Slurm
 /// 7. Streams the job output (unless --bg is specified)
-#[allow(clippy::fn_params_excessive_bools)]
 pub async fn run_job(
     config: &Config,
     job_or_command: Option<&str>,
@@ -32,10 +45,7 @@ pub async fn run_job(
     env_overrides: &[(String, String)],
     tags: &[(String, String)],
     slurm_overrides: SlurmConfig,
-    background: bool,
-    notify: bool,
-    dry_run: bool,
-    debug: bool,
+    opts: RunJobOptions,
 ) -> Result<()> {
     // Determine if job_or_command is a job name or a command
     let (job_name, actual_command) = if let Some(joc) = job_or_command {
@@ -59,7 +69,7 @@ pub async fn run_job(
     // Generate script - runs in workspace, logs go to job directory
     let script = generate_sbatch_script(&job_id, &job, &workspace, &job_dir);
 
-    if dry_run {
+    if opts.dry_run {
         println!(
             "{}",
             style("[dry-run] Generated sbatch script:").bold().yellow()
@@ -69,7 +79,7 @@ pub async fn run_job(
         return Ok(());
     }
 
-    let ssh = SshClient::new(&config.remote.host, debug);
+    let ssh = SshClient::new(&config.remote.host, opts.debug);
 
     // Create directories
     println!(
@@ -127,13 +137,13 @@ pub async fn run_job(
     println!("{} {}", style("Job ID:").green().bold(), job_id);
     println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
 
-    if !background {
+    if !opts.background {
         println!();
         let log_path = format!("{job_dir}/job.out");
-        follow_job_logs(&config.remote.host, &slurm_id, &log_path, debug).await?;
-    } else if notify {
+        follow_job_logs(&config.remote.host, &slurm_id, &log_path, opts.debug).await?;
+    } else if opts.notify {
         // Wait for job completion in background and notify
-        wait_and_notify(&job_id, &config.remote.host, debug).await?;
+        wait_and_notify(&job_id, &config.remote.host, opts.debug).await?;
     }
 
     Ok(())
