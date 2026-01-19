@@ -23,7 +23,7 @@ test:
 
 # Run clippy linter
 clippy:
-    cargo clippy --tests -- -D warnings
+    cargo clippy --all-targets -- -D warnings
 
 # Run rustfmt checker
 fmt-check:
@@ -42,5 +42,5 @@ check-all: lint test
 # Fix formatting and clippy warnings, then run tests
 fix:
     cargo fmt
-    cargo clippy --tests --fix --allow-dirty --allow-staged -- -D warnings
+    cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
     cargo test
