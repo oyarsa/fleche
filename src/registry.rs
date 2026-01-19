@@ -382,7 +382,7 @@ impl Registry {
         }
 
         // Build regex for name filtering (applied in Rust after SQL query)
-        let name_regex = name_filter.map(|pattern| {
+        let name_regex = name_filter.and_then(|pattern| {
             // Add implicit .* around the pattern unless anchors are present
             let pattern = if pattern.starts_with('^') {
                 pattern.to_string()
@@ -394,7 +394,7 @@ impl Registry {
             } else {
                 format!("{pattern}.*")
             };
-            Regex::new(&pattern)
+            Regex::new(&pattern).ok()
         });
 
         if !conditions.is_empty() {
@@ -402,9 +402,10 @@ impl Registry {
             sql.push_str(&conditions.join(" AND "));
         }
 
-        // When filtering by name regex, don't limit in SQL (filter in Rust)
-        let sql_limit = if name_filter.is_some() {
-            i64::MAX
+        // Fetch more rows than needed when name filtering (regex applied in Rust).
+        // Use a reasonable cap to prevent loading the entire database.
+        let sql_limit: i64 = if name_filter.is_some() {
+            i64::try_from(limit.saturating_mul(10).max(1000)).unwrap_or(i64::MAX)
         } else {
             i64::try_from(limit).unwrap_or(i64::MAX)
         };
@@ -412,23 +413,15 @@ impl Registry {
         params_vec.push(Box::new(sql_limit));
 
         let mut stmt = self.conn.prepare(&sql)?;
-
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(std::convert::AsRef::as_ref).collect();
 
-        let jobs = stmt
+        let jobs: Vec<_> = stmt
             .query_map(params_refs.as_slice(), JobRecord::from_row)?
-            .filter_map(std::result::Result::ok);
-
-        // Apply regex name filter and limit in Rust
-        let jobs: Vec<_> = match name_regex {
-            Some(Ok(re)) => jobs
-                .filter(|job| re.is_match(&job.id))
-                .take(limit)
-                .collect(),
-            Some(Err(_)) => Vec::new(), // Invalid regex returns no results
-            None => jobs.collect(),
-        };
+            .filter_map(std::result::Result::ok)
+            .filter(|job| name_regex.as_ref().is_none_or(|re| re.is_match(&job.id)))
+            .take(limit)
+            .collect();
 
         self.load_tags_for_jobs(jobs)
     }
