@@ -19,7 +19,7 @@ install:
 
 # Run tests
 test:
-    cargo test
+    cargo test --quiet
 
 # Run clippy linter
 clippy:
@@ -43,4 +43,4 @@ check-all: lint test
 fix:
     cargo fmt
     cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
-    cargo test
+    cargo test --quiet
