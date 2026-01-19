@@ -473,3 +473,50 @@ fn send_notification(message: &str) {
     print!("\x1b]9;fleche: {message}\x07");
     let _ = std::io::stdout().flush();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_job_id_format() {
+        let id = generate_job_id("train");
+
+        // Starts with job name
+        assert!(id.starts_with("train-"));
+
+        // Has expected structure: name-YYYYMMDD-HHMMSS-mmm-xxxx
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 5); // train, date, time, millis, suffix
+
+        // Timestamp parts are numeric
+        assert!(parts[1].chars().all(|c| c.is_ascii_digit())); // YYYYMMDD
+        assert!(parts[2].chars().all(|c| c.is_ascii_digit())); // HHMMSS
+
+        // Suffix is 4 lowercase alphanumeric
+        assert_eq!(parts[4].len(), 4);
+        assert!(
+            parts[4]
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        );
+    }
+
+    #[test]
+    fn test_generate_job_id_uniqueness() {
+        let ids: Vec<String> = (0..100).map(|_| generate_job_id("test")).collect();
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(ids.len(), unique.len());
+    }
+
+    #[test]
+    fn test_generate_job_id_with_hyphenated_name() {
+        let id = generate_job_id("my-job");
+
+        assert!(id.starts_with("my-job-"));
+
+        // Still has correct structure despite hyphens in name
+        let suffix = id.split('-').last().unwrap();
+        assert_eq!(suffix.len(), 4);
+    }
+}
