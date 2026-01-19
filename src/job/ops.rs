@@ -296,7 +296,9 @@ pub async fn cancel_jobs(
             println!("No active jobs to cancel.");
             return Ok(());
         }
-        vec![active.into_iter().next().unwrap()]
+        let mut active = active;
+        active.truncate(1);
+        active
     };
 
     if jobs_to_cancel.is_empty() {

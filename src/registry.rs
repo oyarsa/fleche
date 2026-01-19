@@ -293,15 +293,14 @@ impl Registry {
             .query_map(params![suffix_pattern], JobRecord::from_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        match matches.len() {
-            0 => Err(FlecheError::JobIdNotFound(id.to_string())),
-            1 => {
-                let job = matches.into_iter().next().unwrap();
+        match <[_; 1]>::try_from(matches) {
+            Ok([job]) => {
                 let tags = self.get_tags(&job.id)?;
                 Ok(JobRecord { tags, ..job })
             }
-            _ => {
-                let ids: Vec<&str> = matches.iter().map(|j| j.id.as_str()).collect();
+            Err(v) if v.is_empty() => Err(FlecheError::JobIdNotFound(id.to_string())),
+            Err(v) => {
+                let ids: Vec<&str> = v.iter().map(|j| j.id.as_str()).collect();
                 Err(FlecheError::AmbiguousJobId(id.to_string(), ids.join(", ")))
             }
         }
