@@ -62,6 +62,13 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    // Change to specified directory if -C/--directory was provided
+    if let Some(ref dir) = cli.directory {
+        std::env::set_current_dir(dir).map_err(|e| {
+            anyhow::anyhow!("Cannot change to directory '{}': {}", dir.display(), e)
+        })?;
+    }
+
     match cli.command {
         Commands::Run {
             job_or_command,

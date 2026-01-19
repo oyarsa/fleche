@@ -25,6 +25,10 @@ fn long_version() -> &'static str {
 #[command(about = "Remote job runner for Slurm clusters")]
 #[command(version, long_version = long_version())]
 pub struct Cli {
+    /// Run as if fleche was started in this directory
+    #[arg(short = 'C', long = "directory", global = true, value_name = "PATH")]
+    pub directory: Option<std::path::PathBuf>,
+
     /// Enable verbose SSH output for debugging connection issues
     #[arg(long, global = true)]
     pub debug: bool,
