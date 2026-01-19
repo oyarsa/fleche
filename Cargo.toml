@@ -25,3 +25,11 @@ shellexpand = "3"
 indexmap = { version = "2", features = ["serde"] }
 dotenvy = "0.15"
 globset = "0.4"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+too_many_lines = "allow"
+too_many_arguments = "allow"
+format_push_string = "allow"

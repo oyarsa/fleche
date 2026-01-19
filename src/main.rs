@@ -17,13 +17,6 @@
 //! - [`ssh`]: SSH client for remote command execution
 //! - [`sync`]: File synchronization using rsync
 
-#![warn(clippy::all, clippy::pedantic)]
-#![allow(
-    clippy::too_many_lines,
-    clippy::too_many_arguments,
-    clippy::format_push_string
-)]
-
 mod cli;
 mod config;
 mod error;
