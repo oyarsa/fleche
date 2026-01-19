@@ -449,6 +449,14 @@ These can be set in config or passed via CLI:
 - rsync installed locally and on the cluster
 - Slurm scheduler on the remote cluster
 
+### Platform Support
+
+| Platform | Remote Jobs | Local Jobs |
+|----------|-------------|------------|
+| Linux | Full | Full |
+| macOS | Full | Full |
+| Windows + Git Bash/WSL | Full | Foreground only |
+
 ## Tips
 
 - Use `--dry-run` to preview the sbatch script before submitting

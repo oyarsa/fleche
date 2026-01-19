@@ -10,6 +10,24 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// Creates a command that runs the given string through the system shell.
+///
+/// On Unix, uses `sh -c`. On Windows, uses `cmd /c`.
+pub fn shell_command(command: &str) -> Command {
+    #[cfg(unix)]
+    {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(command);
+        cmd
+    }
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/c").arg(command);
+        cmd
+    }
+}
+
 /// Returns the local job directory path for a given job ID.
 ///
 /// Creates the directory if it doesn't exist.
@@ -43,9 +61,7 @@ pub fn run_foreground(
     let mut stderr_file = File::create(&stderr_path)?;
 
     // Build and run the command
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
+    let mut child = shell_command(command)
         .current_dir(project_path)
         .envs(env.iter())
         .stdout(Stdio::piped())

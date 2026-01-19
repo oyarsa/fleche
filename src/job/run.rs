@@ -15,8 +15,11 @@ use std::time::Duration;
 
 use super::{job_path, workspace_path};
 
-/// Checks that `sh` is available for local command execution.
-fn require_sh() -> Result<()> {
+/// Checks that the system shell is available for local command execution.
+///
+/// On Unix, checks for `sh`. On Windows, `cmd.exe` is always available.
+fn require_shell() -> Result<()> {
+    #[cfg(unix)]
     if std::process::Command::new("sh")
         .arg("-c")
         .arg("true")
@@ -179,7 +182,7 @@ fn run_job_locally(
     tags: &[(String, String)],
     opts: &RunJobOptions,
 ) -> Result<()> {
-    require_sh()?;
+    require_shell()?;
 
     let job_id = generate_job_id(&job.name);
 
@@ -243,7 +246,15 @@ fn run_job_locally(
     println!();
 
     if opts.background {
+        #[cfg(windows)]
+        return Err(FlecheError::MissingDependency(
+            "Background local jobs (--bg) are not supported on Windows.\n  \
+             Use foreground mode or run in WSL."
+                .to_string(),
+        ));
+
         // Run in background
+        #[cfg(unix)]
         let pid = local::run_background(&config.project_path, &job_id, &job.command, &job.env)?;
         println!("{} {}", style("PID:").green().bold(), pid);
         println!(
@@ -548,9 +559,7 @@ fn exec_command_locally(
     command: &str,
     env_overrides: &[(String, String)],
 ) -> Result<()> {
-    use std::process::Command;
-
-    require_sh()?;
+    require_shell()?;
 
     println!(
         "{} Executing command locally...",
@@ -558,8 +567,8 @@ fn exec_command_locally(
     );
     println!();
 
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(command).current_dir(&config.project_path);
+    let mut cmd = local::shell_command(command);
+    cmd.current_dir(&config.project_path);
 
     // Add environment variables
     for (k, v) in env_overrides {
