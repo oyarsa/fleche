@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.1.0] - 2026-01-19
+
+### Added
+- `--dry-run` flag for `fleche download` to preview what would be downloaded
+  - Shows files that match filters without actually downloading
+  - Passes through to rsync's dry-run for accurate transfer preview
+
+### Changed
+- `--filter` now searches inside directories for matching files
+  - Previously matched only against configured output path names
+  - Now lists files recursively on remote and filters individual files
+  - Example: `--filter "*.json"` finds JSON files inside `outputs/` directory
+
 ## [6.0.1] - 2026-01-19
 
 ### Fixed
