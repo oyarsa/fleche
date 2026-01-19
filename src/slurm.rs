@@ -247,6 +247,45 @@ pub async fn cancel_job(ssh: &SshClient, slurm_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Resource usage statistics from a completed Slurm job.
+#[derive(Debug, Default)]
+pub struct JobResourceUsage {
+    /// Wall clock time (e.g., "01:23:45")
+    pub elapsed: String,
+    /// Total CPU time used (e.g., "02:30:00")
+    pub total_cpu: String,
+    /// Maximum memory used (e.g., "4.5G")
+    pub max_rss: String,
+    /// Allocated resources (e.g., "billing=8,cpu=4,gres/gpu=1,mem=16G")
+    pub alloc_tres: String,
+}
+
+/// Queries resource usage for a Slurm job using sacct.
+///
+/// Returns usage statistics for completed jobs. Returns default values
+/// if the job hasn't completed or sacct data is unavailable.
+pub async fn get_job_resource_usage(ssh: &SshClient, slurm_id: &str) -> Result<JobResourceUsage> {
+    let escaped_id = shell_escape(slurm_id);
+
+    // Query sacct for resource usage (use .batch suffix for actual job step stats)
+    let output = ssh
+        .exec(&format!(
+            "sacct -j {escaped_id}.batch -n -o Elapsed,TotalCPU,MaxRSS,AllocTRES --parsable2 2>/dev/null || \
+             sacct -j {escaped_id} -n -o Elapsed,TotalCPU,MaxRSS,AllocTRES --parsable2 | head -1"
+        ))
+        .await?;
+
+    let line = output.lines().next().unwrap_or("");
+    let fields: Vec<&str> = line.split('|').collect();
+
+    Ok(JobResourceUsage {
+        elapsed: fields.first().unwrap_or(&"").to_string(),
+        total_cpu: fields.get(1).unwrap_or(&"").to_string(),
+        max_rss: fields.get(2).unwrap_or(&"").to_string(),
+        alloc_tres: fields.get(3).unwrap_or(&"").to_string(),
+    })
+}
+
 /// Creates a [`SlurmConfig`] from CLI arguments.
 ///
 /// Used to pass command-line overrides for Slurm options.

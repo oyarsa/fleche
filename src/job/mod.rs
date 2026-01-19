@@ -17,7 +17,7 @@ use crate::config::Config;
 // Re-export public API
 pub use ops::{
     CleanJobsOptions, ShowLogsOptions, cancel_jobs, clean_jobs, download_outputs, list_tags,
-    ping_cluster, show_logs, show_status, wait_for_job,
+    ping_cluster, show_logs, show_stats, show_status, wait_for_job,
 };
 pub use run::{RunJobOptions, exec_command, rerun_job, run_job};
 

@@ -322,6 +322,10 @@ async fn run() -> Result<()> {
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "fleche", &mut std::io::stdout());
         }
+
+        Commands::Stats { job_id, last, tags } => {
+            job::show_stats(job_id.as_deref(), last, &tags, cli.debug).await?;
+        }
     }
 
     Ok(())

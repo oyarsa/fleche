@@ -328,6 +328,23 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+
+    /// Show resource usage statistics for jobs
+    ///
+    /// Queries Slurm's sacct to show elapsed time, CPU time, memory usage,
+    /// and allocated resources for completed jobs.
+    Stats {
+        /// Job ID to show stats for (default: most recent job)
+        job_id: Option<String>,
+
+        /// Show stats for last N jobs
+        #[arg(long, short = 'n', default_value = "1")]
+        last: usize,
+
+        /// Filter by tag (repeatable)
+        #[arg(long = "tag", value_parser = parse_key_value)]
+        tags: Vec<(String, String)>,
+    },
 }
 
 /// Parses a KEY=VALUE string into a tuple.

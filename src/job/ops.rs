@@ -4,7 +4,7 @@ use crate::config::{Config, ResolvedJob};
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
-use crate::slurm::{cancel_job, get_job_status};
+use crate::slurm::{cancel_job, get_job_resource_usage, get_job_status};
 use crate::ssh::SshClient;
 use crate::sync::{
     DownloadOptions, download_outputs as sync_download_outputs, download_path as sync_download_path,
@@ -837,7 +837,158 @@ pub async fn ping_cluster(config: &Config, debug: bool) -> Result<()> {
     Ok(())
 }
 
+/// Shows resource usage statistics for completed jobs.
+///
+/// Queries Slurm's sacct to display elapsed time, CPU time, memory usage,
+/// and allocated resources for jobs.
+pub async fn show_stats(
+    job_id: Option<&str>,
+    last: usize,
+    tags: &[(String, String)],
+    debug: bool,
+) -> Result<()> {
+    let registry = Registry::open()?;
+
+    // Get jobs to show stats for
+    let jobs: Vec<JobRecord> = if let Some(id) = job_id {
+        vec![registry.get_job(id)?]
+    } else {
+        registry.list_jobs(None, &[], None, tags, last)?
+    };
+
+    if jobs.is_empty() {
+        println!("No jobs found.");
+        return Ok(());
+    }
+
+    // Filter to remote jobs with slurm IDs (local jobs don't have sacct stats)
+    let remote_jobs: Vec<_> = jobs
+        .iter()
+        .filter(|j| j.remote_host != "local" && j.slurm_id.is_some())
+        .collect();
+
+    if remote_jobs.is_empty() {
+        println!("No remote Slurm jobs found. Stats are only available for Slurm jobs.");
+        return Ok(());
+    }
+
+    // Print header
+    println!(
+        "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
+        style("JOB ID").bold(),
+        style("STATUS").bold(),
+        style("ELAPSED").bold(),
+        style("CPU TIME").bold(),
+        style("MAX MEM").bold(),
+        style("RESOURCES").bold()
+    );
+    println!("{}", "-".repeat(80));
+
+    for job in remote_jobs {
+        let slurm_id = job.slurm_id.as_ref().unwrap();
+        let ssh = SshClient::new(&job.remote_host, debug);
+
+        match get_job_resource_usage(&ssh, slurm_id).await {
+            Ok(usage) => {
+                let status_styled = match job.status {
+                    JobStatus::Completed => style(job.status.to_string()).green(),
+                    JobStatus::Failed => style(job.status.to_string()).red(),
+                    JobStatus::Cancelled => style(job.status.to_string()).yellow(),
+                    JobStatus::Running => style(job.status.to_string()).cyan(),
+                    JobStatus::Pending => style(job.status.to_string()).dim(),
+                };
+
+                // Parse allocated resources for cleaner display
+                let resources = parse_alloc_tres(&usage.alloc_tres);
+
+                println!(
+                    "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
+                    truncate_id(&job.id),
+                    status_styled,
+                    if usage.elapsed.is_empty() {
+                        "-".to_string()
+                    } else {
+                        usage.elapsed
+                    },
+                    if usage.total_cpu.is_empty() {
+                        "-".to_string()
+                    } else {
+                        usage.total_cpu
+                    },
+                    if usage.max_rss.is_empty() {
+                        "-".to_string()
+                    } else {
+                        usage.max_rss
+                    },
+                    resources
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "{:<12} {} ({})",
+                    truncate_id(&job.id),
+                    style("error").red(),
+                    e
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // --- Private helper functions ---
+
+/// Truncates a job ID for display (shows first 10 chars).
+fn truncate_id(id: &str) -> &str {
+    if id.len() <= 10 { id } else { &id[..10] }
+}
+
+/// Parses the `AllocTRES` string into a human-readable format.
+///
+/// Input: "billing=8,cpu=4,gres/gpu=1,mem=16G,node=1"
+/// Output: "4 CPU, 1 GPU, 16G mem"
+fn parse_alloc_tres(tres: &str) -> String {
+    if tres.is_empty() {
+        return "-".to_string();
+    }
+
+    let mut cpus = None;
+    let mut gpus = None;
+    let mut mem = None;
+
+    for part in tres.split(',') {
+        let mut kv = part.splitn(2, '=');
+        let key = kv.next().unwrap_or("");
+        let value = kv.next().unwrap_or("");
+
+        match key {
+            "cpu" => cpus = Some(value.to_string()),
+            "gres/gpu" => gpus = Some(value.to_string()),
+            "mem" => mem = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    let mut parts = Vec::new();
+    if let Some(c) = cpus {
+        parts.push(format!("{c} CPU"));
+    }
+    if let Some(g) = gpus {
+        if g != "0" {
+            parts.push(format!("{g} GPU"));
+        }
+    }
+    if let Some(m) = mem {
+        parts.push(format!("{m} mem"));
+    }
+
+    if parts.is_empty() {
+        "-".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
 
 /// Refreshes the status of all pending/running jobs from Slurm or local process status.
 async fn refresh_active_job_statuses(registry: &Registry, debug: bool) -> Result<()> {
