@@ -245,17 +245,6 @@ impl Registry {
         Ok(())
     }
 
-    /// Updates the Slurm job ID for a job.
-    #[allow(dead_code)]
-    pub fn update_slurm_id(&self, id: &str, slurm_id: &str) -> Result<()> {
-        let now = Utc::now();
-        self.conn.execute(
-            "UPDATE jobs SET slurm_id = ?1, updated_at = ?2 WHERE id = ?3",
-            params![slurm_id, now.to_rfc3339(), id],
-        )?;
-        Ok(())
-    }
-
     /// Marks a job's outputs as synced.
     pub fn set_outputs_synced(&self, id: &str) -> Result<()> {
         let now = Utc::now();

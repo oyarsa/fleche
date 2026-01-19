@@ -451,30 +451,6 @@ impl SshClient {
 
         Ok(child)
     }
-
-    /// Checks if a file exists on the remote host.
-    #[allow(dead_code)]
-    pub async fn file_exists(&self, path: &str) -> Result<bool> {
-        let (success, _, _) = self
-            .exec_allow_failure(&format!("test -f {}", shell_escape(path)))
-            .await?;
-        Ok(success)
-    }
-
-    /// Creates a symbolic link on the remote host.
-    ///
-    /// If a file or link already exists at `link_path`, it is removed first.
-    #[allow(dead_code)]
-    pub async fn symlink(&self, target: &str, link_path: &str) -> Result<()> {
-        self.exec(&format!(
-            "rm -rf {} && ln -s {} {}",
-            shell_escape(link_path),
-            shell_escape(target),
-            shell_escape(link_path)
-        ))
-        .await?;
-        Ok(())
-    }
 }
 
 /// Escapes a string for safe use in a shell command.
