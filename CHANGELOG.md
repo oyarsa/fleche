@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.4.0] - 2026-01-19
+
+### Added
+- Shell completions via clap (`fleche completions bash/zsh/fish`)
+- Job dependencies with `--after` flag to run after another job completes
+  - For Slurm jobs, uses `--dependency=afterok:<slurm_id>`
+  - For local jobs, checks completion status before starting
+- Resource statistics command (`fleche stats`) showing elapsed time, CPU time, max memory via sacct
+- Automatic retries with exponential backoff (`--retry N`)
+  - Delays: 30s, 60s, 120s, 240s...
+  - Each retry creates a new job ID
+  - Works for both Slurm and local jobs (foreground only)
+- Job notes for annotations (`--note` flag and `fleche note` subcommand)
+  - Add note at job creation: `fleche run train --note "testing new LR"`
+  - Add/update note later: `fleche note <job-id> "note text"`
+  - View note: `fleche note <job-id>` or `fleche status <job-id>`
+
 ## [6.3.0] - 2026-01-20
 
 ### Added
