@@ -40,6 +40,7 @@ Beyond what clippy and rustfmt enforce:
 - Prefer immutable data structures
 - Think functional programming over object-oriented/procedural
 - Extract testable pure logic from impure functions (I/O, network, etc.)
+- Avoid `.unwrap()` in production code; use `.expect("reason")` if a panic is truly justified, or propagate errors with `?`
 
 ## Testing
 
