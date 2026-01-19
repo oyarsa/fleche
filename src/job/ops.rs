@@ -848,42 +848,6 @@ fn build_filter_glob_sets(filters: &[String]) -> Result<(Option<GlobSet>, Option
     Ok((include_set, exclude_set))
 }
 
-/// Filters outputs based on include/exclude glob sets.
-///
-/// Semantics:
-/// - No filters: return all outputs
-/// - Include patterns only: output must match at least one
-/// - Exclude patterns only: output must not match any
-/// - Both: output must match an include AND not match any exclude
-fn filter_outputs(
-    outputs: &[String],
-    includes: Option<&GlobSet>,
-    excludes: Option<&GlobSet>,
-) -> Vec<String> {
-    outputs
-        .iter()
-        .filter(|output| {
-            // Strip trailing slash for matching (directories like "output/" should match "output/**")
-            let path = output.trim_end_matches('/');
-
-            // Check include patterns
-            let matches_include = match includes {
-                Some(set) => set.is_match(path),
-                None => true, // No includes means all match
-            };
-
-            // Check exclude patterns
-            let matches_exclude = match excludes {
-                Some(set) => set.is_match(path),
-                None => false, // No excludes means none excluded
-            };
-
-            matches_include && !matches_exclude
-        })
-        .cloned()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -937,72 +901,108 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_outputs_no_filters() {
-        let outputs = vec!["a.json".to_string(), "b.csv".to_string()];
-        let result = filter_outputs(&outputs, None, None);
-        assert_eq!(result, outputs);
+    fn test_matches_filters_no_filters() {
+        assert!(matches_filters("a.json", None, None));
+        assert!(matches_filters("b.csv", None, None));
     }
 
     #[test]
-    fn test_filter_outputs_include_only() {
-        let outputs = vec![
-            "predictions.json".to_string(),
-            "model.pt".to_string(),
-            "data.csv".to_string(),
-        ];
+    fn test_matches_filters_include_only() {
         let (includes, excludes) = build_filter_glob_sets(&["*.json".to_string()]).unwrap();
-        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
-        assert_eq!(result, vec!["predictions.json"]);
+        assert!(matches_filters(
+            "predictions.json",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(!matches_filters(
+            "model.pt",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(!matches_filters(
+            "data.csv",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
     }
 
     #[test]
-    fn test_filter_outputs_multiple_includes() {
-        let outputs = vec![
-            "predictions.json".to_string(),
-            "model.pt".to_string(),
-            "data.csv".to_string(),
-        ];
+    fn test_matches_filters_multiple_includes() {
         let (includes, excludes) =
             build_filter_glob_sets(&["*.json".to_string(), "*.csv".to_string()]).unwrap();
-        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
-        assert_eq!(result, vec!["predictions.json", "data.csv"]);
+        assert!(matches_filters(
+            "predictions.json",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(!matches_filters(
+            "model.pt",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(matches_filters(
+            "data.csv",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
     }
 
     #[test]
-    fn test_filter_outputs_exclude_only() {
-        let outputs = vec![
-            "predictions.json".to_string(),
-            "checkpoints/model.pt".to_string(),
-            "checkpoints/final.pt".to_string(),
-        ];
+    fn test_matches_filters_exclude_only() {
         let (includes, excludes) =
             build_filter_glob_sets(&["!checkpoints/**".to_string()]).unwrap();
-        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
-        assert_eq!(result, vec!["predictions.json"]);
+        assert!(matches_filters(
+            "predictions.json",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(!matches_filters(
+            "checkpoints/model.pt",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(!matches_filters(
+            "checkpoints/final.pt",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
     }
 
     #[test]
-    fn test_filter_outputs_include_and_exclude() {
-        let outputs = vec![
-            "results/predictions.json".to_string(),
-            "results/debug.json".to_string(),
-            "checkpoints/model.json".to_string(),
-        ];
+    fn test_matches_filters_include_and_exclude() {
         let (includes, excludes) =
             build_filter_glob_sets(&["*.json".to_string(), "!checkpoints/**".to_string()]).unwrap();
-        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
-        assert_eq!(
-            result,
-            vec!["results/predictions.json", "results/debug.json"]
-        );
+        assert!(matches_filters(
+            "results/predictions.json",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(matches_filters(
+            "results/debug.json",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(!matches_filters(
+            "checkpoints/model.json",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
     }
 
     #[test]
-    fn test_filter_outputs_directory_with_trailing_slash() {
-        let outputs = vec!["output/".to_string(), "checkpoints/".to_string()];
+    fn test_matches_filters_directory_with_trailing_slash() {
         let (includes, excludes) = build_filter_glob_sets(&["output".to_string()]).unwrap();
-        let result = filter_outputs(&outputs, includes.as_ref(), excludes.as_ref());
-        assert_eq!(result, vec!["output/"]);
+        // Note: matches_filters doesn't strip trailing slash, that's handled by caller
+        assert!(matches_filters(
+            "output",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
+        assert!(!matches_filters(
+            "checkpoints",
+            includes.as_ref(),
+            excludes.as_ref()
+        ));
     }
 
     #[test]
