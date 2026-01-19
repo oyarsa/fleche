@@ -311,6 +311,66 @@ fleche download           # Download results from eval
 
 No need for explicit dependencies - files persist in the shared workspace.
 
+### Job Dependencies
+
+Use `--after` to run a job only after another completes successfully:
+
+```bash
+# Submit training job
+fleche run train --bg
+# Job ID: train-20260119-120000-abc1
+
+# Submit eval to run after train completes
+fleche run eval --after abc1
+```
+
+The second job waits in the Slurm queue until the dependency finishes with exit code 0.
+
+### Automatic Retries
+
+Use `--retry` to automatically retry failed jobs with exponential backoff:
+
+```bash
+# Retry up to 3 times on failure (30s, 60s, 120s delays)
+fleche run train --retry 3
+```
+
+Each retry creates a new job ID. Works for both Slurm and local jobs (foreground only).
+
+### Job Notes
+
+Annotate jobs with notes for later reference:
+
+```bash
+# Add note when submitting
+fleche run train --note "testing new learning rate"
+
+# Add or update note later
+fleche note <job-id> "increased batch size to 64"
+
+# View note
+fleche note <job-id>
+
+# Notes also shown in fleche status <job-id>
+```
+
+### Resource Statistics
+
+View resource usage for completed Slurm jobs:
+
+```bash
+# Stats for most recent job
+fleche stats
+
+# Stats for last 5 jobs
+fleche stats -n 5
+
+# Stats for specific job
+fleche stats <job-id>
+```
+
+Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
+
 ## Commands Reference
 
 | Command | Description |
@@ -339,9 +399,13 @@ No need for explicit dependencies - files persist in the shared workspace.
 | `fleche tags` | List all unique tags across jobs |
 | `fleche wait [job-id]` | Wait for job to complete |
 | `fleche wait --notify` | Wait and send notification when done |
+| `fleche stats [job-id]` | Show resource usage (time, CPU, memory) |
+| `fleche stats -n 5` | Show stats for last N jobs |
+| `fleche note <job-id> [text]` | View or set job note |
 | `fleche ping` | Check Slurm cluster health |
 | `fleche init` | Create starter config |
 | `fleche check` | Validate config |
+| `fleche completions <shell>` | Generate shell completions (bash/zsh/fish) |
 
 ## Slurm Options
 
@@ -393,4 +457,7 @@ All jobs share a workspace directory:
 - Ctrl+C during streaming disconnects but doesn't cancel the job
 - Use `fleche exec` for quick tests without Slurm queue wait
 - Jobs share workspace, so chained jobs can read each other's outputs
+- Use `--retry` for flaky jobs that may fail due to transient issues
+- Use `--note` to document experiment parameters for future reference
+- Enable shell completions: `fleche completions bash >> ~/.bashrc`
 "#;

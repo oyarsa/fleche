@@ -11,8 +11,13 @@ A CLI tool for submitting and managing jobs on remote Slurm clusters via SSH. El
 - **Direct SSH execution** for quick tests without Slurm
 - **Local execution** for running jobs on your machine
 - **Job chaining** via shared workspace
+- **Job dependencies** with `--after` for sequential workflows
+- **Automatic retries** with exponential backoff
 - **Parameterized jobs** via environment variable overrides
 - **Job tagging** for organization and filtering
+- **Job notes** for annotating experiments
+- **Resource statistics** via sacct integration
+- **Shell completions** for bash, zsh, and fish
 
 ## Installation
 
@@ -159,9 +164,13 @@ fleche/
 | `fleche cancel [job-id]`     | Cancel a job (defaults to most recent active)  |
 | `fleche clean [job-id]`      | Remove job and remote files                    |
 | `fleche tags`                | List all unique tags across jobs               |
+| `fleche stats [job-id]`      | Show resource usage (time, CPU, memory)        |
+| `fleche note <job-id> [text]`| View or set job note                           |
+| `fleche wait [job-id]`       | Wait for job to complete                       |
 | `fleche init`                | Create starter config                          |
 | `fleche check`               | Validate config                                |
 | `fleche guide`               | Print comprehensive usage guide                |
+| `fleche completions <shell>` | Generate shell completions                     |
 
 All commands except `run`, `rerun`, `exec`, `tags`, `init`, `check`, and `guide` support `--tag` for filtering.
 
@@ -174,7 +183,10 @@ Options:
   --command <cmd>       Override or provide command
   --env <KEY=VALUE>     Set environment variable (repeatable)
   --tag <KEY=VALUE>     Add tag for filtering (repeatable)
+  --note <text>         Add a note/annotation to the job
   --host <host>         Run on specific host ("local" for local execution)
+  --after <job-id>      Run after another job completes successfully
+  --retry <n>           Retry up to n times on failure (exponential backoff)
   --partition <name>    Override Slurm partition
   --time <duration>     Override wall time
   --gpus <n>            Override GPU count
@@ -465,6 +477,9 @@ These can be set in config or passed via CLI:
 - Ctrl+C during streaming disconnects but doesn't cancel the job
 - Use `fleche exec` for quick tests without Slurm queue wait
 - Jobs share workspace, so chained jobs can read each other's outputs
+- Use `--retry` for flaky jobs that may fail due to transient issues
+- Use `--note` to document experiment parameters for future reference
+- Enable shell completions: `fleche completions bash >> ~/.bashrc`
 - The job registry is at `~/.config/fleche/jobs.db`
 
 ## License
