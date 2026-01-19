@@ -516,7 +516,7 @@ mod tests {
         assert!(id.starts_with("my-job-"));
 
         // Still has correct structure despite hyphens in name
-        let suffix = id.split('-').last().unwrap();
+        let suffix = id.split('-').next_back().unwrap();
         assert_eq!(suffix.len(), 4);
     }
 }

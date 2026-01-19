@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_parse_rsync_output_with_bytes() {
-        let output = r#"
+        let output = r"
 sending incremental file list
 ./
 src/
@@ -255,7 +255,7 @@ Total bytes received: 234
 
 sent 15,678 bytes  received 234 bytes  31,824.00 bytes/sec
 total size is 125,432  speedup is 7.88
-"#;
+";
 
         let stats = SyncStats::parse_from_rsync_output(output);
         assert_eq!(stats.bytes_sent, 15678);
