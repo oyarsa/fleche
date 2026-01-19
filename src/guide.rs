@@ -267,11 +267,15 @@ fleche logs --follow
 # Pull outputs while job is still running
 fleche download --partial
 
-# Download only specific file types
+# Download only specific file types (searches inside directories)
 fleche download --filter "*.json" --filter "*.csv"
 
 # Download everything except checkpoints
 fleche download --filter "!checkpoints/**"
+
+# Preview what would be downloaded without actually downloading
+fleche download --dry-run
+fleche download --dry-run --filter "*.json"
 ```
 
 ### Job Chaining
@@ -302,7 +306,8 @@ No need for explicit dependencies - files persist in the shared workspace.
 | `fleche logs --raw` | Strip ANSI codes (auto when piped) |
 | `fleche logs --tag <k=v>` | Logs from most recent job with tag |
 | `fleche download [job-id]` | Pull output files (defaults to most recent) |
-| `fleche download --filter <pat>` | Filter outputs by glob (repeatable, `!` to exclude) |
+| `fleche download --filter <pat>` | Filter by glob, searches inside directories (`!` to exclude) |
+| `fleche download --dry-run` | Preview what would be downloaded |
 | `fleche download --tag <k=v>` | Download from most recent job with tag |
 | `fleche cancel [job-id]` | Cancel a job (defaults to most recent active) |
 | `fleche cancel --all [--tag <k=v>]` | Cancel all (or tagged) active jobs |

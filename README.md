@@ -310,11 +310,14 @@ fleche download --partial
 # Download a specific path
 fleche download --path results/metrics.json
 
-# Download only specific file types
+# Download only specific file types (searches inside directories)
 fleche download --filter "*.json" --filter "*.csv"
 
 # Download everything except checkpoints
 fleche download --filter "!checkpoints/**"
+
+# Preview what would be downloaded
+fleche download --dry-run
 ```
 
 ### Cleanup
