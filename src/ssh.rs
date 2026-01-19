@@ -39,16 +39,25 @@ fn ssh_log_path() -> Option<PathBuf> {
 /// Creates the directory if it doesn't exist.
 ///
 /// Uses `/tmp/fleche-ssh-<uid>/` to keep paths short (Unix sockets have ~104 byte limit).
+#[cfg(unix)]
 pub fn ssh_socket_dir() -> PathBuf {
-    let uid = unsafe { libc::getuid() };
+    use std::os::unix::fs::PermissionsExt;
+    let uid = nix::unistd::getuid();
     let dir = PathBuf::from(format!("/tmp/fleche-ssh-{uid}"));
     let _ = std::fs::create_dir_all(&dir);
     // Set permissions to owner-only (0700)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    }
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    dir
+}
+
+/// Returns the directory for SSH `ControlMaster` sockets.
+/// Creates the directory if it doesn't exist.
+#[cfg(not(unix))]
+pub fn ssh_socket_dir() -> PathBuf {
+    let dir = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("fleche-ssh");
+    let _ = std::fs::create_dir_all(&dir);
     dir
 }
 
@@ -134,6 +143,8 @@ impl SshClient {
     /// Kills the `ControlMaster` socket for this host, forcing a fresh connection.
     ///
     /// This is useful when a socket becomes stale (e.g., after network issues).
+    /// No-op on non-Unix platforms where `ControlMaster` is not used.
+    #[cfg(unix)]
     async fn kill_control_socket(&self) {
         let socket_dir = ssh_socket_dir();
         let control_path = socket_dir.join("%r@%h-%p");
@@ -163,7 +174,11 @@ impl SshClient {
         );
     }
 
-    /// Returns the base SSH arguments including `ControlMaster` for connection multiplexing.
+    /// No-op on non-Unix platforms.
+    #[cfg(not(unix))]
+    async fn kill_control_socket(&self) {}
+
+    /// Returns the base SSH arguments including `ControlMaster` for connection multiplexing (Unix only).
     fn ssh_args(&self) -> Vec<String> {
         let mut args = vec![
             "-o".to_string(),
@@ -180,17 +195,20 @@ impl SshClient {
             "BatchMode=yes".to_string(),
         ];
 
-        // Add `ControlMaster` options for connection multiplexing
-        let socket_dir = ssh_socket_dir();
-        let control_path = socket_dir.join("%r@%h-%p");
-        args.extend([
-            "-o".to_string(),
-            "ControlMaster=auto".to_string(),
-            "-o".to_string(),
-            format!("ControlPath=\"{}\"", control_path.display()),
-            "-o".to_string(),
-            "ControlPersist=600".to_string(),
-        ]);
+        // Add `ControlMaster` options for connection multiplexing (Unix only)
+        #[cfg(unix)]
+        {
+            let socket_dir = ssh_socket_dir();
+            let control_path = socket_dir.join("%r@%h-%p");
+            args.extend([
+                "-o".to_string(),
+                "ControlMaster=auto".to_string(),
+                "-o".to_string(),
+                format!("ControlPath=\"{}\"", control_path.display()),
+                "-o".to_string(),
+                "ControlPersist=600".to_string(),
+            ]);
+        }
 
         // Add verbose flag only in debug mode
         if self.debug {

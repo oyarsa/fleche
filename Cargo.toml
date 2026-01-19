@@ -19,12 +19,15 @@ indicatif = "0.17"
 console = "0.15"
 thiserror = "1"
 anyhow = "1"
-libc = "0.2"
 regex = "1"
 shellexpand = "3"
 indexmap = { version = "2", features = ["serde"] }
 dotenvy = "0.15"
 globset = "0.4"
+sysinfo = "0.32"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["user"] }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

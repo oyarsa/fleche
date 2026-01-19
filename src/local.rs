@@ -197,8 +197,9 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<JobStat
 }
 
 /// Cancels a local job by sending SIGTERM to the process.
-#[allow(clippy::cast_possible_wrap)]
 pub fn cancel_local_job(project_path: &Path, job_id: &str) -> Result<bool> {
+    use sysinfo::{Pid, Signal, System};
+
     let job_dir = local_job_dir(project_path, job_id);
     let pid_path = job_dir.join("pid");
     let exit_code_path = job_dir.join("exit_code");
@@ -213,27 +214,15 @@ pub fn cancel_local_job(project_path: &Path, job_id: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    // Send SIGTERM
-    #[cfg(unix)]
-    {
-        // SAFETY: kill() is a standard POSIX function
-        let result = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-        if result == 0 {
-            // Write exit code to indicate cancellation
-            // Use 143 which is 128 + 15 (SIGTERM)
+    let sys = System::new_all();
+    if let Some(process) = sys.process(Pid::from_u32(pid)) {
+        // Send SIGTERM on Unix, TerminateProcess on Windows
+        let killed = process.kill_with(Signal::Term).unwrap_or(false);
+        if killed {
+            // Write exit code to indicate cancellation (143 = 128 + 15 SIGTERM)
             fs::write(&exit_code_path, "143")?;
             return Ok(true);
         }
-    }
-
-    #[cfg(not(unix))]
-    {
-        // On non-Unix systems, try to kill the process another way
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .output();
-        fs::write(&exit_code_path, "1")?;
-        return Ok(true);
     }
 
     Ok(false)
@@ -284,20 +273,10 @@ pub fn clean_local_job(project_path: &Path, job_id: &str) -> Result<()> {
 }
 
 /// Checks if a process with the given PID is still running.
-#[allow(clippy::cast_possible_wrap)]
 fn is_process_running(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        // SAFETY: kill() with signal 0 checks if process exists without sending a signal
-        // Cast is safe as PIDs are always positive and fit in i32
-        unsafe { libc::kill(pid as i32, 0) == 0 }
-    }
-
-    #[cfg(not(unix))]
-    {
-        // Fallback for non-Unix systems - try reading /proc
-        Path::new(&format!("/proc/{pid}")).exists()
-    }
+    use sysinfo::{Pid, System};
+    let sys = System::new_all();
+    sys.process(Pid::from_u32(pid)).is_some()
 }
 
 /// Shell-escapes a string for safe use in shell commands.
