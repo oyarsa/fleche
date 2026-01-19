@@ -167,25 +167,40 @@ pub async fn sync_inputs_to_workspace(
     })
 }
 
+/// Options for downloading outputs.
+#[derive(Default)]
+pub struct DownloadOptions {
+    /// If true, show what would be downloaded without actually downloading.
+    pub dry_run: bool,
+}
+
 /// Downloads outputs from the remote workspace to local.
 pub async fn download_outputs(
     host: &str,
     workspace: &str,
     outputs: &[String],
     local_base: &Path,
+    options: &DownloadOptions,
 ) -> Result<()> {
     for output in outputs {
         let remote_path = format!("{host}:{workspace}/{output}");
         let local_path = local_base.join(output);
 
-        // Ensure local parent directory exists
-        if let Some(parent) = local_path.parent() {
-            std::fs::create_dir_all(parent)?;
+        // Ensure local parent directory exists (even for dry-run, rsync needs it)
+        if !options.dry_run {
+            if let Some(parent) = local_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
         }
 
         let mut cmd = Command::new("rsync");
         cmd.args(["-e", &rsync_ssh_cmd()]);
         cmd.args(["-avz"]);
+
+        if options.dry_run {
+            cmd.arg("--dry-run");
+        }
+
         cmd.arg(&remote_path);
 
         // If path ends with /, it's a directory
@@ -199,6 +214,12 @@ pub async fn download_outputs(
             .output()
             .await
             .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
+
+        if options.dry_run {
+            // Print rsync's dry-run output
+            let stdout = String::from_utf8_lossy(&output_result.stdout);
+            print!("{stdout}");
+        }
 
         if !output_result.status.success() {
             let stderr = String::from_utf8_lossy(&output_result.stderr);
@@ -217,8 +238,9 @@ pub async fn download_path(
     workspace: &str,
     path: &str,
     local_base: &Path,
+    options: &DownloadOptions,
 ) -> Result<()> {
-    download_outputs(host, workspace, &[path.to_string()], local_base).await
+    download_outputs(host, workspace, &[path.to_string()], local_base, options).await
 }
 
 #[cfg(test)]

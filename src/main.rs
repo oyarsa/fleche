@@ -155,6 +155,7 @@ async fn run() -> Result<()> {
             path,
             filter,
             tags,
+            dry_run,
         } => {
             job::download_outputs(
                 job_id.as_deref(),
@@ -162,6 +163,7 @@ async fn run() -> Result<()> {
                 path.as_deref(),
                 &filter,
                 &tags,
+                dry_run,
                 cli.debug,
             )
             .await?;

@@ -421,6 +421,36 @@ impl SshClient {
         self.exec(&cmd).await
     }
 
+    /// Checks if a path is a directory on the remote host.
+    ///
+    /// Returns `Ok(true)` if it's a directory, `Ok(false)` if it's a file,
+    /// and an error if the path doesn't exist or can't be accessed.
+    pub async fn is_dir(&self, path: &str) -> Result<bool> {
+        let (success, _, _) = self
+            .exec_allow_failure(&format!("test -d {}", shell_escape(path)))
+            .await?;
+        Ok(success)
+    }
+
+    /// Lists all files recursively under a directory on the remote host.
+    ///
+    /// Returns paths relative to the given directory.
+    /// Returns an empty list if the path is not a directory.
+    pub async fn list_files_recursive(&self, path: &str) -> Result<Vec<String>> {
+        let output = self
+            .exec(&format!(
+                "find {} -type f -printf '%P\\n' 2>/dev/null || true",
+                shell_escape(path)
+            ))
+            .await?;
+
+        Ok(output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(String::from)
+            .collect())
+    }
+
     /// Spawns a process that follows a file on the remote host.
     ///
     /// Uses `tail -F -n +1` which will retry if the file doesn't exist yet

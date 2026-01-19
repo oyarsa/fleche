@@ -5,7 +5,9 @@ use crate::error::{FlecheError, Result};
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::{cancel_job, get_job_status};
 use crate::ssh::SshClient;
-use crate::sync::{download_outputs as sync_download_outputs, download_path as sync_download_path};
+use crate::sync::{
+    DownloadOptions, download_outputs as sync_download_outputs, download_path as sync_download_path,
+};
 use console::style;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::io::Write;
@@ -207,6 +209,7 @@ pub async fn download_outputs(
     specific_path: Option<&str>,
     filters: &[String],
     tags: &[(String, String)],
+    dry_run: bool,
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -222,10 +225,11 @@ pub async fn download_outputs(
             .ok_or(FlecheError::NoRecentJob)?
     };
 
+    let ssh = SshClient::new(&job.remote_host, debug);
+
     // Check job status
     if !partial && matches!(job.status, JobStatus::Pending | JobStatus::Running) {
         if let Some(ref slurm_id) = job.slurm_id {
-            let ssh = SshClient::new(&job.remote_host, debug);
             let current_status = get_job_status(&ssh, slurm_id).await.unwrap_or(job.status);
             if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
                 eprintln!(
@@ -239,10 +243,22 @@ pub async fn download_outputs(
     }
 
     let local_path = std::path::PathBuf::from(&job.project_path);
+    let download_options = DownloadOptions { dry_run };
 
     if let Some(path) = specific_path {
-        println!("Downloading {path} from workspace...");
-        sync_download_path(&job.remote_host, &job.remote_path, path, &local_path).await?;
+        if dry_run {
+            println!("Would download {path} from workspace...");
+        } else {
+            println!("Downloading {path} from workspace...");
+        }
+        sync_download_path(
+            &job.remote_host,
+            &job.remote_path,
+            path,
+            &local_path,
+            &download_options,
+        )
+        .await?;
     } else {
         // Parse config to get outputs
         let resolved: ResolvedJob = serde_json::from_str(&job.config_json)?;
@@ -252,26 +268,97 @@ pub async fn download_outputs(
             return Ok(());
         }
 
-        // Apply filters if provided
-        let (includes, excludes) = build_filter_glob_sets(filters)?;
-        let outputs = filter_outputs(&resolved.outputs, includes.as_ref(), excludes.as_ref());
+        // Determine files to download
+        let outputs = if filters.is_empty() {
+            // No filters: use configured outputs as-is (fast path)
+            resolved.outputs
+        } else {
+            // Filters provided: expand directories and filter individual files
+            expand_and_filter_outputs(&ssh, &job.remote_path, &resolved.outputs, filters).await?
+        };
 
         if outputs.is_empty() {
             println!("No outputs match the specified filters.");
             return Ok(());
         }
 
-        println!("Downloading outputs from workspace...");
+        if dry_run {
+            println!("Would download outputs from workspace:");
+        } else {
+            println!("Downloading outputs from workspace...");
+        }
         for output in &outputs {
             println!("  {output}");
         }
-        sync_download_outputs(&job.remote_host, &job.remote_path, &outputs, &local_path).await?;
+        sync_download_outputs(
+            &job.remote_host,
+            &job.remote_path,
+            &outputs,
+            &local_path,
+            &download_options,
+        )
+        .await?;
     }
 
-    registry.set_outputs_synced(&job.id)?;
-    println!("{}", style("Download complete.").green());
+    if !dry_run {
+        registry.set_outputs_synced(&job.id)?;
+        println!("{}", style("Download complete.").green());
+    }
 
     Ok(())
+}
+
+/// Expands directory outputs to individual files and applies glob filters.
+///
+/// For each configured output:
+/// - If it's a file: check if it matches the filter
+/// - If it's a directory: list all files recursively and include those that match
+async fn expand_and_filter_outputs(
+    ssh: &SshClient,
+    workspace: &str,
+    outputs: &[String],
+    filters: &[String],
+) -> Result<Vec<String>> {
+    let (includes, excludes) = build_filter_glob_sets(filters)?;
+    let mut result = Vec::new();
+
+    for output in outputs {
+        let output_trimmed = output.trim_end_matches('/');
+        let remote_path = format!("{workspace}/{output_trimmed}");
+
+        if ssh.is_dir(&remote_path).await? {
+            // It's a directory: list all files and filter
+            let files = ssh.list_files_recursive(&remote_path).await?;
+            for file in files {
+                let full_path = format!("{output_trimmed}/{file}");
+                if matches_filters(&full_path, includes.as_ref(), excludes.as_ref()) {
+                    result.push(full_path);
+                }
+            }
+        } else {
+            // It's a file: check if it matches
+            if matches_filters(output_trimmed, includes.as_ref(), excludes.as_ref()) {
+                result.push(output_trimmed.to_string());
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Checks if a path matches the include/exclude filters.
+fn matches_filters(path: &str, includes: Option<&GlobSet>, excludes: Option<&GlobSet>) -> bool {
+    let matches_include = match includes {
+        Some(set) => set.is_match(path),
+        None => true,
+    };
+
+    let matches_exclude = match excludes {
+        Some(set) => set.is_match(path),
+        None => false,
+    };
+
+    matches_include && !matches_exclude
 }
 
 /// Cancels running or pending Slurm jobs.

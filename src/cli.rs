@@ -199,6 +199,10 @@ pub enum Commands {
         /// Filter by tag when using default job (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
+
+        /// Show what would be downloaded without actually downloading
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Cancel a running or pending job
