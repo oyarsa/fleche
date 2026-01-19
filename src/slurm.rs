@@ -26,7 +26,10 @@ pub fn generate_sbatch_script(
     let mut script = String::new();
 
     script.push_str("#!/bin/bash\n");
-    script.push_str(&format!("#SBATCH --job-name={job_id}\n"));
+    script.push_str(&format!(
+        "#SBATCH --job-name={}\n",
+        truncate_job_name(job_id)
+    ));
     // Output files go to the job directory, not the workspace
     script.push_str(&format!("#SBATCH --output={job_dir}/job.out\n"));
     script.push_str(&format!("#SBATCH --error={job_dir}/job.err\n"));
@@ -73,10 +76,15 @@ pub fn generate_sbatch_script(
 
     script.push('\n');
 
-    // Environment variables
-    if !job.env.is_empty() {
+    // Environment variables (skip invalid names)
+    let valid_env: Vec<_> = job
+        .env
+        .iter()
+        .filter(|(k, _)| is_valid_env_var_name(k))
+        .collect();
+    if !valid_env.is_empty() {
         script.push_str("# Environment variables\n");
-        for (key, value) in &job.env {
+        for (key, value) in valid_env {
             script.push_str(&format!("export {key}=\"{}\"\n", escape_bash_value(value)));
         }
         script.push('\n');
@@ -102,6 +110,31 @@ fn escape_bash_value(s: &str) -> String {
         .replace('"', "\\\"")
         .replace('$', "\\$")
         .replace('`', "\\`")
+}
+
+/// Maximum job name length for Slurm (conservative limit).
+const MAX_JOB_NAME_LENGTH: usize = 200;
+
+/// Validates that an environment variable name is valid for bash.
+///
+/// Valid names start with a letter or underscore, followed by letters, digits, or underscores.
+fn is_valid_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        _ => false,
+    }
+}
+
+/// Truncates a job name to fit within Slurm's limits.
+fn truncate_job_name(name: &str) -> &str {
+    if name.len() <= MAX_JOB_NAME_LENGTH {
+        name
+    } else {
+        &name[..MAX_JOB_NAME_LENGTH]
+    }
 }
 
 /// Submits a job to Slurm using sbatch.
@@ -171,9 +204,11 @@ fn parse_sacct_state(state: &str) -> JobStatus {
 /// First checks `squeue` to see if the job is still in the queue (pending or running).
 /// If not found in the queue, falls back to `sacct` to get the final state.
 pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus> {
+    let escaped_id = shell_escape(slurm_id);
+
     // First try squeue to see if job is still in queue
     let (success, stdout, _) = ssh
-        .exec_allow_failure(&format!("squeue -j {slurm_id} -h -o %T"))
+        .exec_allow_failure(&format!("squeue -j {escaped_id} -h -o %T"))
         .await?;
 
     if success && !stdout.trim().is_empty() {
@@ -183,7 +218,7 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
     // Job not in queue, check sacct for final state
     let (success, stdout, _) = ssh
         .exec_allow_failure(&format!(
-            "sacct -j {slurm_id} -n -o State --parsable2 | head -1"
+            "sacct -j {escaped_id} -n -o State --parsable2 | head -1"
         ))
         .await?;
 
@@ -196,7 +231,8 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
 
 /// Cancels a Slurm job using scancel.
 pub async fn cancel_job(ssh: &SshClient, slurm_id: &str) -> Result<()> {
-    ssh.exec(&format!("scancel {slurm_id}")).await?;
+    ssh.exec(&format!("scancel {}", shell_escape(slurm_id)))
+        .await?;
     Ok(())
 }
 

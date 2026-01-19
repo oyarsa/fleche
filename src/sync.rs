@@ -4,6 +4,7 @@
 //! and a remote host using rsync.
 
 use crate::error::{FlecheError, Result};
+use crate::ssh::ssh_socket_dir;
 use std::path::Path;
 use tokio::process::Command;
 
@@ -20,16 +21,8 @@ fn rsync_ssh_cmd() -> String {
     )
     .to_string();
 
-    // Add ControlMaster options using short /tmp path (Unix sockets have ~104 byte limit)
-    let uid = unsafe { libc::getuid() };
-    let socket_dir = std::path::PathBuf::from(format!("/tmp/fleche-ssh-{uid}"));
-    let _ = std::fs::create_dir_all(&socket_dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700));
-    }
-    let control_path = socket_dir.join("%r@%h-%p");
+    // Add ControlMaster options using shared socket directory
+    let control_path = ssh_socket_dir().join("%r@%h-%p");
     cmd.push_str(&format!(
         " -o ControlMaster=auto -o 'ControlPath={}' -o ControlPersist=600",
         control_path.display()

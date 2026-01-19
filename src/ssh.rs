@@ -39,7 +39,7 @@ fn ssh_log_path() -> Option<PathBuf> {
 /// Creates the directory if it doesn't exist.
 ///
 /// Uses `/tmp/fleche-ssh-<uid>/` to keep paths short (Unix sockets have ~104 byte limit).
-fn ssh_socket_dir() -> PathBuf {
+pub fn ssh_socket_dir() -> PathBuf {
     let uid = unsafe { libc::getuid() };
     let dir = PathBuf::from(format!("/tmp/fleche-ssh-{uid}"));
     let _ = std::fs::create_dir_all(&dir);

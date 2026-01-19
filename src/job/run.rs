@@ -342,7 +342,9 @@ pub async fn exec_command(
     }
 
     if !success {
-        return Err(FlecheError::Other("Command failed".to_string()));
+        return Err(FlecheError::SshCommand(
+            "Command exited with non-zero status".to_string(),
+        ));
     }
 
     Ok(())

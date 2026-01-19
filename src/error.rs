@@ -101,9 +101,13 @@ pub enum FlecheError {
     #[error("Could not find config directory")]
     ConfigDirNotFound,
 
-    /// A generic error for cases not covered by other variants.
-    #[error("{0}")]
-    Other(String),
+    /// Job has no Slurm ID (not yet submitted or submission failed).
+    #[error("Job '{0}' has no Slurm ID")]
+    NoSlurmId(String),
+
+    /// Could not reach the Slurm controller.
+    #[error("Could not reach Slurm controller")]
+    SlurmUnavailable,
 }
 
 /// A Result type alias using [`FlecheError`] as the error type.

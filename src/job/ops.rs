@@ -548,10 +548,7 @@ pub async fn wait_for_job(
                 return Ok(());
             }
         } else {
-            return Err(FlecheError::Other(format!(
-                "Job {} has no Slurm ID",
-                job.id
-            )));
+            return Err(FlecheError::NoSlurmId(job.id.clone()));
         }
 
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -606,9 +603,7 @@ pub async fn ping_cluster(config: &Config, debug: bool) -> Result<()> {
         if !stderr.is_empty() {
             eprintln!("{stderr}");
         }
-        return Err(FlecheError::Other(
-            "Could not reach Slurm controller".to_string(),
-        ));
+        return Err(FlecheError::SlurmUnavailable);
     }
 
     Ok(())

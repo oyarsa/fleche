@@ -70,8 +70,9 @@ impl JobRecord {
             status: row
                 .get::<_, String>(8)?
                 .parse()
-                .unwrap_or(JobStatus::Pending),
+                .expect("job status in database should be valid"),
             config_json: row.get(9)?,
+            // Fall back to current time if timestamp is corrupted (allows viewing jobs)
             created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(10)?)
                 .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc)),
             updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(11)?)
