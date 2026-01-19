@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.0.0] - 2026-01-19
+
+### Changed
+- Error messages are now more specific with dedicated error types
+  - `NoRecentJob` for operations expecting a recent job
+  - `InvalidDuration` for duration parsing (e.g., `7d`, `24h`)
+  - `InvalidGlobPattern` for filter patterns
+  - `SlurmQueryFailed` for Slurm status queries
+- Internal refactoring: options structs replace multiple boolean parameters
+- Removed unused internal functions
+
+### Added
+- Additional unit tests for `generate_job_id` and `truncate` functions
+
 ## [5.9.0] - 2026-01-18
 
 ### Added
