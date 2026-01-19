@@ -49,6 +49,8 @@ pub struct RunJobOptions {
     pub debug: bool,
     /// Job ID to wait for before starting.
     pub after: Option<String>,
+    /// Number of times to retry on failure (with exponential backoff).
+    pub retry: Option<u32>,
 }
 
 /// Runs a job on the remote cluster via Slurm (or locally if host is "local").
@@ -91,7 +93,7 @@ pub async fn run_job(
 
     // Branch based on host
     if host == "local" {
-        return run_job_locally(config, &job, tags, &opts);
+        return run_job_locally(config, &job, tags, &opts).await;
     }
 
     // Resolve dependency if specified
@@ -108,14 +110,11 @@ pub async fn run_job(
 
     // Remote execution path
     let job_id = generate_job_id(&job.name);
-
     let workspace = workspace_path(config);
-    let job_dir = job_path(config, &job_id);
-
-    // Generate script - runs in workspace, logs go to job directory
-    let script = generate_sbatch_script(&job_id, &job, &workspace, &job_dir);
 
     if opts.dry_run {
+        let job_dir = job_path(config, &job_id);
+        let script = generate_sbatch_script(&job_id, &job, &workspace, &job_dir);
         println!(
             "{}",
             style("[dry-run] Generated sbatch script:").bold().yellow()
@@ -133,6 +132,7 @@ pub async fn run_job(
         style("[1/4]").bold().dim()
     );
     ssh.mkdir(&workspace).await?;
+    let job_dir = job_path(config, &job_id);
     ssh.mkdir(&job_dir).await?;
 
     // Sync project code to workspace
@@ -152,45 +152,108 @@ pub async fn run_job(
         println!(" {}", style(format!("({})", stats.human_readable())).dim());
     }
 
-    // Upload script to job directory
-    println!("{} Submitting job to Slurm...", style("[4/4]").bold().dim());
-    ssh.write_file(&format!("{job_dir}/job.sbatch"), &script)
-        .await?;
+    // Retry loop
+    let max_attempts = opts.retry.map_or(1, |r| r + 1);
+    let mut attempt = 0;
 
-    // Submit job (with optional dependency)
-    let slurm_id = submit_job(&ssh, &job_dir, dependency_slurm_id.as_deref()).await?;
+    loop {
+        attempt += 1;
 
-    // Record in registry
-    let registry = Registry::open()?;
-    registry.insert_job(
-        &job_id,
-        Some(&slurm_id),
-        &job,
-        &config.project_name,
-        &config.project_path.to_string_lossy(),
-        &host,
-        &workspace,
-        tags,
-    )?;
+        // Generate new job ID for each attempt
+        let job_id = if attempt == 1 {
+            job_id.clone()
+        } else {
+            generate_job_id(&job.name)
+        };
+        let job_dir = job_path(config, &job_id);
 
-    println!();
-    println!("{} {}", style("Job ID:").green().bold(), job_id);
-    println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
+        // Create job directory for this attempt
+        if attempt > 1 {
+            ssh.mkdir(&job_dir).await?;
+        }
 
-    if !opts.background {
+        // Generate and upload script
+        let script = generate_sbatch_script(&job_id, &job, &workspace, &job_dir);
+
+        println!("{} Submitting job to Slurm...", style("[4/4]").bold().dim());
+        ssh.write_file(&format!("{job_dir}/job.sbatch"), &script)
+            .await?;
+
+        // Submit job (with optional dependency, only on first attempt)
+        let dep = if attempt == 1 {
+            dependency_slurm_id.as_deref()
+        } else {
+            None
+        };
+        let slurm_id = submit_job(&ssh, &job_dir, dep).await?;
+
+        // Record in registry
+        let registry = Registry::open()?;
+        registry.insert_job(
+            &job_id,
+            Some(&slurm_id),
+            &job,
+            &config.project_name,
+            &config.project_path.to_string_lossy(),
+            &host,
+            &workspace,
+            tags,
+        )?;
+
+        println!();
+        if attempt > 1 {
+            println!(
+                "{} {} (attempt {}/{})",
+                style("Job ID:").green().bold(),
+                job_id,
+                attempt,
+                max_attempts
+            );
+        } else {
+            println!("{} {}", style("Job ID:").green().bold(), job_id);
+        }
+        println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
+
+        if opts.background {
+            if opts.notify {
+                // Wait for job completion in background and notify
+                wait_and_notify(&job_id, &host, opts.debug).await?;
+            }
+            // Background mode doesn't support retry (we don't wait for completion)
+            break;
+        }
+
+        // Foreground mode: follow logs and check result
         println!();
         let log_path = format!("{job_dir}/job.out");
-        follow_job_logs(&host, &slurm_id, &log_path, opts.debug).await?;
-    } else if opts.notify {
-        // Wait for job completion in background and notify
-        wait_and_notify(&job_id, &host, opts.debug).await?;
+        let final_status = follow_job_logs(&host, &slurm_id, &log_path, opts.debug).await?;
+
+        // Update registry with final status
+        registry.update_status(&job_id, final_status)?;
+
+        // Check if we should retry
+        if final_status == JobStatus::Failed && attempt < max_attempts {
+            let delay_secs = 30 * (1 << (attempt - 1)); // 30s, 60s, 120s, 240s...
+            println!();
+            println!(
+                "{} Retrying in {} seconds (attempt {}/{})...",
+                style("↻").yellow().bold(),
+                delay_secs,
+                attempt + 1,
+                max_attempts
+            );
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            println!();
+        } else {
+            break;
+        }
     }
 
     Ok(())
 }
 
 /// Runs a job locally (when host is "local").
-fn run_job_locally(
+async fn run_job_locally(
     config: &Config,
     job: &ResolvedJob,
     tags: &[(String, String)],
@@ -331,44 +394,95 @@ fn run_job_locally(
             });
         }
     } else {
-        // Run in foreground
-        println!(
-            "{}",
-            style("Running locally (Ctrl+C to cancel)...").yellow()
-        );
-        println!();
+        // Run in foreground with retry support
+        let max_attempts = opts.retry.map_or(1, |r| r + 1);
+        let mut attempt = 0;
 
-        // Update status to running
-        registry.update_status(&job_id, JobStatus::Running)?;
+        loop {
+            attempt += 1;
 
-        let exit_code =
-            local::run_foreground(&config.project_path, &job_id, &job.command, &job.env)?;
+            // Generate new job ID for retries
+            let job_id = if attempt == 1 {
+                job_id.clone()
+            } else {
+                let new_id = generate_job_id(&job.name);
+                let _job_dir = local::ensure_job_dir(&config.project_path, &new_id)?;
+                let registry = Registry::open()?;
+                registry.insert_job(
+                    &new_id,
+                    None,
+                    job,
+                    &config.project_name,
+                    &config.project_path.to_string_lossy(),
+                    "local",
+                    &config.project_path.to_string_lossy(),
+                    tags,
+                )?;
+                println!("{} {}", style("Job ID:").green().bold(), new_id);
+                println!();
+                new_id
+            };
 
-        let final_status = if exit_code == 0 {
-            JobStatus::Completed
-        } else {
-            JobStatus::Failed
-        };
-        registry.update_status(&job_id, final_status)?;
+            println!(
+                "{}",
+                style("Running locally (Ctrl+C to cancel)...").yellow()
+            );
+            if attempt > 1 {
+                println!(
+                    "{}",
+                    style(format!("(attempt {attempt}/{max_attempts})")).dim()
+                );
+            }
+            println!();
 
-        println!();
-        if exit_code == 0 {
-            println!("{}", style("Job completed successfully.").green().bold());
-        } else {
+            // Update status to running
+            let registry = Registry::open()?;
+            registry.update_status(&job_id, JobStatus::Running)?;
+
+            let exit_code =
+                local::run_foreground(&config.project_path, &job_id, &job.command, &job.env)?;
+
+            let final_status = if exit_code == 0 {
+                JobStatus::Completed
+            } else {
+                JobStatus::Failed
+            };
+            registry.update_status(&job_id, final_status)?;
+
+            println!();
+            if exit_code == 0 {
+                println!("{}", style("Job completed successfully.").green().bold());
+                if opts.notify {
+                    send_notification(&format!("Job {job_id} completed successfully."));
+                }
+                break;
+            }
+
             println!(
                 "{} (exit code: {})",
                 style("Job failed.").red().bold(),
                 exit_code
             );
-        }
 
-        if opts.notify {
-            let message = if exit_code == 0 {
-                format!("Job {job_id} completed successfully.")
+            // Check if we should retry
+            if attempt < max_attempts {
+                let delay_secs = 30 * (1 << (attempt - 1)); // 30s, 60s, 120s, 240s...
+                println!();
+                println!(
+                    "{} Retrying in {} seconds (attempt {}/{})...",
+                    style("↻").yellow().bold(),
+                    delay_secs,
+                    attempt + 1,
+                    max_attempts
+                );
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                println!();
             } else {
-                format!("Job {job_id} failed.")
-            };
-            send_notification(&message);
+                if opts.notify {
+                    send_notification(&format!("Job {job_id} failed."));
+                }
+                break;
+            }
         }
     }
 
@@ -632,7 +746,14 @@ fn generate_job_id(job_name: &str) -> String {
 }
 
 /// Follows job logs and automatically exits when the job finishes.
-async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool) -> Result<()> {
+///
+/// Returns the final job status when the job completes.
+async fn follow_job_logs(
+    host: &str,
+    slurm_id: &str,
+    log_path: &str,
+    debug: bool,
+) -> Result<JobStatus> {
     println!(
         "{}",
         style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
@@ -644,11 +765,13 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool
     // Poll job status until it reaches a terminal state
     let slurm_id = slurm_id.to_string();
     let host = host.to_string();
+    let slurm_id_for_check = slurm_id.clone();
+    let host_for_check = host.clone();
     let status_check = async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let ssh = SshClient::new(&host, debug);
-            if let Ok(status) = get_job_status(&ssh, &slurm_id).await {
+            let ssh = SshClient::new(&host_for_check, debug);
+            if let Ok(status) = get_job_status(&ssh, &slurm_id_for_check).await {
                 match status {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
                         return status;
@@ -660,9 +783,11 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool
     };
 
     // Wait for either the tail process to exit or the job to finish
-    tokio::select! {
+    let final_status = tokio::select! {
         _ = child.wait() => {
-            // Tail exited on its own (unlikely unless error)
+            // Tail exited on its own - check final status
+            let ssh = SshClient::new(&host, debug);
+            get_job_status(&ssh, &slurm_id).await.unwrap_or(JobStatus::Failed)
         }
         status = status_check => {
             // Job finished, kill tail and print status
@@ -671,32 +796,34 @@ async fn follow_job_logs(host: &str, slurm_id: &str, log_path: &str, debug: bool
             // Give a moment for any final output to flush
             tokio::time::sleep(Duration::from_millis(500)).await;
 
-            println!();
-            let message = match status {
-                JobStatus::Completed => "Job completed successfully.",
-                JobStatus::Failed => "Job failed.",
-                JobStatus::Cancelled => "Job cancelled.",
-                _ => "Job finished.",
-            };
-
-            match status {
-                JobStatus::Completed => {
-                    println!("{}", style(message).green().bold());
-                }
-                JobStatus::Failed => {
-                    println!("{}", style(message).red().bold());
-                }
-                JobStatus::Cancelled => {
-                    println!("{}", style(message).yellow().bold());
-                }
-                _ => {}
-            }
-
-            send_notification(message);
+            status
         }
+    };
+
+    println!();
+    let message = match final_status {
+        JobStatus::Completed => "Job completed successfully.",
+        JobStatus::Failed => "Job failed.",
+        JobStatus::Cancelled => "Job cancelled.",
+        _ => "Job finished.",
+    };
+
+    match final_status {
+        JobStatus::Completed => {
+            println!("{}", style(message).green().bold());
+        }
+        JobStatus::Failed => {
+            println!("{}", style(message).red().bold());
+        }
+        JobStatus::Cancelled => {
+            println!("{}", style(message).yellow().bold());
+        }
+        _ => {}
     }
 
-    Ok(())
+    send_notification(message);
+
+    Ok(final_status)
 }
 
 /// Waits for a job to complete and sends a terminal notification.

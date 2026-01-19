@@ -117,6 +117,10 @@ pub enum Commands {
         /// Run on specific host ("local" for local execution)
         #[arg(long)]
         host: Option<String>,
+
+        /// Retry failed jobs with exponential backoff (e.g., --retry 3)
+        #[arg(long)]
+        retry: Option<u32>,
     },
 
     /// Execute a command directly via SSH (no Slurm)

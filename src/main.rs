@@ -108,6 +108,7 @@ async fn run() -> Result<()> {
             after,
             dry_run,
             host,
+            retry,
         } => {
             let config = Config::find_and_load()?;
             let slurm_overrides = slurm_config_from_cli(
@@ -128,6 +129,7 @@ async fn run() -> Result<()> {
                     dry_run,
                     debug: cli.debug,
                     after,
+                    retry,
                 },
             )
             .await?;
