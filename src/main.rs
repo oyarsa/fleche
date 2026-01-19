@@ -48,6 +48,30 @@ async fn main() {
     }
 }
 
+/// Checks that required external tools are available.
+fn check_dependencies() -> Result<()> {
+    use std::process::Command;
+
+    if Command::new("ssh").arg("-V").output().is_err() {
+        anyhow::bail!(
+            "ssh not found. Install it with:\n  \
+             macOS:  Pre-installed (check /usr/bin/ssh)\n  \
+             Ubuntu: apt install openssh-client\n  \
+             Windows: Install Git Bash, WSL, or OpenSSH"
+        );
+    }
+
+    if Command::new("rsync").arg("--version").output().is_err() {
+        anyhow::bail!(
+            "rsync not found. Install it with:\n  \
+             macOS:  brew install rsync\n  \
+             Ubuntu: apt install rsync\n  \
+             Fedora: dnf install rsync"
+        );
+    }
+    Ok(())
+}
+
 /// Parses CLI arguments and dispatches to the appropriate command handler.
 ///
 /// This function is the main dispatcher for all fleche subcommands. Each command
@@ -55,6 +79,8 @@ async fn main() {
 /// for `init`, `check`, and `guide` which are handled inline.
 async fn run() -> Result<()> {
     let cli = Cli::parse();
+
+    check_dependencies()?;
 
     // Change to specified directory if -C/--directory was provided
     if let Some(ref dir) = cli.directory {

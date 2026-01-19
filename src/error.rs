@@ -108,6 +108,10 @@ pub enum FlecheError {
     /// Could not reach the Slurm controller.
     #[error("Could not reach Slurm controller")]
     SlurmUnavailable,
+
+    /// A required external dependency is not available.
+    #[error("{0}")]
+    MissingDependency(String),
 }
 
 /// A Result type alias using [`FlecheError`] as the error type.

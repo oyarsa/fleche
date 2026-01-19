@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.2.1] - 2026-01-20
+
+### Fixed
+- Use POSIX-compatible `find` for remote file listing (fixes compatibility with BSD/macOS servers)
+- Check for `ssh` and `rsync` at startup with helpful install instructions for each platform
+- Check for `sh` when running local jobs with instructions for Windows users (Git Bash, WSL, Cygwin)
+
 ## [6.2.0] - 2026-01-19
 
 ### Added

@@ -15,6 +15,23 @@ use std::time::Duration;
 
 use super::{job_path, workspace_path};
 
+/// Checks that `sh` is available for local command execution.
+fn require_sh() -> Result<()> {
+    if std::process::Command::new("sh")
+        .arg("-c")
+        .arg("true")
+        .output()
+        .is_err()
+    {
+        return Err(FlecheError::MissingDependency(
+            "sh not found. Local execution requires a Unix shell.\n  \
+             Windows: Install Git Bash, WSL, or Cygwin"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Options for running a job.
 #[derive(Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
@@ -162,6 +179,8 @@ fn run_job_locally(
     tags: &[(String, String)],
     opts: &RunJobOptions,
 ) -> Result<()> {
+    require_sh()?;
+
     let job_id = generate_job_id(&job.name);
 
     // Warn about features that don't apply locally
@@ -530,6 +549,8 @@ fn exec_command_locally(
     env_overrides: &[(String, String)],
 ) -> Result<()> {
     use std::process::Command;
+
+    require_sh()?;
 
     println!(
         "{} Executing command locally...",

@@ -457,14 +457,18 @@ impl SshClient {
     pub async fn list_files_recursive(&self, path: &str) -> Result<Vec<String>> {
         let output = self
             .exec(&format!(
-                "find {} -type f -printf '%P\\n' 2>/dev/null || true",
+                "find {} -type f 2>/dev/null || true",
                 shell_escape(path)
             ))
             .await?;
 
+        // Strip the path prefix to get relative paths (POSIX-compatible alternative to -printf '%P')
+        let prefix = format!("{}/", path.trim_end_matches('/'));
+
         Ok(output
             .lines()
             .filter(|line| !line.is_empty())
+            .filter_map(|line| line.strip_prefix(&prefix))
             .map(String::from)
             .collect())
     }
