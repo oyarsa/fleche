@@ -105,6 +105,7 @@ async fn run() -> Result<()> {
             constraint,
             nodes,
             exclude,
+            after,
             dry_run,
             host,
         } => {
@@ -126,6 +127,7 @@ async fn run() -> Result<()> {
                     notify,
                     dry_run,
                     debug: cli.debug,
+                    after,
                 },
             )
             .await?;

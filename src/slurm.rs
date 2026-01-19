@@ -141,10 +141,21 @@ fn truncate_job_name(name: &str) -> &str {
 ///
 /// Expects a `job.sbatch` file to exist in `remote_dir`. Returns the Slurm job ID
 /// assigned to the submitted job.
-pub async fn submit_job(ssh: &SshClient, remote_dir: &str) -> Result<String> {
+///
+/// If `dependency` is provided, the job will only start after the dependency
+/// job completes successfully (`--dependency=afterok:<slurm_id>`).
+pub async fn submit_job(
+    ssh: &SshClient,
+    remote_dir: &str,
+    dependency: Option<&str>,
+) -> Result<String> {
+    let dep_flag = dependency
+        .map(|slurm_id| format!(" --dependency=afterok:{slurm_id}"))
+        .unwrap_or_default();
+
     let output = ssh
         .exec(&format!(
-            "cd {} && sbatch job.sbatch",
+            "cd {} && sbatch{dep_flag} job.sbatch",
             shell_escape(remote_dir)
         ))
         .await?;

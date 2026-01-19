@@ -47,6 +47,8 @@ pub struct RunJobOptions {
     pub dry_run: bool,
     /// Enable verbose SSH output.
     pub debug: bool,
+    /// Job ID to wait for before starting.
+    pub after: Option<String>,
 }
 
 /// Runs a job on the remote cluster via Slurm (or locally if host is "local").
@@ -91,6 +93,18 @@ pub async fn run_job(
     if host == "local" {
         return run_job_locally(config, &job, tags, &opts);
     }
+
+    // Resolve dependency if specified
+    let dependency_slurm_id = if let Some(ref dep_job_id) = opts.after {
+        let registry = Registry::open()?;
+        let dep_job = registry.get_job(dep_job_id)?;
+        let slurm_id = dep_job
+            .slurm_id
+            .ok_or_else(|| FlecheError::NoSlurmId(dep_job.id.clone()))?;
+        Some(slurm_id)
+    } else {
+        None
+    };
 
     // Remote execution path
     let job_id = generate_job_id(&job.name);
@@ -143,8 +157,8 @@ pub async fn run_job(
     ssh.write_file(&format!("{job_dir}/job.sbatch"), &script)
         .await?;
 
-    // Submit job
-    let slurm_id = submit_job(&ssh, &job_dir).await?;
+    // Submit job (with optional dependency)
+    let slurm_id = submit_job(&ssh, &job_dir, dependency_slurm_id.as_deref()).await?;
 
     // Record in registry
     let registry = Registry::open()?;
@@ -183,6 +197,20 @@ fn run_job_locally(
     opts: &RunJobOptions,
 ) -> Result<()> {
     require_shell()?;
+
+    // Check dependency if specified
+    if let Some(ref dep_job_id) = opts.after {
+        let registry = Registry::open()?;
+        let dep_job = registry.get_job(dep_job_id)?;
+
+        if dep_job.status != JobStatus::Completed {
+            return Err(FlecheError::MissingDependency(format!(
+                "Dependency job '{}' has not completed successfully (status: {:?}). \
+                 Use 'fleche wait {}' to wait for it.",
+                dep_job.id, dep_job.status, dep_job.id
+            )));
+        }
+    }
 
     let job_id = generate_job_id(&job.name);
 
@@ -437,8 +465,8 @@ async fn run_job_with_resolved(
     ssh.write_file(&format!("{job_dir}/job.sbatch"), &script)
         .await?;
 
-    // Submit job
-    let slurm_id = submit_job(&ssh, &job_dir).await?;
+    // Submit job (no dependency for rerun)
+    let slurm_id = submit_job(&ssh, &job_dir, None).await?;
 
     // Record in registry
     let registry = Registry::open()?;

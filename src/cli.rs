@@ -103,6 +103,13 @@ pub enum Commands {
         #[arg(long)]
         exclude: Option<String>,
 
+        /// Run after another job completes successfully
+        ///
+        /// Takes a job ID (or suffix). The new job will only start after
+        /// the dependency job completes with exit code 0.
+        #[arg(long)]
+        after: Option<String>,
+
         /// Print generated sbatch script without submitting
         #[arg(long)]
         dry_run: bool,
