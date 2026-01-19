@@ -214,6 +214,27 @@ fleche exec "ls -la"
 
 This syncs your project and runs the command directly over SSH.
 
+### Local Execution
+
+Run jobs on your local machine instead of a remote cluster:
+
+```bash
+# Run locally via CLI flag
+fleche run train --host local
+
+# Or configure in fleche.toml
+[jobs.test]
+command = "python test.py"
+host = "local"
+```
+
+Local jobs run directly in the project directory with logs in `.fleche/jobs/{id}/`.
+Use `--host local` with `fleche exec` for quick local command execution:
+
+```bash
+fleche exec "python -c 'print(1+1)'" --host local
+```
+
 ### Tagging Jobs
 
 Add tags to track and filter experiments:
@@ -294,9 +315,9 @@ No need for explicit dependencies - files persist in the shared workspace.
 
 | Command | Description |
 |---------|-------------|
-| `fleche run [job\|cmd] [opts]` | Submit a job via Slurm |
+| `fleche run [job\|cmd] [opts]` | Submit a job via Slurm (or locally with `--host local`) |
 | `fleche rerun <job-id>` | Re-run a previous job with same settings |
-| `fleche exec <cmd>` | Run command directly via SSH (no Slurm) |
+| `fleche exec <cmd>` | Run command directly via SSH (or locally with `--host local`) |
 | `fleche status [job-id]` | Show job status (defaults to listing all) |
 | `fleche status -n 50` | Show last 50 jobs |
 | `fleche status --filter running` | Filter by status (repeatable) |

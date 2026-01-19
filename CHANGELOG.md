@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.2.0] - 2026-01-19
+
+### Added
+- Local job execution with `--host local` flag
+  - Run jobs on your local machine instead of a remote Slurm cluster
+  - Configure per-job with `host = "local"` in job definition
+  - Local jobs run directly in project directory with logs in `.fleche/jobs/{id}/`
+  - Supports foreground and background (`--bg`) execution modes
+  - All standard operations work: `status`, `logs`, `cancel`, `clean`, `wait`
+
+### Changed
+- Replaced unsafe `libc` calls with safe abstractions
+  - Process management now uses `sysinfo` crate for cross-platform compatibility
+  - Unix user ID lookup now uses `nix` crate
+
 ## [6.1.0] - 2026-01-19
 
 ### Added

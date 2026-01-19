@@ -9,6 +9,7 @@ A CLI tool for submitting and managing jobs on remote Slurm clusters via SSH. El
 - **Stream output** in real-time by default
 - **Track job status** and download outputs
 - **Direct SSH execution** for quick tests without Slurm
+- **Local execution** for running jobs on your machine
 - **Job chaining** via shared workspace
 - **Parameterized jobs** via environment variable overrides
 - **Job tagging** for organization and filtering
@@ -173,6 +174,7 @@ Options:
   --command <cmd>       Override or provide command
   --env <KEY=VALUE>     Set environment variable (repeatable)
   --tag <KEY=VALUE>     Add tag for filtering (repeatable)
+  --host <host>         Run on specific host ("local" for local execution)
   --partition <name>    Override Slurm partition
   --time <duration>     Override wall time
   --gpus <n>            Override GPU count
@@ -246,6 +248,27 @@ fleche exec "ls -la"
 ```
 
 This syncs your project and runs the command directly over SSH.
+
+### Local Execution
+
+Run jobs on your local machine instead of a remote cluster:
+
+```bash
+# Run locally via CLI flag
+fleche run train --host local
+
+# Or configure in fleche.toml
+[jobs.test]
+command = "python test.py"
+host = "local"
+```
+
+Local jobs run directly in the project directory with logs in `.fleche/jobs/{id}/`.
+Use `--host local` with `fleche exec` for quick local command execution:
+
+```bash
+fleche exec "python -c 'print(1+1)'" --host local
+```
 
 ### Job Chaining
 
