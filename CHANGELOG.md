@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.5.1] - 2026-01-20
+
+### Fixed
+- Missing `archived` column in `list_jobs` SELECT query (caused "Invalid column index: 14" error)
+
 ## [6.5.0] - 2026-01-20
 
 ### Added
