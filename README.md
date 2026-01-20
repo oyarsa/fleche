@@ -15,7 +15,8 @@ A CLI tool for submitting and managing jobs on remote Slurm clusters via SSH. El
 - **Automatic retries** with exponential backoff
 - **Parameterized jobs** via environment variable overrides
 - **Job tagging** for organization and filtering
-- **Job notes** for annotating experiments
+- **Job notes** for annotating experiments (with search)
+- **Job archiving** to hide completed jobs without deletion
 - **Resource statistics** via sacct integration
 - **Shell completions** for bash, zsh, and fish
 
@@ -206,6 +207,8 @@ Options:
   --filter <status>     Filter by status (repeatable: pending, running, completed, failed, cancelled)
   --tag <KEY=VALUE>     Filter by tag (repeatable)
   -n, --last <N>        Number of jobs to show (default: 20)
+  --archived            Show only archived jobs
+  --all-jobs            Show all jobs including archived
 ```
 
 ### Filtering Options
@@ -369,6 +372,12 @@ fleche clean --older-than 7d
 
 # Also delete the shared workspace
 fleche clean --all --workspace
+
+# Archive a job (hide without deleting)
+fleche clean --archive <job-id>
+
+# Restore an archived job
+fleche clean --unarchive <job-id>
 ```
 
 ## Architecture
@@ -479,6 +488,8 @@ These can be set in config or passed via CLI:
 - Jobs share workspace, so chained jobs can read each other's outputs
 - Use `--retry` for flaky jobs that may fail due to transient issues
 - Use `--note` to document experiment parameters for future reference
+- Use `fleche logs --note <pattern>` to find jobs by note content
+- Use `--archive` to hide old jobs without deleting them
 - Enable shell completions: `fleche completions bash >> ~/.bashrc`
 - The job registry is at `~/.config/fleche/jobs.db`
 

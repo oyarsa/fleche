@@ -352,7 +352,37 @@ fleche note <job-id> "increased batch size to 64"
 fleche note <job-id>
 
 # Notes also shown in fleche status <job-id>
+
+# Search logs by note content (case-insensitive regex)
+fleche logs --note "learning rate"
+fleche logs --note "experiment.*baseline"
 ```
+
+### Archiving Jobs
+
+Hide completed jobs from listings without deleting them:
+
+```bash
+# Archive a job (hides from normal listings)
+fleche clean --archive <job-id>
+
+# Archive all finished jobs
+fleche clean --archive --all
+
+# View archived jobs
+fleche status --archived
+
+# View all jobs including archived
+fleche status --all-jobs
+
+# Restore an archived job
+fleche clean --unarchive <job-id>
+
+# Restore all archived jobs
+fleche clean --unarchive --all
+```
+
+Archived jobs are hidden from `fleche status` by default but their data is preserved.
 
 ### Resource Statistics
 
@@ -386,6 +416,7 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 | `fleche logs [job-id]` | View job output (defaults to most recent) |
 | `fleche logs --raw` | Strip ANSI codes (auto when piped) |
 | `fleche logs --tag <k=v>` | Logs from most recent job with tag |
+| `fleche logs --note <pattern>` | Logs from most recent job matching note |
 | `fleche download [job-id]` | Pull output files (defaults to most recent) |
 | `fleche download --filter <pat>` | Filter by glob, searches inside directories (`!` to exclude) |
 | `fleche download --dry-run` | Preview what would be downloaded |
@@ -396,6 +427,10 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 | `fleche clean --all [--tag <k=v>]` | Clean all (or tagged) finished jobs |
 | `fleche clean --older-than <dur>` | Clean jobs older than duration |
 | `fleche clean --workspace` | Also delete shared workspace |
+| `fleche clean --archive [job-id]` | Archive job (hide without deleting) |
+| `fleche clean --unarchive [job-id]` | Restore archived job |
+| `fleche status --archived` | Show only archived jobs |
+| `fleche status --all-jobs` | Show all jobs including archived |
 | `fleche tags` | List all unique tags across jobs |
 | `fleche wait [job-id]` | Wait for job to complete |
 | `fleche wait --notify` | Wait and send notification when done |
@@ -459,5 +494,6 @@ All jobs share a workspace directory:
 - Jobs share workspace, so chained jobs can read each other's outputs
 - Use `--retry` for flaky jobs that may fail due to transient issues
 - Use `--note` to document experiment parameters for future reference
+- Use `--archive` to hide old jobs without deleting them
 - Enable shell completions: `fleche completions bash >> ~/.bashrc`
 "#;
