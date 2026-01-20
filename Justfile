@@ -25,6 +25,10 @@ test:
 clippy:
     cargo clippy --all-targets -- -D warnings
 
+# Run clippy and fix possible errors
+clippy-fix:
+    cargo clippy --all-targets --fix --allow-dirty --allow-staged 2>/dev/null
+
 # Run rustfmt checker
 fmt-check:
     cargo fmt -- --check
@@ -40,7 +44,4 @@ lint: clippy fmt-check
 check-all: lint test
 
 # Fix formatting and clippy warnings, then run tests
-fix:
-    cargo fmt
-    cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
-    cargo test --quiet
+fix: fmt clippy-fix clippy test

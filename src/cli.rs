@@ -41,6 +41,7 @@ pub struct Cli {
 
 /// All available subcommands.
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Run a job on the remote cluster via Slurm
     ///
