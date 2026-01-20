@@ -375,7 +375,7 @@ impl Registry {
             r"
             SELECT DISTINCT j.id, j.slurm_id, j.job_name, j.project_name, j.project_path,
                    j.remote_host, j.remote_path, j.command, j.status, j.config_json,
-                   j.created_at, j.updated_at, j.outputs_synced, j.note
+                   j.created_at, j.updated_at, j.outputs_synced, j.note, j.archived
             FROM jobs j
             ",
         );
