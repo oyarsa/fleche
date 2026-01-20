@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.5.0] - 2026-01-20
+
+### Added
+- Note search in `fleche logs` with `--note <pattern>` flag
+  - Filter jobs by note content using case-insensitive regex
+  - Example: `fleche logs --note "learning rate"` finds jobs with matching notes
+- Job archiving to hide completed jobs without deleting them
+  - `fleche clean --archive <job-id>` archives a job
+  - `fleche clean --archive --all` archives all finished jobs
+  - `fleche clean --unarchive <job-id>` restores archived jobs
+  - `fleche status --archived` shows only archived jobs
+  - `fleche status --all-jobs` shows all jobs including archived
+  - Archived jobs are hidden from normal listings but data is preserved
+
+### Fixed
+- Missing `note` column in `list_jobs` SELECT query (caused notes to not load properly)
+
 ## [6.4.0] - 2026-01-19
 
 ### Added
