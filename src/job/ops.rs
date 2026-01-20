@@ -43,6 +43,10 @@ pub struct CleanJobsOptions {
     pub all: bool,
     /// Also delete the shared workspace.
     pub clean_workspace: bool,
+    /// Archive jobs instead of deleting.
+    pub archive: bool,
+    /// Restore archived jobs.
+    pub unarchive: bool,
     /// Skip confirmation prompt.
     pub skip_confirm: bool,
     /// Enable verbose SSH output.
@@ -50,12 +54,18 @@ pub struct CleanJobsOptions {
 }
 
 /// Shows the status of a specific job or lists recent jobs.
+///
+/// The `archived_filter` parameter controls visibility of archived jobs:
+/// - `None`: Show only non-archived jobs (default)
+/// - `Some(true)`: Show only archived jobs
+/// - `Some(false)`: Show all jobs (both archived and non-archived)
 pub async fn show_status(
     job_id: Option<&str>,
     filters: &[String],
     name_filter: Option<&str>,
     tags: &[(String, String)],
     last: Option<usize>,
+    archived_filter: Option<bool>,
     debug: bool,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -100,7 +110,15 @@ pub async fn show_status(
             .collect::<Result<Vec<_>>>()?;
 
         let limit = last.unwrap_or(20);
-        let jobs = registry.list_jobs(None, &status_filters, name_filter, tags, limit)?;
+        let jobs = registry.list_jobs(
+            None,
+            &status_filters,
+            name_filter,
+            None,
+            tags,
+            archived_filter,
+            limit,
+        )?;
 
         if jobs.is_empty() {
             println!("No jobs found. Run `fleche run` to submit a job.");
@@ -173,16 +191,17 @@ pub fn list_tags() -> Result<()> {
 pub async fn show_logs(
     job_id: Option<&str>,
     tags: &[(String, String)],
+    note_filter: Option<&str>,
     opts: ShowLogsOptions,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
-    // If no job ID provided, use most recent job (optionally filtered by tags)
+    // If no job ID provided, use most recent job (optionally filtered by tags/note)
     let job = if let Some(id) = job_id {
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, &[], None, tags, 1)?
+            .list_jobs(None, &[], None, note_filter, tags, None, 1)?
             .into_iter()
             .next()
             .ok_or(FlecheError::NoRecentJob)?
@@ -309,7 +328,7 @@ pub async fn download_outputs(
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, &[], None, tags, 1)?
+            .list_jobs(None, &[], None, None, tags, None, 1)?
             .into_iter()
             .next()
             .ok_or(FlecheError::NoRecentJob)?
@@ -488,7 +507,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], None, tags, usize::MAX)?
+                .list_jobs(None, &[], None, None, tags, None, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -499,7 +518,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], None, tags, usize::MAX)?
+                .list_jobs(None, &[], None, None, tags, None, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -574,6 +593,7 @@ pub async fn cancel_jobs(
 }
 
 /// Cleans up jobs by removing them from the registry and deleting remote job files.
+/// Also supports archiving/unarchiving jobs.
 pub async fn clean_jobs(
     job_id: Option<&str>,
     older_than: Option<&str>,
@@ -582,6 +602,40 @@ pub async fn clean_jobs(
 ) -> Result<()> {
     let registry = Registry::open()?;
 
+    // Handle --unarchive mode: restore archived jobs
+    if opts.unarchive {
+        let jobs_to_unarchive: Vec<JobRecord> = if let Some(id) = job_id {
+            let job = registry.get_job(id)?;
+            if !job.archived {
+                println!("Job {} is not archived.", job.id);
+                return Ok(());
+            }
+            vec![job]
+        } else if opts.all {
+            registry.list_archived_jobs()?
+        } else {
+            println!("Specify a job ID or --all with --unarchive");
+            return Ok(());
+        };
+
+        if jobs_to_unarchive.is_empty() {
+            println!("No archived jobs to restore.");
+            return Ok(());
+        }
+
+        for job in &jobs_to_unarchive {
+            registry.unarchive_job(&job.id)?;
+            println!(
+                "{} Restored job {} from archive",
+                style("✓").green(),
+                job.id
+            );
+        }
+
+        return Ok(());
+    }
+
+    // For archive/clean: get jobs to process
     let jobs_to_clean: Vec<JobRecord> = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
     } else if opts.all {
@@ -590,7 +644,7 @@ pub async fn clean_jobs(
             registry.list_finished_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], None, tags, usize::MAX)?
+                .list_jobs(None, &[], None, None, tags, None, usize::MAX)?
                 .into_iter()
                 .filter(|j| {
                     matches!(
@@ -618,10 +672,44 @@ pub async fn clean_jobs(
     };
 
     if jobs_to_clean.is_empty() && !opts.clean_workspace {
-        println!("No jobs to clean.");
+        println!(
+            "No jobs to {}.",
+            if opts.archive { "archive" } else { "clean" }
+        );
         return Ok(());
     }
 
+    // Handle --archive mode: archive jobs instead of deleting
+    if opts.archive {
+        if !jobs_to_clean.is_empty()
+            && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
+        {
+            println!("Jobs to archive:");
+            for job in &jobs_to_clean {
+                println!(
+                    "  {} ({}) - {}",
+                    job.id,
+                    style(&job.status).cyan(),
+                    job.job_name
+                );
+            }
+            println!();
+        }
+
+        if !opts.skip_confirm && !confirm("Archive these jobs?")? {
+            println!("Cancelled.");
+            return Ok(());
+        }
+
+        for job in &jobs_to_clean {
+            registry.archive_job(&job.id)?;
+            println!("{} Archived job {}", style("✓").green(), job.id);
+        }
+
+        return Ok(());
+    }
+
+    // Normal clean mode: delete jobs
     // Show jobs and confirm
     if !jobs_to_clean.is_empty() && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some()) {
         println!("Jobs to clean:");
@@ -726,7 +814,7 @@ pub async fn wait_for_job(
         registry.get_job(id)?
     } else {
         registry
-            .list_jobs(None, &[], None, tags, 1)?
+            .list_jobs(None, &[], None, None, tags, None, 1)?
             .into_iter()
             .next()
             .ok_or(FlecheError::NoRecentJob)?
@@ -883,7 +971,7 @@ pub async fn show_stats(
     let jobs: Vec<JobRecord> = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
     } else {
-        registry.list_jobs(None, &[], None, tags, last)?
+        registry.list_jobs(None, &[], None, None, tags, None, last)?
     };
 
     if jobs.is_empty() {

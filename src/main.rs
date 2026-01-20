@@ -152,13 +152,25 @@ async fn run() -> Result<()> {
             name,
             tags,
             last,
+            archived,
+            all_jobs,
         } => {
+            // Determine archived filter based on flags
+            let archived_filter = if archived {
+                Some(true) // Show only archived
+            } else if all_jobs {
+                Some(false) // Show all (both archived and non-archived)
+            } else {
+                None // Default: show only non-archived
+            };
+
             job::show_status(
                 job_id.as_deref(),
                 &filter,
                 name.as_deref(),
                 &tags,
                 last,
+                archived_filter,
                 cli.debug,
             )
             .await?;
@@ -172,10 +184,12 @@ async fn run() -> Result<()> {
             tail,
             raw,
             tags,
+            note,
         } => {
             job::show_logs(
                 job_id.as_deref(),
                 &tags,
+                note.as_deref(),
                 job::ShowLogsOptions {
                     follow,
                     only_stdout: stdout,
@@ -222,6 +236,8 @@ async fn run() -> Result<()> {
             all,
             older_than,
             workspace,
+            archive,
+            unarchive,
             yes,
             tags,
         } => {
@@ -232,6 +248,8 @@ async fn run() -> Result<()> {
                 job::CleanJobsOptions {
                     all,
                     clean_workspace: workspace,
+                    archive,
+                    unarchive,
                     skip_confirm: yes,
                     debug: cli.debug,
                 },

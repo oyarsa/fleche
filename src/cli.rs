@@ -167,6 +167,14 @@ pub enum Commands {
         /// Number of jobs to show (default: 20)
         #[arg(short = 'n', long)]
         last: Option<usize>,
+
+        /// Show only archived jobs
+        #[arg(long)]
+        archived: bool,
+
+        /// Show all jobs including archived
+        #[arg(long = "all-jobs", conflicts_with = "archived")]
+        all_jobs: bool,
     },
 
     /// Fetch and display job logs
@@ -199,6 +207,10 @@ pub enum Commands {
         /// Filter by tag when using default job (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
+
+        /// Filter by note content (regex pattern, case-insensitive)
+        #[arg(long)]
+        note: Option<String>,
     },
 
     /// Download output files from remote to local
@@ -253,6 +265,7 @@ pub enum Commands {
     ///
     /// This removes job logs and metadata, but NOT the workspace.
     /// Use --workspace to also clear the shared workspace.
+    /// Use --archive to hide jobs without deleting them.
     Clean {
         /// Job ID (optional with --all or --older-than)
         job_id: Option<String>,
@@ -268,6 +281,14 @@ pub enum Commands {
         /// Also delete the shared workspace
         #[arg(long)]
         workspace: bool,
+
+        /// Archive job instead of deleting (hides from listings)
+        #[arg(long)]
+        archive: bool,
+
+        /// Restore archived job to normal listings
+        #[arg(long, conflicts_with_all = ["archive", "workspace"])]
+        unarchive: bool,
 
         /// Skip confirmation prompt
         #[arg(short, long)]

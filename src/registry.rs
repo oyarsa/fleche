@@ -7,7 +7,7 @@
 use crate::config::ResolvedJob;
 use crate::error::{FlecheError, Result};
 use chrono::{DateTime, Duration, Utc};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 const JOB_SELECT_COLUMNS: &str = r"
     id, slurm_id, job_name, project_name, project_path,
     remote_host, remote_path, command, status, config_json,
-    created_at, updated_at, outputs_synced, note";
+    created_at, updated_at, outputs_synced, note, archived";
 
 /// A record of a submitted job stored in the local registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +52,8 @@ pub struct JobRecord {
     pub tags: HashMap<String, String>,
     /// Optional user note/annotation for the job.
     pub note: Option<String>,
+    /// Whether this job is archived (hidden from normal listings).
+    pub archived: bool,
 }
 
 impl JobRecord {
@@ -82,6 +84,7 @@ impl JobRecord {
             outputs_synced: row.get::<_, i32>(12)? == 1,
             tags: HashMap::new(),
             note: row.get(13)?,
+            archived: row.get::<_, Option<i32>>(14)?.unwrap_or(0) == 1,
         })
     }
 }
@@ -193,6 +196,12 @@ impl Registry {
         let _ = self
             .conn
             .execute("ALTER TABLE jobs ADD COLUMN note TEXT", []);
+
+        // Migration: add archived column if it doesn't exist (for existing databases)
+        let _ = self.conn.execute(
+            "ALTER TABLE jobs ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
 
         Ok(())
     }
@@ -344,21 +353,29 @@ impl Registry {
 
     /// Lists jobs matching the given filters.
     ///
-    /// Jobs can be filtered by project path, status, name prefix, and tags. Results are
-    /// ordered by creation time (newest first) and limited to `limit` results.
+    /// Jobs can be filtered by project path, status, name prefix, note content, and tags.
+    /// Results are ordered by creation time (newest first) and limited to `limit` results.
+    ///
+    /// The `archived_filter` parameter controls visibility of archived jobs:
+    /// - `None`: Show only non-archived jobs (default)
+    /// - `Some(true)`: Show only archived jobs
+    /// - `Some(false)`: Show all jobs (both archived and non-archived)
+    #[allow(clippy::too_many_arguments)]
     pub fn list_jobs(
         &self,
         project_filter: Option<&str>,
         status_filters: &[JobStatus],
         name_filter: Option<&str>,
+        note_filter: Option<&str>,
         tag_filters: &[(String, String)],
+        archived_filter: Option<bool>,
         limit: usize,
     ) -> Result<Vec<JobRecord>> {
         let mut sql = String::from(
             r"
             SELECT DISTINCT j.id, j.slurm_id, j.job_name, j.project_name, j.project_path,
                    j.remote_host, j.remote_path, j.command, j.status, j.config_json,
-                   j.created_at, j.updated_at, j.outputs_synced
+                   j.created_at, j.updated_at, j.outputs_synced, j.note
             FROM jobs j
             ",
         );
@@ -391,6 +408,21 @@ impl Registry {
             }
         }
 
+        // Handle archived filter
+        match archived_filter {
+            None => {
+                // Default: show only non-archived jobs
+                conditions.push("(j.archived = 0 OR j.archived IS NULL)".to_string());
+            }
+            Some(true) => {
+                // Show only archived jobs
+                conditions.push("j.archived = 1".to_string());
+            }
+            Some(false) => {
+                // Show all jobs (no condition added)
+            }
+        }
+
         // Build regex for name filtering (applied in Rust after SQL query)
         let name_regex = name_filter.and_then(|pattern| {
             // Add implicit .* around the pattern unless anchors are present
@@ -407,14 +439,32 @@ impl Registry {
             Regex::new(&pattern).ok()
         });
 
+        // Build regex for note filtering (applied in Rust, case-insensitive)
+        let note_regex = note_filter.and_then(|pattern| {
+            let pattern = if pattern.starts_with('^') {
+                pattern.to_string()
+            } else {
+                format!(".*{pattern}")
+            };
+            let pattern = if pattern.ends_with('$') {
+                pattern
+            } else {
+                format!("{pattern}.*")
+            };
+            RegexBuilder::new(&pattern)
+                .case_insensitive(true)
+                .build()
+                .ok()
+        });
+
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
         }
 
-        // Fetch more rows than needed when name filtering (regex applied in Rust).
+        // Fetch more rows than needed when filtering by regex (applied in Rust).
         // Use a reasonable cap to prevent loading the entire database.
-        let sql_limit: i64 = if name_filter.is_some() {
+        let sql_limit: i64 = if name_filter.is_some() || note_filter.is_some() {
             i64::try_from(limit.saturating_mul(10).max(1000)).unwrap_or(i64::MAX)
         } else {
             i64::try_from(limit).unwrap_or(i64::MAX)
@@ -431,6 +481,11 @@ impl Registry {
             .collect::<std::result::Result<Vec<_>, _>>()?
             .into_iter()
             .filter(|job| name_regex.as_ref().is_none_or(|re| re.is_match(&job.id)))
+            .filter(|job| {
+                note_regex
+                    .as_ref()
+                    .is_none_or(|re| job.note.as_ref().is_some_and(|n| re.is_match(n)))
+            })
             .take(limit)
             .collect();
 
@@ -440,11 +495,13 @@ impl Registry {
     /// Lists finished jobs older than the given duration.
     ///
     /// Only returns jobs with status completed, failed, or cancelled.
+    /// Excludes archived jobs.
     pub fn list_jobs_older_than(&self, duration: Duration) -> Result<Vec<JobRecord>> {
         let cutoff = Utc::now() - duration;
         let sql = format!(
             "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
              WHERE created_at < ?1 AND status IN ('completed', 'failed', 'cancelled') \
+             AND (archived = 0 OR archived IS NULL) \
              ORDER BY created_at DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -457,10 +514,12 @@ impl Registry {
     }
 
     /// Lists all finished jobs (completed, failed, or cancelled).
+    /// Excludes archived jobs.
     pub fn list_finished_jobs(&self) -> Result<Vec<JobRecord>> {
         let sql = format!(
             "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
              WHERE status IN ('completed', 'failed', 'cancelled') \
+             AND (archived = 0 OR archived IS NULL) \
              ORDER BY created_at DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -475,10 +534,12 @@ impl Registry {
     /// Lists all active jobs (pending or running).
     ///
     /// Used to refresh job statuses from Slurm before displaying.
+    /// Excludes archived jobs.
     pub fn list_active_jobs(&self) -> Result<Vec<JobRecord>> {
         let sql = format!(
             "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
              WHERE status IN ('pending', 'running') \
+             AND (archived = 0 OR archived IS NULL) \
              ORDER BY created_at DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -497,6 +558,42 @@ impl Registry {
         self.conn
             .execute("DELETE FROM jobs WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    /// Archives a job, hiding it from normal listings.
+    pub fn archive_job(&self, id: &str) -> Result<()> {
+        let now = Utc::now();
+        self.conn.execute(
+            "UPDATE jobs SET archived = 1, updated_at = ?1 WHERE id = ?2",
+            params![now.to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    /// Unarchives a job, restoring it to normal listings.
+    pub fn unarchive_job(&self, id: &str) -> Result<()> {
+        let now = Utc::now();
+        self.conn.execute(
+            "UPDATE jobs SET archived = 0, updated_at = ?1 WHERE id = ?2",
+            params![now.to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    /// Lists all archived jobs.
+    pub fn list_archived_jobs(&self) -> Result<Vec<JobRecord>> {
+        let sql = format!(
+            "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
+             WHERE archived = 1 \
+             ORDER BY created_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+
+        let jobs: Vec<_> = stmt
+            .query_map([], JobRecord::from_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        self.load_tags_for_jobs(jobs)
     }
 
     /// Lists all unique tag key-value pairs across all jobs.
