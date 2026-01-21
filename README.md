@@ -476,7 +476,10 @@ These can be set in config or passed via CLI:
 |----------|-------------|------------|
 | Linux | Full | Full |
 | macOS | Full | Full |
-| Windows + Git Bash/WSL | Full | Foreground only |
+| WSL | Full | Full |
+| Windows | Full* | Foreground only |
+
+*Requires ssh and rsync in PATH.
 
 ## Tips
 
