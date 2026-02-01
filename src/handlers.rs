@@ -3,7 +3,7 @@
 //! Most commands delegate directly to the [`job`] module. This module contains
 //! handlers for commands that have additional logic beyond simple delegation.
 
-use crate::config::{Config, generate_init_config};
+use crate::config::{Config, ResolvedJob, generate_init_config};
 use crate::registry::{JobStatus, Registry};
 use crate::ssh::SshClient;
 use anyhow::{Context, Result};
@@ -409,7 +409,9 @@ pub async fn doctor(debug: bool) -> Result<()> {
                             job.created_at.format("%Y-%m-%d")
                         );
                     }
-                    issues.push("Check stale jobs with `fleche status` - they may be stuck".to_string());
+                    issues.push(
+                        "Check stale jobs with `fleche status` - they may be stuck".to_string(),
+                    );
                 }
 
                 // Check for old jobs that could be cleaned
@@ -564,4 +566,219 @@ pub async fn doctor(debug: bool) -> Result<()> {
 
     println!();
     Ok(())
+}
+
+/// Handles the `compare` command - shows differences between two jobs.
+pub fn compare_jobs(first_id: &str, second_id: &str) -> Result<()> {
+    let registry = Registry::open()?;
+    let job_a = registry.get_job(first_id)?;
+    let job_b = registry.get_job(second_id)?;
+
+    // Parse the resolved job configs
+    let config_a: ResolvedJob =
+        serde_json::from_str(&job_a.config_json).context("parsing config for first job")?;
+    let config_b: ResolvedJob =
+        serde_json::from_str(&job_b.config_json).context("parsing config for second job")?;
+
+    println!(
+        "{} {} vs {}",
+        style("Comparing").bold(),
+        style(&job_a.id).cyan(),
+        style(&job_b.id).cyan()
+    );
+    println!();
+
+    // Header with job IDs
+    let col_width = 35;
+    println!(
+        "  {:<15} {:>col_width$}  {:>col_width$}",
+        "",
+        style(&job_a.id).dim(),
+        style(&job_b.id).dim()
+    );
+    println!("  {}", "-".repeat(15 + col_width * 2 + 4));
+
+    // Compare basic fields
+    compare_field("Job name", &config_a.name, &config_b.name, col_width);
+    compare_field("Command", &config_a.command, &config_b.command, col_width);
+    compare_field("Host", &config_a.host, &config_b.host, col_width);
+    compare_field(
+        "Status",
+        &format!("{:?}", job_a.status),
+        &format!("{:?}", job_b.status),
+        col_width,
+    );
+
+    // Compare Slurm settings
+    println!();
+    println!("  {}", style("Slurm Settings").bold());
+    compare_option_field(
+        "Partition",
+        config_a.slurm.partition.as_deref(),
+        config_b.slurm.partition.as_deref(),
+        col_width,
+    );
+    compare_option_field(
+        "Time",
+        config_a.slurm.time.as_deref(),
+        config_b.slurm.time.as_deref(),
+        col_width,
+    );
+    compare_option_u32("GPUs", config_a.slurm.gpus, config_b.slurm.gpus, col_width);
+    compare_option_u32("CPUs", config_a.slurm.cpus, config_b.slurm.cpus, col_width);
+    compare_option_field(
+        "Memory",
+        config_a.slurm.memory.as_deref(),
+        config_b.slurm.memory.as_deref(),
+        col_width,
+    );
+    compare_option_field(
+        "Constraint",
+        config_a.slurm.constraint.as_deref(),
+        config_b.slurm.constraint.as_deref(),
+        col_width,
+    );
+    compare_option_u32(
+        "Nodes",
+        config_a.slurm.nodes,
+        config_b.slurm.nodes,
+        col_width,
+    );
+    compare_option_field(
+        "Exclude",
+        config_a.slurm.exclude.as_deref(),
+        config_b.slurm.exclude.as_deref(),
+        col_width,
+    );
+
+    // Compare environment variables
+    let all_env_keys: std::collections::BTreeSet<_> =
+        config_a.env.keys().chain(config_b.env.keys()).collect();
+
+    if !all_env_keys.is_empty() {
+        println!();
+        println!("  {}", style("Environment").bold());
+        for key in all_env_keys {
+            let val_a = config_a.env.get(key).map(String::as_str);
+            let val_b = config_b.env.get(key).map(String::as_str);
+            compare_option_field(key, val_a, val_b, col_width);
+        }
+    }
+
+    // Compare tags
+    let all_tag_keys: std::collections::BTreeSet<_> =
+        job_a.tags.keys().chain(job_b.tags.keys()).collect();
+
+    if !all_tag_keys.is_empty() {
+        println!();
+        println!("  {}", style("Tags").bold());
+        for key in all_tag_keys {
+            let val_a = job_a.tags.get(key).map(String::as_str);
+            let val_b = job_b.tags.get(key).map(String::as_str);
+            compare_option_field(key, val_a, val_b, col_width);
+        }
+    }
+
+    // Compare notes
+    if job_a.note.is_some() || job_b.note.is_some() {
+        println!();
+        println!("  {}", style("Notes").bold());
+        compare_option_field(
+            "Note",
+            job_a.note.as_deref(),
+            job_b.note.as_deref(),
+            col_width,
+        );
+    }
+
+    // Compare inputs/outputs if different
+    if config_a.inputs != config_b.inputs {
+        println!();
+        println!("  {}", style("Inputs").bold());
+        println!(
+            "    A: {}",
+            if config_a.inputs.is_empty() {
+                "(none)".to_string()
+            } else {
+                config_a.inputs.join(", ")
+            }
+        );
+        println!(
+            "    B: {}",
+            if config_b.inputs.is_empty() {
+                "(none)".to_string()
+            } else {
+                config_b.inputs.join(", ")
+            }
+        );
+    }
+
+    if config_a.outputs != config_b.outputs {
+        println!();
+        println!("  {}", style("Outputs").bold());
+        println!(
+            "    A: {}",
+            if config_a.outputs.is_empty() {
+                "(none)".to_string()
+            } else {
+                config_a.outputs.join(", ")
+            }
+        );
+        println!(
+            "    B: {}",
+            if config_b.outputs.is_empty() {
+                "(none)".to_string()
+            } else {
+                config_b.outputs.join(", ")
+            }
+        );
+    }
+
+    println!();
+    Ok(())
+}
+
+/// Compares two string values and prints them with highlighting for differences.
+fn compare_field(label: &str, val_a: &str, val_b: &str, col_width: usize) {
+    let truncated_a = truncate_str(val_a, col_width);
+    let truncated_b = truncate_str(val_b, col_width);
+
+    if val_a == val_b {
+        println!(
+            "  {:<15} {:>col_width$}  {:>col_width$}",
+            style(label).dim(),
+            style(&truncated_a).dim(),
+            style(&truncated_b).dim()
+        );
+    } else {
+        println!(
+            "  {:<15} {:>col_width$}  {:>col_width$}",
+            style(label).bold(),
+            style(&truncated_a).red(),
+            style(&truncated_b).green()
+        );
+    }
+}
+
+/// Compares two optional string values.
+fn compare_option_field(label: &str, val_a: Option<&str>, val_b: Option<&str>, col_width: usize) {
+    let str_a = val_a.unwrap_or("-");
+    let str_b = val_b.unwrap_or("-");
+    compare_field(label, str_a, str_b, col_width);
+}
+
+/// Compares two optional u32 values.
+fn compare_option_u32(label: &str, val_a: Option<u32>, val_b: Option<u32>, col_width: usize) {
+    let str_a = val_a.map_or("-".to_string(), |v| v.to_string());
+    let str_b = val_b.map_or("-".to_string(), |v| v.to_string());
+    compare_field(label, &str_a, &str_b, col_width);
+}
+
+/// Truncates a string to fit within the specified width.
+fn truncate_str(s: &str, max_width: usize) -> String {
+    if s.len() <= max_width {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_width - 1])
+    }
 }

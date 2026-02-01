@@ -401,6 +401,18 @@ pub enum Commands {
         /// Note text to set (omit to view existing note)
         note: Option<String>,
     },
+
+    /// Compare two jobs side-by-side
+    ///
+    /// Shows differences in configuration, environment, Slurm settings,
+    /// tags, and status between two jobs.
+    Compare {
+        /// First job ID
+        job_a: String,
+
+        /// Second job ID
+        job_b: String,
+    },
 }
 
 /// Parses a KEY=VALUE string into a tuple.

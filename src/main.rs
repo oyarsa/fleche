@@ -314,6 +314,10 @@ async fn run() -> Result<()> {
         Commands::Note { job_id, note } => {
             job::note_job(&job_id, note.as_deref())?;
         }
+
+        Commands::Compare { job_a, job_b } => {
+            handlers::compare_jobs(&job_a, &job_b)?;
+        }
     }
 
     Ok(())
