@@ -225,7 +225,13 @@ pub async fn run_job(
         if opts.background {
             if opts.notify {
                 // Wait for job completion in background and notify
-                wait_and_notify(&job_id, &host, opts.debug).await?;
+                wait_and_notify(
+                    &job_id,
+                    &host,
+                    opts.debug,
+                    config.settings.poll_interval_remote_secs,
+                )
+                .await?;
             }
             // Background mode doesn't support retry (we don't wait for completion)
             break;
@@ -234,7 +240,14 @@ pub async fn run_job(
         // Foreground mode: follow logs and check result
         println!();
         let log_path = format!("{job_dir}/job.out");
-        let final_status = follow_job_logs(&host, &slurm_id, &log_path, opts.debug).await?;
+        let final_status = follow_job_logs(
+            &host,
+            &slurm_id,
+            &log_path,
+            opts.debug,
+            config.settings.poll_interval_remote_secs,
+        )
+        .await?;
 
         // Update registry with final status
         registry.update_status(&job_id, final_status)?;
@@ -369,9 +382,10 @@ async fn run_job_locally(
             // Spawn a background task to wait and notify
             let project_path = config.project_path.clone();
             let job_id_clone = job_id.clone();
+            let poll_interval = config.settings.poll_interval_local_secs;
             tokio::spawn(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    tokio::time::sleep(Duration::from_secs(poll_interval)).await;
                     match local::get_local_job_status(&project_path, &job_id_clone) {
                         Ok(status) => {
                             if let Ok(registry) = Registry::open() {
@@ -613,7 +627,14 @@ async fn run_job_with_resolved(
     if !background {
         println!();
         let log_path = format!("{job_dir}/job.out");
-        follow_job_logs(&config.remote.host, &slurm_id, &log_path, debug).await?;
+        follow_job_logs(
+            &config.remote.host,
+            &slurm_id,
+            &log_path,
+            debug,
+            config.settings.poll_interval_remote_secs,
+        )
+        .await?;
     }
 
     Ok(())
@@ -764,6 +785,7 @@ async fn follow_job_logs(
     slurm_id: &str,
     log_path: &str,
     debug: bool,
+    poll_interval: u64,
 ) -> Result<JobStatus> {
     println!(
         "{}",
@@ -780,7 +802,7 @@ async fn follow_job_logs(
     let host_for_check = host.clone();
     let status_check = async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(poll_interval)).await;
             let ssh = SshClient::new(&host_for_check, debug);
             if let Ok(status) = get_job_status(&ssh, &slurm_id_for_check).await {
                 match status {
@@ -840,7 +862,12 @@ async fn follow_job_logs(
 /// Waits for a job to complete and sends a terminal notification.
 ///
 /// Polls the job status every few seconds until it reaches a terminal state.
-async fn wait_and_notify(job_id: &str, remote_host: &str, debug: bool) -> Result<()> {
+async fn wait_and_notify(
+    job_id: &str,
+    remote_host: &str,
+    debug: bool,
+    poll_interval: u64,
+) -> Result<()> {
     println!(
         "{}",
         style("Waiting for job to complete (will notify when done)...").dim()
@@ -878,7 +905,7 @@ async fn wait_and_notify(job_id: &str, remote_host: &str, debug: bool) -> Result
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(poll_interval)).await;
     }
 }
 

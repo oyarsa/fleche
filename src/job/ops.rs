@@ -16,11 +16,14 @@ use super::status::resolve_job;
 /// Waits for a job to complete.
 ///
 /// Polls the job status until it reaches a terminal state (completed, failed, cancelled).
+/// Poll intervals can be customized via the config settings.
 pub async fn wait_for_job(
     job_id: Option<&str>,
     notify: bool,
     tags: &[(String, String)],
     debug: bool,
+    poll_interval_local: u64,
+    poll_interval_remote: u64,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let job = resolve_job(&registry, job_id, tags, None)?;
@@ -35,33 +38,14 @@ pub async fn wait_for_job(
             let status = local::get_local_job_status(&project_path, &job.id)?;
             registry.update_status(&job.id, status)?;
 
-            let message = match status {
-                JobStatus::Completed => {
-                    let msg = format!("Job {} completed successfully.", job.id);
-                    println!("{}", style(&msg).green().bold());
-                    Some(msg)
-                }
-                JobStatus::Failed => {
-                    let msg = format!("Job {} failed.", job.id);
-                    println!("{}", style(&msg).red().bold());
-                    Some(msg)
-                }
-                JobStatus::Cancelled => {
-                    let msg = format!("Job {} was cancelled.", job.id);
-                    println!("{}", style(&msg).yellow().bold());
-                    Some(msg)
-                }
-                _ => None,
-            };
-
-            if let Some(msg) = message {
+            if let Some(msg) = format_terminal_status(&job.id, status) {
                 if notify {
                     send_notification(&msg);
                 }
                 return Ok(());
             }
 
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_secs(poll_interval_local)).await;
         }
     }
 
@@ -73,26 +57,7 @@ pub async fn wait_for_job(
             let status = get_job_status(&ssh, slurm_id).await?;
             registry.update_status(&job.id, status)?;
 
-            let message = match status {
-                JobStatus::Completed => {
-                    let msg = format!("Job {} completed successfully.", job.id);
-                    println!("{}", style(&msg).green().bold());
-                    Some(msg)
-                }
-                JobStatus::Failed => {
-                    let msg = format!("Job {} failed.", job.id);
-                    println!("{}", style(&msg).red().bold());
-                    Some(msg)
-                }
-                JobStatus::Cancelled => {
-                    let msg = format!("Job {} was cancelled.", job.id);
-                    println!("{}", style(&msg).yellow().bold());
-                    Some(msg)
-                }
-                _ => None,
-            };
-
-            if let Some(msg) = message {
+            if let Some(msg) = format_terminal_status(&job.id, status) {
                 if notify {
                     send_notification(&msg);
                 }
@@ -102,7 +67,29 @@ pub async fn wait_for_job(
             return Err(FlecheError::NoSlurmId(job.id.clone()));
         }
 
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(poll_interval_remote)).await;
+    }
+}
+
+/// Formats a message for terminal job states, returning None for non-terminal states.
+fn format_terminal_status(job_id: &str, status: JobStatus) -> Option<String> {
+    match status {
+        JobStatus::Completed => {
+            let msg = format!("Job {job_id} completed successfully.");
+            println!("{}", style(&msg).green().bold());
+            Some(msg)
+        }
+        JobStatus::Failed => {
+            let msg = format!("Job {job_id} failed.");
+            println!("{}", style(&msg).red().bold());
+            Some(msg)
+        }
+        JobStatus::Cancelled => {
+            let msg = format!("Job {job_id} was cancelled.");
+            println!("{}", style(&msg).yellow().bold());
+            Some(msg)
+        }
+        _ => None,
     }
 }
 

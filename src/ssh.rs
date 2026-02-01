@@ -26,9 +26,11 @@ const MAX_RETRIES: u32 = 3;
 /// Base delay for exponential backoff (doubles each retry).
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
-/// Timeout for SSH command execution (not connection - that's `ConnectTimeout`).
-/// If a command takes longer than this, likely the socket is stale.
-const EXEC_TIMEOUT: Duration = Duration::from_secs(60);
+/// Default timeout for SSH command execution.
+const DEFAULT_EXEC_TIMEOUT_SECS: u64 = 60;
+
+/// Default timeout for SSH connection establishment.
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
 
 /// Returns the path to the SSH log file (`~/.config/fleche/ssh.log`).
 fn ssh_log_path() -> Option<PathBuf> {
@@ -72,10 +74,10 @@ fn is_retryable_error(stderr: &str) -> bool {
 }
 
 /// Formats a timeout error with helpful context and suggestions.
-fn format_timeout_error(command: &str) -> String {
+fn format_timeout_error(command: &str, timeout: Duration) -> String {
     let is_sbatch = command.contains("sbatch");
 
-    let mut msg = format!("Command timed out after {EXEC_TIMEOUT:?}");
+    let mut msg = format!("Command timed out after {timeout:?}");
 
     if is_sbatch {
         msg.push_str("\n\nThis usually means the Slurm scheduler is overloaded or down.");
@@ -126,17 +128,41 @@ pub struct SshClient {
     host: String,
     /// Enable verbose SSH output (`-v` flag).
     debug: bool,
+    /// Timeout for SSH command execution.
+    exec_timeout: Duration,
+    /// Timeout for SSH connection establishment.
+    connect_timeout: Duration,
 }
 
 impl SshClient {
-    /// Creates a new SSH client for the given host.
+    /// Creates a new SSH client for the given host with default timeouts.
     ///
     /// The host can be a hostname, IP address, or an alias defined in `~/.ssh/config`.
     /// Set `debug` to true to print verbose SSH output to terminal.
     pub fn new(host: &str, debug: bool) -> Self {
+        Self::with_timeouts(
+            host,
+            debug,
+            DEFAULT_EXEC_TIMEOUT_SECS,
+            DEFAULT_CONNECT_TIMEOUT_SECS,
+        )
+    }
+
+    /// Creates a new SSH client with custom timeout settings.
+    ///
+    /// - `exec_timeout_secs`: Maximum time for a command to complete
+    /// - `connect_timeout_secs`: Maximum time to establish the SSH connection
+    pub fn with_timeouts(
+        host: &str,
+        debug: bool,
+        exec_timeout_secs: u64,
+        connect_timeout_secs: u64,
+    ) -> Self {
         SshClient {
             host: host.to_string(),
             debug,
+            exec_timeout: Duration::from_secs(exec_timeout_secs),
+            connect_timeout: Duration::from_secs(connect_timeout_secs),
         }
     }
 
@@ -185,7 +211,7 @@ impl SshClient {
             "ClearAllForwardings=yes".to_string(),
             // Timeout options to prevent hanging
             "-o".to_string(),
-            "ConnectTimeout=30".to_string(),
+            format!("ConnectTimeout={}", self.connect_timeout.as_secs()),
             "-o".to_string(),
             "ServerAliveInterval=15".to_string(),
             "-o".to_string(),
@@ -255,7 +281,7 @@ impl SshClient {
                 .arg(command)
                 .output();
 
-            let output = match tokio::time::timeout(EXEC_TIMEOUT, output_future).await {
+            let output = match tokio::time::timeout(self.exec_timeout, output_future).await {
                 Ok(Ok(output)) => output,
                 Ok(Err(e)) => {
                     return Err(FlecheError::SshConnection(format!(
@@ -266,9 +292,12 @@ impl SshClient {
                     append_to_ssh_log(
                         &self.host,
                         command,
-                        &format!("Command timed out after {EXEC_TIMEOUT:?}"),
+                        &format!("Command timed out after {:?}", self.exec_timeout),
                     );
-                    return Err(FlecheError::SshTimeout(format_timeout_error(command)));
+                    return Err(FlecheError::SshTimeout(format_timeout_error(
+                        command,
+                        self.exec_timeout,
+                    )));
                 }
             };
 
@@ -339,7 +368,7 @@ impl SshClient {
                 .arg(command)
                 .output();
 
-            let output = match tokio::time::timeout(EXEC_TIMEOUT, output_future).await {
+            let output = match tokio::time::timeout(self.exec_timeout, output_future).await {
                 Ok(Ok(output)) => output,
                 Ok(Err(e)) => {
                     return Err(FlecheError::SshConnection(format!(
@@ -350,9 +379,12 @@ impl SshClient {
                     append_to_ssh_log(
                         &self.host,
                         command,
-                        &format!("Command timed out after {EXEC_TIMEOUT:?}"),
+                        &format!("Command timed out after {:?}", self.exec_timeout),
                     );
-                    return Err(FlecheError::SshTimeout(format_timeout_error(command)));
+                    return Err(FlecheError::SshTimeout(format_timeout_error(
+                        command,
+                        self.exec_timeout,
+                    )));
                 }
             };
 
@@ -381,7 +413,7 @@ impl SshClient {
             .arg(command)
             .output();
 
-        let output = match tokio::time::timeout(EXEC_TIMEOUT, output_future).await {
+        let output = match tokio::time::timeout(self.exec_timeout, output_future).await {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 return Err(FlecheError::SshConnection(format!(
@@ -389,7 +421,10 @@ impl SshClient {
                 )));
             }
             Err(_) => {
-                return Err(FlecheError::SshTimeout(format_timeout_error(command)));
+                return Err(FlecheError::SshTimeout(format_timeout_error(
+                    command,
+                    self.exec_timeout,
+                )));
             }
         };
 

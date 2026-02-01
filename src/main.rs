@@ -301,7 +301,24 @@ async fn run() -> Result<()> {
             notify,
             tags,
         } => {
-            job::wait_for_job(job_id.as_deref(), notify, &tags, cli.debug).await?;
+            // Load config for poll intervals, using defaults if not available
+            let (poll_local, poll_remote) = Config::find_and_load()
+                .map(|c| {
+                    (
+                        c.settings.poll_interval_local_secs,
+                        c.settings.poll_interval_remote_secs,
+                    )
+                })
+                .unwrap_or((2, 5));
+            job::wait_for_job(
+                job_id.as_deref(),
+                notify,
+                &tags,
+                cli.debug,
+                poll_local,
+                poll_remote,
+            )
+            .await?;
         }
 
         Commands::Completions { shell } => {
