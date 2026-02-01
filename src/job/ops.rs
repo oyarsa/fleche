@@ -195,7 +195,10 @@ pub async fn show_stats(
     println!("{}", "-".repeat(80));
 
     for job in remote_jobs {
-        let slurm_id = job.slurm_id.as_ref().unwrap();
+        let slurm_id = job
+            .slurm_id
+            .as_ref()
+            .expect("already filtered to jobs with slurm_id");
         let ssh = SshClient::new(&job.remote_host, debug);
 
         match get_job_resource_usage(&ssh, slurm_id).await {
