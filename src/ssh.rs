@@ -158,11 +158,11 @@ impl SshClient {
             .await;
 
         // Also try to remove any matching socket files directly
-        if let Ok(entries) = std::fs::read_dir(&socket_dir) {
-            for entry in entries.flatten() {
+        if let Ok(mut entries) = tokio::fs::read_dir(&socket_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
                 let name = entry.file_name();
                 if name.to_string_lossy().contains(&self.host) {
-                    let _ = std::fs::remove_file(entry.path());
+                    let _ = tokio::fs::remove_file(entry.path()).await;
                 }
             }
         }

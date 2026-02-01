@@ -189,7 +189,7 @@ pub async fn download_outputs(
         // Ensure local parent directory exists (even for dry-run, rsync needs it)
         if !options.dry_run {
             if let Some(parent) = local_path.parent() {
-                std::fs::create_dir_all(parent)?;
+                tokio::fs::create_dir_all(parent).await?;
             }
         }
 
