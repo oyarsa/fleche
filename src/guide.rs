@@ -97,6 +97,15 @@ memory = "64G"
 
 [jobs.train.env]          # Additional env vars for this job
 CONFIG = "default"
+
+# Optional settings to tune behavior
+[settings]
+# default_list_limit = 20           # Jobs shown in fleche status
+# poll_interval_local_secs = 2      # Status check interval for local jobs
+# poll_interval_remote_secs = 5     # Status check interval for remote jobs
+# ssh_timeout_secs = 60             # SSH command timeout
+# ssh_connect_timeout_secs = 30     # SSH connection timeout
+# retry_base_delay_secs = 30        # Base delay for --retry backoff
 ```
 
 ### Environment Variable Substitution
@@ -440,6 +449,9 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 | `fleche ping` | Check Slurm cluster health |
 | `fleche init` | Create starter config |
 | `fleche check` | Validate config |
+| `fleche check --remote` | Also validate against remote server |
+| `fleche doctor` | Comprehensive troubleshooting diagnostics |
+| `fleche compare <a> <b>` | Compare two job configurations side-by-side |
 | `fleche completions <shell>` | Generate shell completions (bash/zsh/fish) |
 
 ## Slurm Options
@@ -483,10 +495,54 @@ All jobs share a workspace directory:
 - Job logs go to `jobs/<job-id>/`
 - `fleche download` copies `outputs` from `workspace/` to local
 
+## Troubleshooting
+
+### Validate Configuration
+
+```bash
+# Check config syntax locally
+fleche check
+
+# Validate against remote server (SSH, Slurm, disk space)
+fleche check --remote
+```
+
+The `--remote` flag tests:
+- SSH connectivity with timing
+- Slurm controller availability
+- Partition existence and node count
+- Constraint validity for the partition
+- Base path writability
+- Available disk space
+
+### Comprehensive Diagnostics
+
+```bash
+fleche doctor
+```
+
+Runs a full diagnostic check including:
+- Local tools (ssh, rsync)
+- Configuration validity
+- Job registry health (stale jobs, old jobs)
+- Remote connection and Slurm status
+- Disk space warnings
+
+### Compare Job Configurations
+
+```bash
+# Compare two jobs side-by-side
+fleche compare <job-a> <job-b>
+```
+
+Shows differences in command, Slurm settings, environment, tags, and more.
+Useful for debugging why one job succeeded while another failed.
+
 ## Tips
 
 - Use `--dry-run` to preview the sbatch script before submitting
-- Use `fleche check` to validate config after editing
+- Use `fleche check --remote` to validate config against the server
+- Use `fleche doctor` when things aren't working as expected
 - Job IDs look like `train-20260115-153042-847-x7k2` (use suffix like `x7k2` for short)
 - The job registry is at `~/.config/fleche/jobs.db`
 - Ctrl+C during streaming disconnects but doesn't cancel the job
