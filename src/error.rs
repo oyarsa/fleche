@@ -65,6 +65,14 @@ pub enum FlecheError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// An I/O operation failed with additional context.
+    #[error("{context}: {source}")]
+    IoContext {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+
     /// JSON serialization or deserialization failed.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
@@ -116,3 +124,37 @@ pub enum FlecheError {
 
 /// A Result type alias using [`FlecheError`] as the error type.
 pub type Result<T> = std::result::Result<T, FlecheError>;
+
+/// Extension trait for adding context to `std::io::Result`.
+///
+/// This is similar to `anyhow::Context` but specifically for I/O errors,
+/// preserving the original error as a source while adding descriptive context.
+///
+/// # Example
+///
+/// ```ignore
+/// use crate::error::IoResultExt;
+///
+/// std::fs::read_to_string(path)
+///     .io_context(|| format!("reading config from '{}'", path.display()))?;
+/// ```
+pub trait IoResultExt<T> {
+    /// Adds context to an I/O error, converting it to a `FlecheError`.
+    fn io_context<C, F>(self, context: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C;
+}
+
+impl<T> IoResultExt<T> for std::io::Result<T> {
+    fn io_context<C, F>(self, context: F) -> Result<T>
+    where
+        C: Into<String>,
+        F: FnOnce() -> C,
+    {
+        self.map_err(|source| FlecheError::IoContext {
+            context: context().into(),
+            source,
+        })
+    }
+}
