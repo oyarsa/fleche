@@ -15,7 +15,29 @@ When releasing:
 1. Bump the version in `Cargo.toml` (see Versioning below)
 2. Update the release date in `src/cli.rs` (`long_version()` function)
 3. Add an entry to `CHANGELOG.md` describing what changed since last release
-4. Commit, create a git tag (e.g., `v3.1.0`), and push both
+4. `jj describe -m "v3.1.0: Release summary"`
+5. `jj bookmark set master`
+6. `jj git push`
+7. `git tag v3.1.0 && git push --tags` (jj doesn't handle tags yet)
+
+## Version Control
+
+Use **jj** (Jujutsu), not git, for all version control operations:
+
+- `jj status` - check working copy status
+- `jj log` - view commit history
+- `jj describe -m "message"` - set commit message for current change
+- `jj new` - create a new empty change on top of current
+- `jj squash` - squash current change into parent
+- `jj bookmark set master` - move master bookmark to current commit
+- `jj git push` - push to remote
+
+Typical workflow:
+1. Make changes (jj auto-tracks them)
+2. `jj describe -m "Your commit message"` to describe the change
+3. `jj new` to start a new change (optional, for next task)
+4. `jj bookmark set master` to update master
+5. `jj git push` when ready to push
 
 ## Commits
 
