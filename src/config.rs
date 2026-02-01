@@ -424,7 +424,7 @@ impl Config {
         // Expand command, inputs, and outputs using the fully merged+expanded env
         let raw_command = command_override
             .map(std::string::ToString::to_string)
-            .or(job_def.command.clone())
+            .or(job_def.command)
             .ok_or_else(|| FlecheError::MissingField(format!("command for job '{name}'")))?;
 
         let command = expand_variables(
@@ -447,10 +447,7 @@ impl Config {
             .collect::<Result<Vec<_>>>()?;
 
         // Resolve host: job definition -> remote.host
-        let host = job_def
-            .host
-            .clone()
-            .unwrap_or_else(|| self.remote.host.clone());
+        let host = job_def.host.unwrap_or_else(|| self.remote.host.clone());
 
         Ok(ResolvedJob {
             name,

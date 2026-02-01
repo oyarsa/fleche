@@ -281,8 +281,8 @@ fn compare_option_field(label: &str, val_a: Option<&str>, val_b: Option<&str>, c
 
 /// Compares two optional u32 values.
 fn compare_option_u32(label: &str, val_a: Option<u32>, val_b: Option<u32>, col_width: usize) {
-    let str_a = val_a.map_or("-".to_string(), |v| v.to_string());
-    let str_b = val_b.map_or("-".to_string(), |v| v.to_string());
+    let str_a = val_a.map_or_else(|| "-".to_string(), |v| v.to_string());
+    let str_b = val_b.map_or_else(|| "-".to_string(), |v| v.to_string());
     compare_field(label, &str_a, &str_b, col_width);
 }
 
