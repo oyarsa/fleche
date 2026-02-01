@@ -601,3 +601,41 @@ fn print_issues_summary(issues: &[String]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_disk_usage_standard() {
+        // Standard df output
+        let output = "/dev/sda1 100G 50G 50G 50% /home";
+        let usage = parse_disk_usage(output).unwrap();
+        assert_eq!(usage.available, "50G");
+        assert_eq!(usage.use_percent, 50);
+    }
+
+    #[test]
+    fn test_parse_disk_usage_cephfs() {
+        // Real output from cephfs with multiple IPs
+        let output = "172.17.22.11:3300,172.17.22.12:3300,172.17.22.13:3300,172.17.22.19:3300,172.17.22.20:3300:/   20P  7.3P   13P  38% /cephfs";
+        let usage = parse_disk_usage(output).unwrap();
+        assert_eq!(usage.available, "13P");
+        assert_eq!(usage.use_percent, 38);
+    }
+
+    #[test]
+    fn test_parse_disk_usage_high_usage() {
+        let output = "/dev/sda1 100G 95G 5G 95% /home";
+        let usage = parse_disk_usage(output).unwrap();
+        assert_eq!(usage.available, "5G");
+        assert_eq!(usage.use_percent, 95);
+    }
+
+    #[test]
+    fn test_parse_disk_usage_incomplete() {
+        // Not enough fields
+        let output = "/dev/sda1 100G";
+        assert!(parse_disk_usage(output).is_none());
+    }
+}

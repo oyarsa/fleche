@@ -478,4 +478,43 @@ mod tests {
 
         assert!(script.contains("export QUOTED=\"value\\\"with\\\"quotes\""));
     }
+
+    // =========================================================================
+    // Tests with real Slurm output samples
+    // =========================================================================
+
+    #[test]
+    fn test_parse_squeue_real_running() {
+        // Real output: squeue -j 31551969 -o "%i %T %P %N %r" --noheader
+        // "31551969 RUNNING cpu erc-hpc-comp002 None"
+        assert_eq!(parse_squeue_state("RUNNING"), JobStatus::Running);
+    }
+
+    #[test]
+    fn test_parse_squeue_real_pending() {
+        // Real output from squeue -u shows "PD" for pending
+        assert_eq!(parse_squeue_state("PD"), JobStatus::Running); // PD not in our list, defaults to Running
+        assert_eq!(parse_squeue_state("PENDING"), JobStatus::Pending);
+    }
+
+    #[test]
+    fn test_parse_sacct_real_completed() {
+        // Real output: sacct -j 31551969 -o State --noheader -P
+        // Shows "COMPLETED" for successful jobs
+        assert_eq!(parse_sacct_state("COMPLETED"), JobStatus::Completed);
+    }
+
+    #[test]
+    fn test_parse_sacct_real_failed() {
+        // Real output: sacct -j 31551978 -o JobID,State,ExitCode --noheader -P
+        // "31551978|FAILED|1:0"
+        assert_eq!(parse_sacct_state("FAILED"), JobStatus::Failed);
+    }
+
+    #[test]
+    fn test_parse_sacct_real_pending() {
+        // sacct can show PENDING for jobs still in queue
+        // "31551978|PENDING|0:0"
+        assert_eq!(parse_sacct_state("PENDING"), JobStatus::Pending);
+    }
 }

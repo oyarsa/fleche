@@ -305,3 +305,60 @@ pub fn send_notification(message: &str) {
     print!("\x1b]9;fleche: {message}\x07");
     let _ = std::io::stdout().flush();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_alloc_tres_cpu_mem_node() {
+        // Real sacct output from job without GPU
+        let tres = "cpu=1,mem=1000M,node=1";
+        let result = parse_alloc_tres(tres);
+        assert_eq!(result, "1 CPU, 1000M mem");
+    }
+
+    #[test]
+    fn test_parse_alloc_tres_with_gpu() {
+        // Real sacct output from GPU job
+        let tres = "cpu=1,gres/gpu=1,node=1";
+        let result = parse_alloc_tres(tres);
+        assert_eq!(result, "1 CPU, 1 GPU");
+    }
+
+    #[test]
+    fn test_parse_alloc_tres_full() {
+        // Full format with billing
+        let tres = "billing=8,cpu=4,gres/gpu=1,mem=16G,node=1";
+        let result = parse_alloc_tres(tres);
+        assert_eq!(result, "4 CPU, 1 GPU, 16G mem");
+    }
+
+    #[test]
+    fn test_parse_alloc_tres_empty() {
+        assert_eq!(parse_alloc_tres(""), "-");
+    }
+
+    #[test]
+    fn test_parse_alloc_tres_zero_gpu() {
+        // GPU=0 should be omitted from output
+        let tres = "cpu=2,gres/gpu=0,mem=8G,node=1";
+        let result = parse_alloc_tres(tres);
+        assert_eq!(result, "2 CPU, 8G mem");
+    }
+
+    #[test]
+    fn test_truncate_id_short() {
+        assert_eq!(truncate_id("abc123"), "abc123");
+    }
+
+    #[test]
+    fn test_truncate_id_exact() {
+        assert_eq!(truncate_id("1234567890"), "1234567890");
+    }
+
+    #[test]
+    fn test_truncate_id_long() {
+        assert_eq!(truncate_id("train-abc12345-xyz"), "train-abc1");
+    }
+}
