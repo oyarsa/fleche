@@ -21,6 +21,7 @@ mod cli;
 mod config;
 mod error;
 mod guide;
+mod handlers;
 mod job;
 mod local;
 mod registry;
@@ -31,10 +32,9 @@ mod sync;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
-use config::{Config, generate_init_config};
+use config::Config;
 use console::style;
 use slurm::slurm_config_from_cli;
-use std::path::Path;
 
 /// Entry point for the fleche CLI.
 ///
@@ -266,63 +266,9 @@ async fn run() -> Result<()> {
             job::rerun_job(&config, &job_id, &tags, bg, cli.debug).await?;
         }
 
-        Commands::Init => {
-            let config_path = Path::new("fleche.toml");
-            if config_path.exists() {
-                eprintln!(
-                    "{} fleche.toml already exists in current directory",
-                    style("Error:").red().bold()
-                );
-                std::process::exit(1);
-            }
+        Commands::Init => handlers::init()?,
 
-            std::fs::write(config_path, generate_init_config())?;
-            println!("{} Created fleche.toml", style("✓").green());
-            println!("Edit the file to configure your remote host and jobs.");
-        }
-
-        Commands::Check => match Config::find_and_load() {
-            Ok(config) => {
-                println!("{} Configuration is valid", style("✓").green());
-                println!();
-                println!("  {:<14} {}", style("Project:").bold(), config.project_name);
-                println!(
-                    "  {:<14} {}",
-                    style("Remote host:").bold(),
-                    config.remote.host
-                );
-                println!(
-                    "  {:<14} {}",
-                    style("Base path:").bold(),
-                    config.remote.base_path
-                );
-                println!(
-                    "  {:<14} {}",
-                    style("Config path:").bold(),
-                    config.project_path.join("fleche.toml").display()
-                );
-
-                let job_names = config.job_names();
-                if job_names.is_empty() {
-                    println!();
-                    println!(
-                            "  {}",
-                            style("No jobs defined. Add jobs to fleche.toml or create fleche/*.toml files.")
-                                .yellow()
-                        );
-                } else {
-                    println!();
-                    println!("  {}", style("Available jobs:").bold());
-                    for name in job_names {
-                        println!("    - {name}");
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("{} {}", style("✗").red(), e);
-                std::process::exit(1);
-            }
-        },
+        Commands::Check => handlers::check()?,
 
         Commands::Guide => {
             println!("{}", guide::GUIDE_TEXT);
