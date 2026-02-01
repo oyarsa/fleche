@@ -334,6 +334,12 @@ pub enum Commands {
     /// Print a comprehensive usage guide (for LLMs and humans)
     Guide,
 
+    /// Comprehensive diagnostic for troubleshooting
+    ///
+    /// Checks local environment, SSH connectivity, Slurm status, and registry
+    /// health. Provides suggestions for fixing common issues.
+    Doctor,
+
     /// Check cluster health by pinging the Slurm controller
     ///
     /// Runs `scontrol ping` on the remote host to verify the Slurm

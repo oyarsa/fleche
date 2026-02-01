@@ -4,6 +4,7 @@
 //! handlers for commands that have additional logic beyond simple delegation.
 
 use crate::config::{Config, generate_init_config};
+use crate::registry::{JobStatus, Registry};
 use crate::ssh::SshClient;
 use anyhow::{Context, Result};
 use console::style;
@@ -268,6 +269,297 @@ pub async fn check_remote(debug: bool) -> Result<()> {
             }
         }
         _ => println!("{}", style("could not check").dim()),
+    }
+
+    println!();
+    Ok(())
+}
+
+/// Handles the `doctor` command - comprehensive diagnostic for troubleshooting.
+pub async fn doctor(debug: bool) -> Result<()> {
+    use chrono::Duration;
+    use std::process::Command;
+
+    println!("{}", style("fleche doctor").bold().underlined());
+    println!();
+
+    let mut issues: Vec<String> = Vec::new();
+
+    // 1. Check required tools
+    println!("{}", style("Local Environment").bold());
+    println!();
+
+    print!("  ssh... ");
+    let _ = std::io::stdout().flush();
+    if Command::new("ssh").arg("-V").output().is_ok() {
+        println!("{}", style("installed").green());
+    } else {
+        println!("{}", style("NOT FOUND").red().bold());
+        issues.push("Install OpenSSH client".to_string());
+    }
+
+    print!("  rsync... ");
+    let _ = std::io::stdout().flush();
+    if Command::new("rsync").arg("--version").output().is_ok() {
+        println!("{}", style("installed").green());
+    } else {
+        println!("{}", style("NOT FOUND").red().bold());
+        issues.push("Install rsync".to_string());
+    }
+
+    println!();
+
+    // 2. Check configuration
+    println!("{}", style("Configuration").bold());
+    println!();
+
+    let config = match Config::find_and_load() {
+        Ok(c) => {
+            println!("  fleche.toml... {}", style("valid").green());
+            println!("    Project: {}", c.project_name);
+            println!("    Remote: {}:{}", c.remote.host, c.remote.base_path);
+            Some(c)
+        }
+        Err(e) => {
+            let err_msg = format!("{e}");
+            if err_msg.contains("not found") {
+                println!("  fleche.toml... {}", style("NOT FOUND").yellow());
+                println!("    Run `fleche init` to create a configuration file");
+            } else {
+                println!("  fleche.toml... {}", style("INVALID").red().bold());
+                println!("    {e}");
+                issues.push(format!("Fix configuration: {e}"));
+            }
+            None
+        }
+    };
+
+    println!();
+
+    // 3. Check registry
+    println!("{}", style("Job Registry").bold());
+    println!();
+
+    match Registry::open() {
+        Ok(registry) => {
+            println!("  Database... {}", style("OK").green());
+
+            // Count jobs by status
+            let all_jobs = registry.list_jobs(None, &[], None, None, &[], None, 10000);
+            let archived_jobs = registry.list_archived_jobs();
+
+            if let Ok(jobs) = &all_jobs {
+                let total = jobs.len();
+                let pending = jobs
+                    .iter()
+                    .filter(|j| j.status == JobStatus::Pending)
+                    .count();
+                let running = jobs
+                    .iter()
+                    .filter(|j| j.status == JobStatus::Running)
+                    .count();
+                let completed = jobs
+                    .iter()
+                    .filter(|j| j.status == JobStatus::Completed)
+                    .count();
+                let failed = jobs
+                    .iter()
+                    .filter(|j| j.status == JobStatus::Failed)
+                    .count();
+                let cancelled = jobs
+                    .iter()
+                    .filter(|j| j.status == JobStatus::Cancelled)
+                    .count();
+
+                println!("  Total jobs: {total}");
+                if pending > 0 || running > 0 {
+                    println!(
+                        "    Active: {} pending, {} running",
+                        style(pending).cyan(),
+                        style(running).green()
+                    );
+                }
+                if completed > 0 || failed > 0 || cancelled > 0 {
+                    println!(
+                        "    Finished: {completed} completed, {failed} failed, {cancelled} cancelled"
+                    );
+                }
+
+                // Check for stale running jobs (running for more than 7 days)
+                let stale_running: Vec<_> = jobs
+                    .iter()
+                    .filter(|j| {
+                        j.status == JobStatus::Running
+                            && chrono::Utc::now().signed_duration_since(j.created_at)
+                                > Duration::days(7)
+                    })
+                    .collect();
+
+                if !stale_running.is_empty() {
+                    println!();
+                    println!(
+                        "  {} {} job(s) running for over 7 days:",
+                        style("⚠").yellow(),
+                        stale_running.len()
+                    );
+                    for job in stale_running.iter().take(3) {
+                        println!(
+                            "    - {} (started {})",
+                            job.id,
+                            job.created_at.format("%Y-%m-%d")
+                        );
+                    }
+                    issues.push("Check stale jobs with `fleche status` - they may be stuck".to_string());
+                }
+
+                // Check for old jobs that could be cleaned
+                if let Ok(old_jobs) = registry.list_jobs_older_than(Duration::days(30)) {
+                    let cleanable: Vec<_> = old_jobs
+                        .iter()
+                        .filter(|j| {
+                            matches!(
+                                j.status,
+                                JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+                            )
+                        })
+                        .collect();
+                    if cleanable.len() > 10 {
+                        println!();
+                        println!(
+                            "  {} {} jobs older than 30 days could be cleaned",
+                            style("ℹ").blue(),
+                            cleanable.len()
+                        );
+                        issues.push(
+                            "Consider `fleche clean --older-than 30d` to clean old jobs"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+
+            if let Ok(archived) = archived_jobs {
+                if !archived.is_empty() {
+                    println!("  Archived: {}", archived.len());
+                }
+            }
+        }
+        Err(e) => {
+            println!("  Database... {}", style("ERROR").red().bold());
+            println!("    {e}");
+            issues.push(format!("Database error: {e}"));
+        }
+    }
+
+    println!();
+
+    // 4. Remote validation (only if we have a config)
+    if let Some(ref config) = config {
+        println!("{}", style("Remote Connection").bold());
+        println!();
+
+        let ssh = SshClient::new(&config.remote.host, debug);
+
+        print!("  SSH connection... ");
+        let _ = std::io::stdout().flush();
+        let start = Instant::now();
+        match ssh.exec("echo ok").await {
+            Ok(_) => {
+                let elapsed = start.elapsed();
+                if elapsed.as_millis() > 5000 {
+                    println!(
+                        "{} ({}ms - {})",
+                        style("slow").yellow(),
+                        elapsed.as_millis(),
+                        style("connection is slow").dim()
+                    );
+                    issues.push("SSH connection is slow - check network or SSH config".to_string());
+                } else {
+                    println!("{} ({}ms)", style("OK").green(), elapsed.as_millis());
+                }
+
+                // Check Slurm
+                print!("  Slurm controller... ");
+                let _ = std::io::stdout().flush();
+                if let Ok((true, stdout, _)) =
+                    ssh.exec_allow_failure("scontrol ping 2>/dev/null").await
+                {
+                    if stdout.contains("is UP") {
+                        println!("{}", style("UP").green());
+                    } else if stdout.contains("is DOWN") {
+                        println!("{}", style("DOWN").red().bold());
+                        issues.push("Slurm controller is down".to_string());
+                    } else {
+                        println!("{}", style("responding").green());
+                    }
+                } else {
+                    println!("{}", style("not available").yellow());
+                }
+
+                // Check disk space
+                print!("  Disk space... ");
+                let _ = std::io::stdout().flush();
+                let cmd = format!("df -h {} 2>/dev/null | tail -1", &config.remote.base_path);
+                if let Ok((true, stdout, _)) = ssh.exec_allow_failure(&cmd).await {
+                    let parts: Vec<&str> = stdout.split_whitespace().collect();
+                    if parts.len() >= 5 {
+                        let available = parts.get(3).unwrap_or(&"?");
+                        let use_percent = parts.get(4).unwrap_or(&"?%");
+                        let use_num: u32 = use_percent.trim_end_matches('%').parse().unwrap_or(0);
+
+                        if use_num >= 90 {
+                            println!(
+                                "{} ({} available)",
+                                style("CRITICAL").red().bold(),
+                                available
+                            );
+                            issues.push(format!(
+                                "Disk space critically low ({use_num}%) - run `fleche clean --older-than 7d`"
+                            ));
+                        } else if use_num >= 75 {
+                            println!(
+                                "{} ({} available, {}% used)",
+                                style("OK").yellow(),
+                                available,
+                                use_num
+                            );
+                        } else {
+                            println!("{} ({} available)", style("OK").green(), available);
+                        }
+                    } else {
+                        println!("{}", style("could not parse").dim());
+                    }
+                } else {
+                    println!("{}", style("could not check").dim());
+                }
+            }
+            Err(e) => {
+                println!("{}", style("FAILED").red().bold());
+                println!("    {e}");
+                issues.push(format!("SSH connection failed: {e}"));
+            }
+        }
+
+        println!();
+    }
+
+    // 5. Summary
+    if issues.is_empty() {
+        println!(
+            "{} {}",
+            style("✓").green().bold(),
+            style("No issues found").green()
+        );
+    } else {
+        println!(
+            "{} {} issue(s) found:",
+            style("⚠").yellow().bold(),
+            issues.len()
+        );
+        println!();
+        for (i, issue) in issues.iter().enumerate() {
+            println!("  {}. {}", i + 1, issue);
+        }
     }
 
     println!();
