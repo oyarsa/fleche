@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.6.1] - 2026-02-01
+
+### Changed
+- Added unit tests for Slurm output parsing (squeue, sacct, disk usage, AllocTRES)
+- Added tests for truncate functions
+- Use `expect()` instead of `unwrap()` for invariant documentation
+
 ## [6.6.0] - 2026-02-01
 
 ### Added
