@@ -10,18 +10,25 @@ use std::path::PathBuf;
 
 use super::display::{print_job_details, print_job_table};
 
+/// Default number of jobs to show when no limit is specified and no config is available.
+const DEFAULT_LIST_LIMIT: usize = 20;
+
 /// Shows the status of a specific job or lists recent jobs.
 ///
 /// The `archived_filter` parameter controls visibility of archived jobs:
 /// - `None`: Show only non-archived jobs (default)
 /// - `Some(true)`: Show only archived jobs
 /// - `Some(false)`: Show all jobs (both archived and non-archived)
+///
+/// The `default_limit` parameter specifies the default number of jobs to show
+/// when `last` is None. If `default_limit` is also None, uses `DEFAULT_LIST_LIMIT`.
 pub async fn show_status(
     job_id: Option<&str>,
     filters: &[String],
     name_filter: Option<&str>,
     tags: &[(String, String)],
     last: Option<usize>,
+    default_limit: Option<usize>,
     archived_filter: Option<bool>,
     debug: bool,
 ) -> Result<()> {
@@ -66,7 +73,7 @@ pub async fn show_status(
             .map(|f| f.parse())
             .collect::<Result<Vec<_>>>()?;
 
-        let limit = last.unwrap_or(20);
+        let limit = last.unwrap_or_else(|| default_limit.unwrap_or(DEFAULT_LIST_LIMIT));
         let jobs = registry.list_jobs(
             None,
             &status_filters,

@@ -241,7 +241,7 @@ pub async fn run_job(
 
         // Check if we should retry
         if final_status == JobStatus::Failed && attempt < max_attempts {
-            let delay_secs = 30 * (1 << (attempt - 1)); // 30s, 60s, 120s, 240s...
+            let delay_secs = config.settings.retry_base_delay_secs * (1 << (attempt - 1));
             println!();
             println!(
                 "{} Retrying in {} seconds (attempt {}/{})...",
@@ -476,7 +476,7 @@ async fn run_job_locally(
 
             // Check if we should retry
             if attempt < max_attempts {
-                let delay_secs = 30 * (1 << (attempt - 1)); // 30s, 60s, 120s, 240s...
+                let delay_secs = config.settings.retry_base_delay_secs * (1 << (attempt - 1));
                 println!();
                 println!(
                     "{} Retrying in {} seconds (attempt {}/{})...",

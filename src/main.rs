@@ -164,12 +164,18 @@ async fn run() -> Result<()> {
                 None // Default: show only non-archived
             };
 
+            // Try to load config for settings, but don't fail if not in a project
+            let default_limit = Config::find_and_load()
+                .ok()
+                .map(|c| c.settings.default_list_limit);
+
             job::show_status(
                 job_id.as_deref(),
                 &filter,
                 name.as_deref(),
                 &tags,
                 last,
+                default_limit,
                 archived_filter,
                 cli.debug,
             )

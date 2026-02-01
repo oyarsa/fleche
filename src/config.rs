@@ -87,6 +87,72 @@ pub struct ProjectConfig {
     pub name: Option<String>,
 }
 
+/// Optional settings to override default behavior.
+///
+/// All fields have sensible defaults. Add a `[settings]` section to fleche.toml
+/// to customize.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    /// Default number of jobs to show in `fleche status` (default: 20).
+    #[serde(default = "Settings::default_list_limit")]
+    pub default_list_limit: usize,
+
+    /// Base delay in seconds for job retry exponential backoff (default: 30).
+    /// Actual delays: base, base*2, base*4, etc.
+    #[serde(default = "Settings::default_retry_base_delay")]
+    pub retry_base_delay_secs: u64,
+
+    /// Poll interval in seconds when waiting for local jobs (default: 2).
+    #[serde(default = "Settings::default_poll_interval_local")]
+    pub poll_interval_local_secs: u64,
+
+    /// Poll interval in seconds when waiting for remote jobs (default: 5).
+    #[serde(default = "Settings::default_poll_interval_remote")]
+    pub poll_interval_remote_secs: u64,
+
+    /// SSH command execution timeout in seconds (default: 60).
+    #[serde(default = "Settings::default_ssh_timeout")]
+    pub ssh_timeout_secs: u64,
+
+    /// SSH connection timeout in seconds (default: 30).
+    #[serde(default = "Settings::default_ssh_connect_timeout")]
+    pub ssh_connect_timeout_secs: u64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            default_list_limit: Self::default_list_limit(),
+            retry_base_delay_secs: Self::default_retry_base_delay(),
+            poll_interval_local_secs: Self::default_poll_interval_local(),
+            poll_interval_remote_secs: Self::default_poll_interval_remote(),
+            ssh_timeout_secs: Self::default_ssh_timeout(),
+            ssh_connect_timeout_secs: Self::default_ssh_connect_timeout(),
+        }
+    }
+}
+
+impl Settings {
+    fn default_list_limit() -> usize {
+        20
+    }
+    fn default_retry_base_delay() -> u64 {
+        30
+    }
+    fn default_poll_interval_local() -> u64 {
+        2
+    }
+    fn default_poll_interval_remote() -> u64 {
+        5
+    }
+    fn default_ssh_timeout() -> u64 {
+        60
+    }
+    fn default_ssh_connect_timeout() -> u64 {
+        30
+    }
+}
+
 /// Remote host configuration from the `[remote]` section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteConfig {
@@ -203,6 +269,8 @@ pub struct Config {
     pub global_slurm: SlurmConfig,
     /// All job definitions indexed by name (raw, unexpanded).
     pub jobs: HashMap<String, JobDefinition>,
+    /// Optional settings to override defaults.
+    pub settings: Settings,
 }
 
 /// Raw config structure for TOML deserialization.
@@ -217,6 +285,8 @@ struct RawConfig {
     slurm: SlurmConfig,
     #[serde(default)]
     jobs: HashMap<String, JobDefinition>,
+    #[serde(default)]
+    settings: Settings,
 }
 
 /// Raw job file structure for TOML deserialization.
@@ -303,6 +373,7 @@ impl Config {
             dotenv,
             global_slurm: raw.slurm,
             jobs,
+            settings: raw.settings,
         })
     }
 
@@ -500,6 +571,13 @@ base_path = "~/fleche"              # Remote base directory for all projects
 # gpus = 1
 # cpus = 8
 # memory = "32G"
+
+# [settings]
+# Optional settings to override defaults
+# default_list_limit = 20           # Jobs shown in `fleche status`
+# retry_base_delay_secs = 30        # Base delay for --retry exponential backoff
+# ssh_timeout_secs = 60             # SSH command timeout
+# ssh_connect_timeout_secs = 30     # SSH connection timeout
 
 # Example job definition:
 # [jobs.train]
