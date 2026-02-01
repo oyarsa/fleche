@@ -8,18 +8,23 @@
 //! - Downloading outputs back to local
 //! - Listing, cancelling, and cleaning up jobs
 
+mod cleanup;
 mod display;
+mod download;
+mod logs;
 mod ops;
 mod run;
+mod status;
 
 use crate::config::Config;
 
 // Re-export public API
-pub use ops::{
-    CleanJobsOptions, ShowLogsOptions, cancel_jobs, clean_jobs, download_outputs, list_tags,
-    note_job, ping_cluster, show_logs, show_stats, show_status, wait_for_job,
-};
+pub use cleanup::{CleanJobsOptions, cancel_jobs, clean_jobs};
+pub use download::download_outputs;
+pub use logs::{ShowLogsOptions, show_logs};
+pub use ops::{ping_cluster, show_stats, wait_for_job};
 pub use run::{RunJobOptions, exec_command, rerun_job, run_job};
+pub use status::{list_tags, note_job, show_status};
 
 /// Returns the workspace path for a project on the remote host.
 pub(crate) fn workspace_path(config: &Config) -> String {
