@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.6.0] - 2026-02-01
+
+### Added
+- `fleche check --remote` to validate configuration against the remote server
+  - Tests SSH connectivity with timing
+  - Checks Slurm controller availability
+  - Validates partition existence with node count
+  - Verifies constraint validity for the configured partition
+  - Confirms base path writability
+  - Reports disk space with warnings for low space
+- `fleche doctor` for comprehensive troubleshooting diagnostics
+  - Checks local tools (ssh, rsync)
+  - Validates configuration file
+  - Reports job registry health (counts, stale jobs, old jobs needing cleanup)
+  - Tests remote connection, Slurm status, and disk space
+  - Provides actionable suggestions for issues found
+- `fleche compare <job-a> <job-b>` to diff two job configurations
+  - Shows side-by-side comparison with color-coded differences
+  - Compares command, host, status, Slurm settings, environment, tags, notes
+- Configurable `[settings]` section in fleche.toml
+  - `default_list_limit`: Jobs shown in status (default: 20)
+  - `poll_interval_local_secs`: Local job poll interval (default: 2)
+  - `poll_interval_remote_secs`: Remote job poll interval (default: 5)
+  - `ssh_timeout_secs`: SSH command timeout (default: 60)
+  - `ssh_connect_timeout_secs`: SSH connection timeout (default: 30)
+  - `retry_base_delay_secs`: Base delay for --retry backoff (default: 30)
+
+### Changed
+- All settings are now actually wired up and used throughout the codebase
+- Improved error messages for I/O errors with contextual information
+- Internal refactoring: extracted diagnostics module, simplified handlers
+
 ## [6.5.1] - 2026-01-20
 
 ### Fixed
