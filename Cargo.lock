@@ -332,7 +332,7 @@ checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
 
 [[package]]
 name = "fleche"
-version = "6.6.1"
+version = "6.6.2"
 dependencies = [
  "anyhow",
  "chrono",

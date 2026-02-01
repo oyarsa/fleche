@@ -1,6 +1,6 @@
 [package]
 name = "fleche"
-version = "6.6.1"
+version = "6.6.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Remote job runner for Slurm clusters"

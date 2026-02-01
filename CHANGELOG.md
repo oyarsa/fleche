@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.6.2] - 2026-02-01
+
+### Changed
+- Enable additional clippy nursery lints for code quality:
+  - `redundant_clone`: Avoid unnecessary .clone() calls
+  - `or_fun_call`: Use lazy evaluation with or_else/map_or_else
+  - `redundant_pub_crate`: Simplify visibility in private modules
+  - `branches_sharing_code`: Deduplicate code in if/else branches
+- Use functional patterns (map_or, is_none_or, is_some_and) where appropriate
+
 ## [6.6.1] - 2026-02-01
 
 ### Changed
