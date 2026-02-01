@@ -3,12 +3,17 @@
 //! This module handles running jobs on the local machine instead of a remote cluster.
 //! Local jobs run directly in the project directory with logs stored in `.fleche/jobs/{id}/`.
 
-use crate::error::Result;
+use crate::error::{FlecheError, Result};
 use crate::registry::JobStatus;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+/// Wraps an I/O error with context about which operation failed.
+fn io_context<T>(result: std::io::Result<T>, context: &str) -> Result<T> {
+    result.map_err(|e| FlecheError::Io(std::io::Error::new(e.kind(), format!("{context}: {e}"))))
+}
 
 /// Creates a command that runs the given string through the system shell.
 ///
@@ -38,7 +43,10 @@ pub fn local_job_dir(project_path: &Path, job_id: &str) -> PathBuf {
 /// Ensures the local job directory exists.
 pub fn ensure_job_dir(project_path: &Path, job_id: &str) -> Result<PathBuf> {
     let dir = local_job_dir(project_path, job_id);
-    fs::create_dir_all(&dir)?;
+    io_context(
+        fs::create_dir_all(&dir),
+        &format!("creating job directory '{}'", dir.display()),
+    )?;
     Ok(dir)
 }
 
@@ -57,16 +65,25 @@ pub fn run_foreground(
     let exit_code_path = job_dir.join("exit_code");
 
     // Create log files
-    let mut stdout_file = File::create(&stdout_path)?;
-    let mut stderr_file = File::create(&stderr_path)?;
+    let mut stdout_file = io_context(
+        File::create(&stdout_path),
+        &format!("creating stdout log '{}'", stdout_path.display()),
+    )?;
+    let mut stderr_file = io_context(
+        File::create(&stderr_path),
+        &format!("creating stderr log '{}'", stderr_path.display()),
+    )?;
 
     // Build and run the command
-    let mut child = shell_command(command)
-        .current_dir(project_path)
-        .envs(env.iter())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = io_context(
+        shell_command(command)
+            .current_dir(project_path)
+            .envs(env.iter())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn(),
+        &format!("spawning command for job '{job_id}'"),
+    )?;
 
     // Stream stdout
     let child_stdout = child.stdout.take();
@@ -98,11 +115,17 @@ pub fn run_foreground(
     let _ = stderr_handle.join();
 
     // Wait for command to finish
-    let status = child.wait()?;
+    let status = io_context(
+        child.wait(),
+        &format!("waiting for job '{job_id}' to finish"),
+    )?;
     let exit_code = status.code().unwrap_or(1);
 
     // Write exit code
-    fs::write(&exit_code_path, exit_code.to_string())?;
+    io_context(
+        fs::write(&exit_code_path, exit_code.to_string()),
+        &format!("writing exit code for job '{job_id}'"),
+    )?;
 
     Ok(exit_code)
 }
@@ -143,35 +166,57 @@ echo $? > {}
         shell_escape(&exit_code_path.to_string_lossy()),
     );
 
-    fs::write(&script_path, &script)?;
+    io_context(
+        fs::write(&script_path, &script),
+        &format!("writing job script '{}'", script_path.display()),
+    )?;
 
     // Make script executable
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&script_path)?.permissions();
+        let mut perms = io_context(
+            fs::metadata(&script_path),
+            &format!("reading script metadata '{}'", script_path.display()),
+        )?
+        .permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&script_path, perms)?;
+        io_context(
+            fs::set_permissions(&script_path, perms),
+            &format!("setting script permissions '{}'", script_path.display()),
+        )?;
     }
 
     // Create output files
-    let stdout_file = File::create(&stdout_path)?;
-    let stderr_file = File::create(&stderr_path)?;
+    let stdout_file = io_context(
+        File::create(&stdout_path),
+        &format!("creating stdout log '{}'", stdout_path.display()),
+    )?;
+    let stderr_file = io_context(
+        File::create(&stderr_path),
+        &format!("creating stderr log '{}'", stderr_path.display()),
+    )?;
 
     // Spawn detached process using nohup-style approach
-    let child = Command::new("sh")
-        .arg("-c")
-        .arg(&script_path)
-        .current_dir(project_path)
-        .stdout(stdout_file)
-        .stderr(stderr_file)
-        .stdin(Stdio::null())
-        .spawn()?;
+    let child = io_context(
+        Command::new("sh")
+            .arg("-c")
+            .arg(&script_path)
+            .current_dir(project_path)
+            .stdout(stdout_file)
+            .stderr(stderr_file)
+            .stdin(Stdio::null())
+            .spawn(),
+        &format!("spawning background job '{job_id}'"),
+    )?;
 
     let pid = child.id();
 
     // Write PID file
-    fs::write(&pid_path, pid.to_string())?;
+    io_context(
+        fs::write(&pid_path, pid.to_string()),
+        &format!("writing PID file for job '{job_id}'"),
+    )?;
 
     Ok(pid)
 }
@@ -184,10 +229,13 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<JobStat
 
     // Check if exit_code exists (job finished)
     if exit_code_path.exists() {
-        let exit_code: i32 = fs::read_to_string(&exit_code_path)?
-            .trim()
-            .parse()
-            .unwrap_or(1);
+        let exit_code: i32 = io_context(
+            fs::read_to_string(&exit_code_path),
+            &format!("reading exit code for job '{job_id}'"),
+        )?
+        .trim()
+        .parse()
+        .unwrap_or(1);
 
         return Ok(if exit_code == 0 {
             JobStatus::Completed
@@ -198,7 +246,13 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<JobStat
 
     // Check if PID exists and process is still running
     if pid_path.exists() {
-        let pid: u32 = fs::read_to_string(&pid_path)?.trim().parse().unwrap_or(0);
+        let pid: u32 = io_context(
+            fs::read_to_string(&pid_path),
+            &format!("reading PID file for job '{job_id}'"),
+        )?
+        .trim()
+        .parse()
+        .unwrap_or(0);
 
         if pid > 0 && is_process_running(pid) {
             return Ok(JobStatus::Running);
@@ -224,7 +278,13 @@ pub fn cancel_local_job(project_path: &Path, job_id: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let pid: u32 = fs::read_to_string(&pid_path)?.trim().parse().unwrap_or(0);
+    let pid: u32 = io_context(
+        fs::read_to_string(&pid_path),
+        &format!("reading PID file for job '{job_id}'"),
+    )?
+    .trim()
+    .parse()
+    .unwrap_or(0);
 
     if pid == 0 {
         return Ok(false);
@@ -236,7 +296,10 @@ pub fn cancel_local_job(project_path: &Path, job_id: &str) -> Result<bool> {
         let killed = process.kill_with(Signal::Term).unwrap_or(false);
         if killed {
             // Write exit code to indicate cancellation (143 = 128 + 15 SIGTERM)
-            fs::write(&exit_code_path, "143")?;
+            io_context(
+                fs::write(&exit_code_path, "143"),
+                &format!("writing cancellation exit code for job '{job_id}'"),
+            )?;
             return Ok(true);
         }
     }
@@ -261,7 +324,10 @@ pub fn read_local_logs(
         return Ok(String::new());
     }
 
-    let content = fs::read_to_string(&log_path)?;
+    let content = io_context(
+        fs::read_to_string(&log_path),
+        &format!("reading log file '{}'", log_path.display()),
+    )?;
 
     if let Some(n) = tail {
         let lines: Vec<&str> = content.lines().collect();
@@ -283,7 +349,10 @@ pub enum LogStream {
 pub fn clean_local_job(project_path: &Path, job_id: &str) -> Result<()> {
     let job_dir = local_job_dir(project_path, job_id);
     if job_dir.exists() {
-        fs::remove_dir_all(&job_dir)?;
+        io_context(
+            fs::remove_dir_all(&job_dir),
+            &format!("removing job directory '{}'", job_dir.display()),
+        )?;
     }
     Ok(())
 }
@@ -317,14 +386,23 @@ pub fn follow_local_logs(project_path: &Path, job_id: &str) -> Result<()> {
         if exit_code_path.exists() {
             // Job finished before we could start following
             if log_path.exists() {
-                print!("{}", fs::read_to_string(&log_path)?);
+                print!(
+                    "{}",
+                    io_context(
+                        fs::read_to_string(&log_path),
+                        &format!("reading log file '{}'", log_path.display())
+                    )?
+                );
             }
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    let file = File::open(&log_path)?;
+    let file = io_context(
+        File::open(&log_path),
+        &format!("opening log file '{}'", log_path.display()),
+    )?;
     let mut reader = BufReader::new(file);
     let mut buffer = String::new();
 

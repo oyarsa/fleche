@@ -4,7 +4,7 @@
 //! handlers for commands that have additional logic beyond simple delegation.
 
 use crate::config::{Config, generate_init_config};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use console::style;
 use std::path::Path;
 
@@ -15,7 +15,8 @@ pub fn init() -> Result<()> {
         anyhow::bail!("fleche.toml already exists in current directory");
     }
 
-    std::fs::write(config_path, generate_init_config())?;
+    std::fs::write(config_path, generate_init_config())
+        .context("writing fleche.toml to current directory")?;
     println!("{} Created fleche.toml", style("✓").green());
     println!("Edit the file to configure your remote host and jobs.");
     Ok(())
