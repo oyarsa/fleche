@@ -54,15 +54,14 @@ fn print_config_summary(config: &Config) {
 
 fn print_available_jobs(config: &Config) {
     let job_names = config.job_names();
+    println!();
     if job_names.is_empty() {
-        println!();
         println!(
             "  {}",
             style("No jobs defined. Add jobs to fleche.toml or create fleche/*.toml files.")
                 .yellow()
         );
     } else {
-        println!();
         println!("  {}", style("Available jobs:").bold());
         for name in job_names {
             println!("    - {name}");
