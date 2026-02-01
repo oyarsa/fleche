@@ -19,6 +19,7 @@
 
 mod cli;
 mod config;
+mod diagnostics;
 mod error;
 mod guide;
 mod handlers;
@@ -275,10 +276,10 @@ async fn run() -> Result<()> {
         Commands::Init => handlers::init()?,
 
         Commands::Check { remote } => {
+            let config = Config::find_and_load()?;
+            handlers::check(&config);
             if remote {
-                handlers::check_remote(cli.debug).await?;
-            } else {
-                handlers::check()?;
+                diagnostics::check_remote(&config, cli.debug).await?;
             }
         }
 
@@ -287,7 +288,7 @@ async fn run() -> Result<()> {
         }
 
         Commands::Doctor => {
-            handlers::doctor(cli.debug).await?;
+            diagnostics::doctor(cli.debug).await?;
         }
 
         Commands::Ping => {
