@@ -294,3 +294,29 @@ fn truncate_str(s: &str, max_width: usize) -> String {
         format!("{}…", &s[..max_width - 1])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_str_short() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_exact() {
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_long() {
+        // "hello world" (11 chars) truncated to 8 -> "hello w…"
+        assert_eq!(truncate_str("hello world", 8), "hello w…");
+    }
+
+    #[test]
+    fn test_truncate_str_empty() {
+        assert_eq!(truncate_str("", 10), "");
+    }
+}

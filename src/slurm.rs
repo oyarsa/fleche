@@ -517,4 +517,22 @@ mod tests {
         // "31551978|PENDING|0:0"
         assert_eq!(parse_sacct_state("PENDING"), JobStatus::Pending);
     }
+
+    #[test]
+    fn test_truncate_job_name_short() {
+        assert_eq!(truncate_job_name("my-job"), "my-job");
+    }
+
+    #[test]
+    fn test_truncate_job_name_exact() {
+        let name = "a".repeat(MAX_JOB_NAME_LENGTH);
+        assert_eq!(truncate_job_name(&name), name);
+    }
+
+    #[test]
+    fn test_truncate_job_name_long() {
+        let name = "a".repeat(MAX_JOB_NAME_LENGTH + 50);
+        let truncated = truncate_job_name(&name);
+        assert_eq!(truncated.len(), MAX_JOB_NAME_LENGTH);
+    }
 }
