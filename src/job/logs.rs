@@ -11,7 +11,6 @@ use super::status::resolve_job;
 
 /// Options for displaying job logs.
 #[derive(Debug, Default)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct ShowLogsOptions {
     /// Stream logs in real-time.
     pub follow: bool,

@@ -37,7 +37,6 @@ fn require_shell() -> Result<()> {
 
 /// Options for running a job.
 #[derive(Debug, Default)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct RunJobOptions {
     /// Run in background (don't stream output).
     pub background: bool,

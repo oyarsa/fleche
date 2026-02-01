@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 /// Options for cleaning up jobs.
 #[derive(Debug, Default)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct CleanJobsOptions {
     /// Clean all completed/failed jobs.
     pub all: bool,
