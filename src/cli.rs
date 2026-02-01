@@ -321,7 +321,15 @@ pub enum Commands {
     Init,
 
     /// Validate configuration without running anything
-    Check,
+    ///
+    /// By default, only validates the local configuration file.
+    /// Use --remote to also check SSH connectivity, Slurm availability,
+    /// partition validity, and disk space.
+    Check {
+        /// Also validate against the remote server
+        #[arg(long)]
+        remote: bool,
+    },
 
     /// Print a comprehensive usage guide (for LLMs and humans)
     Guide,

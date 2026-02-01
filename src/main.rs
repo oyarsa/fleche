@@ -274,7 +274,13 @@ async fn run() -> Result<()> {
 
         Commands::Init => handlers::init()?,
 
-        Commands::Check => handlers::check()?,
+        Commands::Check { remote } => {
+            if remote {
+                handlers::check_remote(cli.debug).await?;
+            } else {
+                handlers::check()?;
+            }
+        }
 
         Commands::Guide => {
             println!("{}", guide::GUIDE_TEXT);
