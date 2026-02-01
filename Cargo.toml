@@ -37,6 +37,7 @@ pedantic = { level = "warn", priority = -1 }
 # Useful nursery lints
 redundant_clone = "warn"
 or_fun_call = "warn"
+redundant_pub_crate = "warn"
 
 too_many_lines = "allow"
 too_many_arguments = "allow"

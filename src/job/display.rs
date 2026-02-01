@@ -4,7 +4,7 @@ use crate::registry::{JobRecord, JobStatus};
 use console::style;
 
 /// Prints detailed information about a single job.
-pub(crate) fn print_job_details(job: &JobRecord, status: JobStatus) {
+pub fn print_job_details(job: &JobRecord, status: JobStatus) {
     println!("{}", style("Job Details").bold().underlined());
     println!();
     println!("  {:<14} {}", style("ID:").bold(), job.id);
@@ -49,7 +49,7 @@ pub(crate) fn print_job_details(job: &JobRecord, status: JobStatus) {
 }
 
 /// Prints a table of jobs.
-pub(crate) fn print_job_table(jobs: &[JobRecord]) {
+pub fn print_job_table(jobs: &[JobRecord]) {
     println!(
         "{:<45} {:<12} {:<12} {:<20}",
         style("ID").bold().underlined(),
@@ -83,7 +83,7 @@ pub(crate) fn print_job_table(jobs: &[JobRecord]) {
 }
 
 /// Formats a job status with appropriate colors and fixed width.
-pub(crate) fn format_status(status: JobStatus) -> String {
+pub fn format_status(status: JobStatus) -> String {
     match status {
         JobStatus::Pending => style(format!("{:<12}", "pending")).yellow().to_string(),
         JobStatus::Running => style(format!("{:<12}", "running")).blue().to_string(),
