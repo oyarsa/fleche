@@ -207,7 +207,6 @@ impl Registry {
     }
 
     /// Inserts a new job record into the registry.
-    #[allow(clippy::too_many_arguments)]
     pub fn insert_job(
         &self,
         id: &str,
@@ -360,7 +359,6 @@ impl Registry {
     /// - `None`: Show only non-archived jobs (default)
     /// - `Some(true)`: Show only archived jobs
     /// - `Some(false)`: Show all jobs (both archived and non-archived)
-    #[allow(clippy::too_many_arguments)]
     pub fn list_jobs(
         &self,
         project_filter: Option<&str>,
