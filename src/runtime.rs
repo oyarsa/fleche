@@ -22,8 +22,7 @@ pub fn ssh_timeouts_from_settings(settings: &Settings) -> SshTimeouts {
 }
 
 /// Notification behavior policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NotifyPolicy {
     /// Only notify when a command explicitly asks for notifications.
     #[default]
@@ -33,7 +32,6 @@ pub enum NotifyPolicy {
     /// Never notify.
     Never,
 }
-
 
 /// Shared runtime settings used by command handlers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

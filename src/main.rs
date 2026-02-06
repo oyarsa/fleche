@@ -286,7 +286,7 @@ async fn run() -> Result<()> {
             let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
             handlers::check(&config);
             if remote {
-                diagnostics::check_remote(&config, runtime_ctx.debug).await?;
+                diagnostics::check_remote(&config, runtime_ctx).await?;
             }
         }
 

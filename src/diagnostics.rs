@@ -5,7 +5,7 @@
 
 use crate::config::Config;
 use crate::registry::{JobStatus, Registry};
-use crate::runtime::{ssh_client, ssh_timeouts_from_settings};
+use crate::runtime::RuntimeCtx;
 use crate::ssh::{SshClient, shell_escape};
 use anyhow::Result;
 use chrono::Duration;
@@ -14,15 +14,11 @@ use std::io::Write;
 use std::time::Instant;
 
 /// Validates configuration against the remote server.
-pub async fn check_remote(config: &Config, debug: bool) -> Result<()> {
+pub async fn check_remote(config: &Config, ctx: RuntimeCtx) -> Result<()> {
     println!("{}", style("Remote Validation").bold().underlined());
     println!();
 
-    let ssh = ssh_client(
-        &config.remote.host,
-        debug,
-        Some(ssh_timeouts_from_settings(&config.settings)),
-    );
+    let ssh = ctx.ssh(&config.remote.host);
 
     // Check SSH connectivity
     if !check_ssh_connection(&ssh).await {
@@ -291,7 +287,8 @@ pub async fn doctor(debug: bool) -> Result<()> {
 
     // Check remote connection (if config exists)
     if let Some(ref config) = config {
-        check_remote_connection(config, debug, &mut issues).await;
+        let ctx = RuntimeCtx::from_settings(debug, &config.settings);
+        check_remote_connection(config, ctx, &mut issues).await;
     }
 
     // Print summary
@@ -502,15 +499,11 @@ fn check_cleanable_jobs(registry: &Registry, issues: &mut Vec<String>) {
     }
 }
 
-async fn check_remote_connection(config: &Config, debug: bool, issues: &mut Vec<String>) {
+async fn check_remote_connection(config: &Config, ctx: RuntimeCtx, issues: &mut Vec<String>) {
     println!("{}", style("Remote Connection").bold());
     println!();
 
-    let ssh = ssh_client(
-        &config.remote.host,
-        debug,
-        Some(ssh_timeouts_from_settings(&config.settings)),
-    );
+    let ssh = ctx.ssh(&config.remote.host);
 
     // Check SSH
     print!("  SSH connection... ");
