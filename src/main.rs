@@ -26,6 +26,7 @@ mod handlers;
 mod job;
 mod local;
 mod registry;
+mod runtime;
 mod slurm;
 mod ssh;
 mod sync;

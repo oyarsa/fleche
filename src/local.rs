@@ -131,23 +131,15 @@ pub fn run_background(
     let pid_path = job_dir.join("pid");
     let script_path = job_dir.join("run.sh");
 
-    // Build environment export string
-    let env_exports = env.iter().fold(String::new(), |mut acc, (k, v)| {
-        use std::fmt::Write;
-        let _ = writeln!(acc, "export {}={}", k, shell_escape(v));
-        acc
-    });
-
     // Create wrapper script that writes exit code on completion
     let script = format!(
         r"#!/bin/sh
 cd {}
-{env_exports}
 {command}
 echo $? > {}
 ",
         shell_escape(&project_path.to_string_lossy()),
-        shell_escape(&exit_code_path.to_string_lossy()),
+        shell_escape(&exit_code_path.to_string_lossy())
     );
 
     fs::write(&script_path, &script)
@@ -173,9 +165,9 @@ echo $? > {}
 
     // Spawn detached process using nohup-style approach
     let child = Command::new("sh")
-        .arg("-c")
         .arg(&script_path)
         .current_dir(project_path)
+        .envs(env.iter())
         .stdout(stdout_file)
         .stderr(stderr_file)
         .stdin(Stdio::null())

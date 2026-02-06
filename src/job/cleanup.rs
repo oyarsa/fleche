@@ -6,8 +6,11 @@ use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
 use crate::slurm::cancel_job;
 use crate::ssh::SshClient;
 use console::style;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
+
+use super::job_path_from_workspace;
 
 /// Options for cleaning up jobs.
 #[derive(Debug, Default)]
@@ -298,13 +301,7 @@ pub async fn clean_jobs(
         } else {
             // Clean remote job directory (logs/metadata only, not workspace)
             let ssh = SshClient::new(&job.remote_host, opts.debug);
-            let job_dir = format!(
-                "{}/.fleche/jobs/{}",
-                job.remote_path
-                    .trim_end_matches("/workspace")
-                    .trim_end_matches("/.fleche/workspace"),
-                job.id
-            );
+            let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
             if let Err(e) = ssh.rm_rf(&job_dir).await {
                 eprintln!("warning: could not delete job directory: {e}");
             }
@@ -314,23 +311,52 @@ pub async fn clean_jobs(
         println!("{}", style("done").green());
     }
 
-    // Clean workspace if requested (only for remote jobs)
+    // Clean workspaces if requested (only for remote jobs)
     if opts.clean_workspace {
-        if let Some(job) = jobs_to_clean.first() {
+        let active_jobs = registry.list_active_jobs()?;
+        let mut seen = HashSet::new();
+        let mut cleaned_any = false;
+
+        for job in &jobs_to_clean {
             if job.remote_host == "local" {
-                println!(
-                    "{}",
-                    style("Note: --workspace has no effect for local jobs.").yellow()
-                );
-            } else {
-                let ssh = SshClient::new(&job.remote_host, opts.debug);
-                print!("Cleaning workspace... ");
-                if let Err(e) = ssh.rm_rf(&job.remote_path).await {
-                    eprintln!("warning: could not delete workspace: {e}");
-                } else {
-                    println!("{}", style("done").green());
-                }
+                continue;
             }
+
+            let key = (job.remote_host.clone(), job.remote_path.clone());
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+
+            let has_active = active_jobs
+                .iter()
+                .any(|j| j.remote_host == key.0 && j.remote_path == key.1);
+            if has_active {
+                eprintln!(
+                    "{}",
+                    style(format!(
+                        "warning: skipping workspace '{}' on '{}' because it has active jobs",
+                        key.1, key.0
+                    ))
+                    .yellow()
+                );
+                continue;
+            }
+
+            let ssh = SshClient::new(&key.0, opts.debug);
+            print!("Cleaning workspace on {}... ", key.0);
+            if let Err(e) = ssh.rm_rf(&key.1).await {
+                eprintln!("warning: could not delete workspace: {e}");
+            } else {
+                println!("{}", style("done").green());
+                cleaned_any = true;
+            }
+        }
+
+        if !cleaned_any && jobs_to_clean.iter().all(|j| j.remote_host == "local") {
+            println!(
+                "{}",
+                style("Note: --workspace has no effect for local jobs.").yellow()
+            );
         }
     }
 

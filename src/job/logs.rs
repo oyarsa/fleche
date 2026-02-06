@@ -7,7 +7,7 @@ use crate::ssh::SshClient;
 use console::style;
 use std::path::PathBuf;
 
-use super::status::resolve_job;
+use super::{job_path_from_workspace, status::resolve_job};
 
 /// Options for displaying job logs.
 #[derive(Debug, Default)]
@@ -93,10 +93,7 @@ pub async fn show_logs(
     // Remote job handling
     let ssh = SshClient::new(&job.remote_host, opts.debug);
 
-    // Job logs are in the job directory, not workspace
-    // remote_path is the workspace, job logs are in ../jobs/<job_id>/
-    let base = job.remote_path.trim_end_matches("/workspace");
-    let log_base = format!("{}/jobs/{}", base, job.id);
+    let log_base = job_path_from_workspace(&job.remote_path, &job.id);
 
     if opts.follow {
         let log_file = if opts.only_stderr {

@@ -4,10 +4,10 @@ use crate::config::Config;
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobStatus, Registry};
+use crate::runtime::send_notification;
 use crate::slurm::{get_job_resource_usage, get_job_status};
 use crate::ssh::SshClient;
 use console::style;
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -301,12 +301,6 @@ fn parse_alloc_tres(tres: &str) -> String {
     } else {
         parts.join(", ")
     }
-}
-
-/// Sends a terminal notification using OSC 9.
-pub fn send_notification(message: &str) {
-    print!("\x1b]9;fleche: {message}\x07");
-    let _ = std::io::stdout().flush();
 }
 
 #[cfg(test)]

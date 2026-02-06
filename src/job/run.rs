@@ -4,6 +4,7 @@ use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobStatus, Registry};
+use crate::runtime::send_notification;
 use crate::slurm::{generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::{SshClient, shell_escape};
 use crate::sync::{sync_inputs_to_workspace, sync_project_to_workspace};
@@ -555,8 +556,22 @@ async fn run_job_with_resolved(
     background: bool,
     debug: bool,
 ) -> Result<()> {
+    if job.host == "local" {
+        let opts = RunJobOptions {
+            background,
+            notify: false,
+            dry_run: false,
+            debug,
+            after: None,
+            retry: None,
+            note: None,
+        };
+        return run_job_locally(config, job, tags, &opts).await;
+    }
+
     let workspace = workspace_path(config);
-    let ssh = SshClient::new(&config.remote.host, debug);
+    let host = job.host.clone();
+    let ssh = SshClient::new(&host, debug);
 
     // Generate unique job ID
     let job_id = generate_job_id(&job.name);
@@ -577,7 +592,7 @@ async fn run_job_with_resolved(
     print!("{} Syncing project code...", style("[2/4]").bold().dim());
     let _ = std::io::stdout().flush();
     let stats =
-        sync_project_to_workspace(&config.project_path, &config.remote.host, &workspace).await?;
+        sync_project_to_workspace(&config.project_path, &host, &workspace).await?;
     println!(" {}", style(format!("({})", stats.human_readable())).dim());
 
     // Sync inputs if any
@@ -589,7 +604,7 @@ async fn run_job_with_resolved(
         let stats = sync_inputs_to_workspace(
             &config.project_path,
             &job.inputs,
-            &config.remote.host,
+            &host,
             &workspace,
         )
         .await?;
@@ -613,7 +628,7 @@ async fn run_job_with_resolved(
         job,
         &config.project_name,
         &config.project_path.to_string_lossy(),
-        &config.remote.host,
+        &host,
         &workspace,
         tags,
         None, // Reruns don't get a note
@@ -627,7 +642,7 @@ async fn run_job_with_resolved(
         println!();
         let log_path = format!("{job_dir}/job.out");
         follow_job_logs(
-            &config.remote.host,
+            &host,
             &slurm_id,
             &log_path,
             debug,
@@ -906,12 +921,6 @@ async fn wait_and_notify(
 
         tokio::time::sleep(Duration::from_secs(poll_interval)).await;
     }
-}
-
-/// Sends a terminal notification using OSC 9.
-fn send_notification(message: &str) {
-    print!("\x1b]9;fleche: {message}\x07");
-    let _ = std::io::stdout().flush();
 }
 
 #[cfg(test)]

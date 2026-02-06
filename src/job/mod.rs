@@ -46,3 +46,15 @@ pub fn jobs_base_path(config: &Config) -> String {
 pub fn job_path(config: &Config, job_id: &str) -> String {
     format!("{}/{}", jobs_base_path(config), job_id)
 }
+
+/// Returns the jobs directory path from a workspace path.
+///
+/// Workspace paths are expected to end with `/workspace`.
+pub fn jobs_base_from_workspace(workspace: &str) -> String {
+    format!("{}/jobs", workspace.trim_end_matches("/workspace"))
+}
+
+/// Returns the path for a specific job's metadata/logs directory from a workspace path.
+pub fn job_path_from_workspace(workspace: &str, job_id: &str) -> String {
+    format!("{}/{}", jobs_base_from_workspace(workspace), job_id)
+}
