@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobStatus, Registry};
-use crate::runtime::{SshTimeouts, send_notification, ssh_client, ssh_timeouts_from_settings};
+use crate::runtime::{RuntimeCtx, send_notification};
 use crate::slurm::{get_job_resource_usage, get_job_status};
 use console::style;
 use std::path::PathBuf;
@@ -20,10 +20,7 @@ pub async fn wait_for_job(
     job_id: Option<&str>,
     notify: bool,
     tags: &[(String, String)],
-    debug: bool,
-    poll_interval_local: u64,
-    poll_interval_remote: u64,
-    ssh_timeouts: Option<SshTimeouts>,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let job = resolve_job(&registry, job_id, tags, None)?;
@@ -39,18 +36,18 @@ pub async fn wait_for_job(
             registry.update_status(&job.id, status)?;
 
             if let Some(msg) = format_terminal_status(&job.id, status) {
-                if notify {
+                if ctx.should_notify(notify) {
                     send_notification(&msg);
                 }
                 return Ok(());
             }
 
-            tokio::time::sleep(Duration::from_secs(poll_interval_local)).await;
+            tokio::time::sleep(Duration::from_secs(ctx.poll_interval_local_secs)).await;
         }
     }
 
     // Remote job handling
-    let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
+    let ssh = ctx.ssh(&job.remote_host);
 
     loop {
         if let Some(ref slurm_id) = job.slurm_id {
@@ -58,7 +55,7 @@ pub async fn wait_for_job(
             registry.update_status(&job.id, status)?;
 
             if let Some(msg) = format_terminal_status(&job.id, status) {
-                if notify {
+                if ctx.should_notify(notify) {
                     send_notification(&msg);
                 }
                 return Ok(());
@@ -67,7 +64,7 @@ pub async fn wait_for_job(
             return Err(FlecheError::NoSlurmId(job.id.clone()));
         }
 
-        tokio::time::sleep(Duration::from_secs(poll_interval_remote)).await;
+        tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
     }
 }
 
@@ -97,12 +94,8 @@ fn format_terminal_status(job_id: &str, status: JobStatus) -> Option<String> {
 ///
 /// Runs `scontrol ping` on the remote host and reports the status of the
 /// Slurm controller(s). Useful for diagnosing timeout issues.
-pub async fn ping_cluster(config: &Config, debug: bool) -> Result<()> {
-    let ssh = ssh_client(
-        &config.remote.host,
-        debug,
-        Some(ssh_timeouts_from_settings(&config.settings)),
-    );
+pub async fn ping_cluster(config: &Config, ctx: RuntimeCtx) -> Result<()> {
+    let ssh = ctx.ssh(&config.remote.host);
 
     println!(
         "Pinging Slurm controller on {}...",
@@ -159,8 +152,7 @@ pub async fn show_stats(
     job_id: Option<&str>,
     last: usize,
     tags: &[(String, String)],
-    debug: bool,
-    ssh_timeouts: Option<SshTimeouts>,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -204,7 +196,7 @@ pub async fn show_stats(
             .slurm_id
             .as_ref()
             .expect("already filtered to jobs with slurm_id");
-        let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
+        let ssh = ctx.ssh(&job.remote_host);
 
         match get_job_resource_usage(&ssh, slurm_id).await {
             Ok(usage) => {

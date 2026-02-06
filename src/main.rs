@@ -36,7 +36,7 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
 use config::Config;
 use console::style;
-use runtime::ssh_timeouts_from_settings;
+use runtime::RuntimeCtx;
 use slurm::slurm_config_from_cli;
 
 /// Entry point for the fleche CLI.
@@ -94,7 +94,7 @@ async fn run() -> Result<()> {
 
     // Optional settings are used by commands that can run without a project config.
     let optional_settings = Config::find_and_load().ok().map(|c| c.settings);
-    let ssh_timeouts = optional_settings.as_ref().map(ssh_timeouts_from_settings);
+    let runtime_ctx = RuntimeCtx::from_optional_settings(cli.debug, optional_settings.as_ref());
 
     match cli.command {
         Commands::Run {
@@ -119,6 +119,7 @@ async fn run() -> Result<()> {
             note,
         } => {
             let config = Config::find_and_load()?;
+            let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
             let slurm_overrides = slurm_config_from_cli(
                 partition, time, gpus, cpus, memory, constraint, nodes, exclude,
             );
@@ -135,11 +136,11 @@ async fn run() -> Result<()> {
                     background: bg,
                     notify,
                     dry_run,
-                    debug: cli.debug,
                     after,
                     retry,
                     note,
                 },
+                runtime_ctx,
             )
             .await?;
         }
@@ -150,7 +151,8 @@ async fn run() -> Result<()> {
             host,
         } => {
             let config = Config::find_and_load()?;
-            job::exec_command(&config, &command, &env_vars, host.as_deref(), cli.debug).await?;
+            let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
+            job::exec_command(&config, &command, &env_vars, host.as_deref(), runtime_ctx).await?;
         }
 
         Commands::Status {
@@ -181,8 +183,7 @@ async fn run() -> Result<()> {
                 last,
                 default_limit,
                 archived_filter,
-                cli.debug,
-                ssh_timeouts,
+                runtime_ctx,
             )
             .await?;
         }
@@ -207,8 +208,7 @@ async fn run() -> Result<()> {
                     only_stderr: stderr,
                     tail,
                     raw,
-                    debug: cli.debug,
-                    ssh_timeouts,
+                    ctx: runtime_ctx,
                 },
             )
             .await?;
@@ -229,8 +229,7 @@ async fn run() -> Result<()> {
                 &filter,
                 &tags,
                 dry_run,
-                cli.debug,
-                ssh_timeouts,
+                runtime_ctx,
             )
             .await?;
         }
@@ -241,7 +240,7 @@ async fn run() -> Result<()> {
             yes,
             tags,
         } => {
-            job::cancel_jobs(job_id.as_deref(), all, yes, &tags, cli.debug, ssh_timeouts).await?;
+            job::cancel_jobs(job_id.as_deref(), all, yes, &tags, runtime_ctx).await?;
         }
 
         Commands::Clean {
@@ -264,8 +263,7 @@ async fn run() -> Result<()> {
                     archive,
                     unarchive,
                     skip_confirm: yes,
-                    debug: cli.debug,
-                    ssh_timeouts,
+                    ctx: runtime_ctx,
                 },
             )
             .await?;
@@ -277,16 +275,18 @@ async fn run() -> Result<()> {
 
         Commands::Rerun { job_id, bg, tags } => {
             let config = Config::find_and_load()?;
-            job::rerun_job(&config, &job_id, &tags, bg, cli.debug).await?;
+            let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
+            job::rerun_job(&config, &job_id, &tags, bg, runtime_ctx).await?;
         }
 
         Commands::Init => handlers::init()?,
 
         Commands::Check { remote } => {
             let config = Config::find_and_load()?;
+            let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
             handlers::check(&config);
             if remote {
-                diagnostics::check_remote(&config, cli.debug).await?;
+                diagnostics::check_remote(&config, runtime_ctx.debug).await?;
             }
         }
 
@@ -295,12 +295,13 @@ async fn run() -> Result<()> {
         }
 
         Commands::Doctor => {
-            diagnostics::doctor(cli.debug).await?;
+            diagnostics::doctor(runtime_ctx.debug).await?;
         }
 
         Commands::Ping => {
             let config = Config::find_and_load()?;
-            job::ping_cluster(&config, cli.debug).await?;
+            let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
+            job::ping_cluster(&config, runtime_ctx).await?;
         }
 
         Commands::Wait {
@@ -308,20 +309,7 @@ async fn run() -> Result<()> {
             notify,
             tags,
         } => {
-            // Load config for poll intervals, using defaults if not available
-            let (poll_local, poll_remote) = optional_settings.as_ref().map_or((2, 5), |s| {
-                (s.poll_interval_local_secs, s.poll_interval_remote_secs)
-            });
-            job::wait_for_job(
-                job_id.as_deref(),
-                notify,
-                &tags,
-                cli.debug,
-                poll_local,
-                poll_remote,
-                ssh_timeouts,
-            )
-            .await?;
+            job::wait_for_job(job_id.as_deref(), notify, &tags, runtime_ctx).await?;
         }
 
         Commands::Completions { shell } => {
@@ -329,7 +317,7 @@ async fn run() -> Result<()> {
         }
 
         Commands::Stats { job_id, last, tags } => {
-            job::show_stats(job_id.as_deref(), last, &tags, cli.debug, ssh_timeouts).await?;
+            job::show_stats(job_id.as_deref(), last, &tags, runtime_ctx).await?;
         }
 
         Commands::Note { job_id, note } => {

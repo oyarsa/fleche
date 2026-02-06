@@ -3,7 +3,7 @@
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
-use crate::runtime::{SshTimeouts, ssh_client};
+use crate::runtime::RuntimeCtx;
 use crate::slurm::cancel_job;
 use console::style;
 use std::collections::HashSet;
@@ -25,10 +25,8 @@ pub struct CleanJobsOptions {
     pub unarchive: bool,
     /// Skip confirmation prompt.
     pub skip_confirm: bool,
-    /// Enable verbose SSH output.
-    pub debug: bool,
-    /// Optional SSH timeout settings.
-    pub ssh_timeouts: Option<SshTimeouts>,
+    /// Shared runtime settings.
+    pub ctx: RuntimeCtx,
 }
 
 /// Cancels running or pending Slurm jobs.
@@ -37,8 +35,7 @@ pub async fn cancel_jobs(
     all: bool,
     skip_confirm: bool,
     tags: &[(String, String)],
-    debug: bool,
-    ssh_timeouts: Option<SshTimeouts>,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -132,7 +129,7 @@ pub async fn cancel_jobs(
                 continue;
             };
 
-            let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
+            let ssh = ctx.ssh(&job.remote_host);
             if let Err(e) = cancel_job(&ssh, slurm_id).await {
                 eprintln!("  Warning: Could not cancel {}: {e}", job.id);
                 continue;
@@ -311,7 +308,7 @@ pub async fn clean_jobs(
             }
         } else {
             // Clean remote job directory (logs/metadata only, not workspace)
-            let ssh = ssh_client(&job.remote_host, opts.debug, opts.ssh_timeouts);
+            let ssh = opts.ctx.ssh(&job.remote_host);
             let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
             if let Err(e) = ssh.rm_rf(&job_dir).await {
                 eprintln!("warning: could not delete job directory: {e}");
@@ -355,7 +352,7 @@ pub async fn clean_jobs(
                 continue;
             }
 
-            let ssh = ssh_client(&key.0, opts.debug, opts.ssh_timeouts);
+            let ssh = opts.ctx.ssh(&key.0);
             print!("Cleaning workspace on {}... ", key.0);
             if let Err(e) = ssh.rm_rf(&key.1).await {
                 eprintln!("warning: could not delete workspace: {e}");

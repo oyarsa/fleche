@@ -4,7 +4,7 @@ use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobStatus, Registry};
-use crate::runtime::{SshTimeouts, send_notification, ssh_client, ssh_timeouts_from_settings};
+use crate::runtime::{RuntimeCtx, send_notification};
 use crate::slurm::{generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::shell_escape;
 use crate::sync::{sync_inputs_to_workspace, sync_project_to_workspace};
@@ -45,8 +45,6 @@ pub struct RunJobOptions {
     pub notify: bool,
     /// Print generated sbatch script without submitting.
     pub dry_run: bool,
-    /// Enable verbose SSH output.
-    pub debug: bool,
     /// Job ID to wait for before starting.
     pub after: Option<String>,
     /// Number of times to retry on failure (with exponential backoff).
@@ -74,9 +72,8 @@ pub async fn run_job(
     slurm_overrides: SlurmConfig,
     host_override: Option<&str>,
     opts: RunJobOptions,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
-    let ssh_timeouts = Some(ssh_timeouts_from_settings(&config.settings));
-
     // Determine if job_or_command is a job name or a command
     let (job_name, actual_command) = if let Some(joc) = job_or_command {
         if config.jobs.contains_key(joc) {
@@ -97,7 +94,7 @@ pub async fn run_job(
 
     // Branch based on host
     if host == "local" {
-        return run_job_locally(config, &job, tags, &opts).await;
+        return run_job_locally(config, &job, tags, &opts, ctx).await;
     }
 
     // Resolve dependency if specified
@@ -129,16 +126,8 @@ pub async fn run_job(
     }
 
     let job_dir = job_path(config, &job_id);
-    let ssh = prepare_remote_workspace(
-        config,
-        &host,
-        &workspace,
-        &job_dir,
-        &job.inputs,
-        opts.debug,
-        ssh_timeouts,
-    )
-    .await?;
+    let ssh =
+        prepare_remote_workspace(config, &host, &workspace, &job_dir, &job.inputs, ctx).await?;
 
     // Retry loop
     let max_attempts = opts.retry.map_or(1, |r| r + 1);
@@ -209,16 +198,9 @@ pub async fn run_job(
         println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
 
         if opts.background {
-            if opts.notify {
+            if ctx.should_notify(opts.notify) {
                 // Wait for job completion in background and notify
-                wait_and_notify(
-                    &job_id,
-                    &host,
-                    opts.debug,
-                    config.settings.poll_interval_remote_secs,
-                    ssh_timeouts,
-                )
-                .await?;
+                wait_and_notify(&job_id, &host, ctx).await?;
             }
             // Background mode doesn't support retry (we don't wait for completion)
             break;
@@ -227,22 +209,14 @@ pub async fn run_job(
         // Foreground mode: follow logs and check result
         println!();
         let log_path = format!("{job_dir}/job.out");
-        let final_status = follow_job_logs(
-            &host,
-            &slurm_id,
-            &log_path,
-            opts.debug,
-            config.settings.poll_interval_remote_secs,
-            ssh_timeouts,
-        )
-        .await?;
+        let final_status = follow_job_logs(&host, &slurm_id, &log_path, ctx).await?;
 
         // Update registry with final status
         registry.update_status(&job_id, final_status)?;
 
         // Check if we should retry
         if final_status == JobStatus::Failed && attempt < max_attempts {
-            let delay_secs = config.settings.retry_base_delay_secs * (1 << (attempt - 1));
+            let delay_secs = ctx.retry_base_delay_secs * (1 << (attempt - 1));
             println!();
             println!(
                 "{} Retrying in {} seconds (attempt {}/{})...",
@@ -267,6 +241,7 @@ async fn run_job_locally(
     job: &ResolvedJob,
     tags: &[(String, String)],
     opts: &RunJobOptions,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
     require_shell()?;
 
@@ -366,11 +341,11 @@ async fn run_job_locally(
         // Update status to running
         registry.update_status(&job_id, JobStatus::Running)?;
 
-        if opts.notify {
+        if ctx.should_notify(opts.notify) {
             // Spawn a background task to wait and notify
             let project_path = config.project_path.clone();
             let job_id_clone = job_id.clone();
-            let poll_interval = config.settings.poll_interval_local_secs;
+            let poll_interval = ctx.poll_interval_local_secs;
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(poll_interval)).await;
@@ -464,7 +439,7 @@ async fn run_job_locally(
             println!();
             if exit_code == 0 {
                 println!("{}", style("Job completed successfully.").green().bold());
-                if opts.notify {
+                if ctx.should_notify(opts.notify) {
                     send_notification(&format!("Job {job_id} completed successfully."));
                 }
                 break;
@@ -478,7 +453,7 @@ async fn run_job_locally(
 
             // Check if we should retry
             if attempt < max_attempts {
-                let delay_secs = config.settings.retry_base_delay_secs * (1 << (attempt - 1));
+                let delay_secs = ctx.retry_base_delay_secs * (1 << (attempt - 1));
                 println!();
                 println!(
                     "{} Retrying in {} seconds (attempt {}/{})...",
@@ -490,7 +465,7 @@ async fn run_job_locally(
                 tokio::time::sleep(Duration::from_secs(delay_secs)).await;
                 println!();
             } else {
-                if opts.notify {
+                if ctx.should_notify(opts.notify) {
                     send_notification(&format!("Job {job_id} failed."));
                 }
                 break;
@@ -508,10 +483,9 @@ async fn prepare_remote_workspace(
     workspace: &str,
     job_dir: &str,
     inputs: &[String],
-    debug: bool,
-    ssh_timeouts: Option<SshTimeouts>,
+    ctx: RuntimeCtx,
 ) -> Result<crate::ssh::SshClient> {
-    let ssh = ssh_client(host, debug, ssh_timeouts);
+    let ssh = ctx.ssh(host);
 
     println!(
         "{} Creating remote directories...",
@@ -546,7 +520,7 @@ pub async fn rerun_job(
     job_id: &str,
     tags: &[(String, String)],
     background: bool,
-    debug: bool,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let old_job = registry.get_job(job_id)?;
@@ -569,7 +543,7 @@ pub async fn rerun_job(
     }
 
     // Run with the old job's resolved configuration
-    run_job_with_resolved(config, &resolved, &merged_tags, background, debug).await
+    run_job_with_resolved(config, &resolved, &merged_tags, background, ctx).await
 }
 
 /// Runs a job with an already-resolved configuration.
@@ -578,38 +552,28 @@ async fn run_job_with_resolved(
     job: &ResolvedJob,
     tags: &[(String, String)],
     background: bool,
-    debug: bool,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
     if job.host == "local" {
         let opts = RunJobOptions {
             background,
             notify: false,
             dry_run: false,
-            debug,
             after: None,
             retry: None,
             note: None,
         };
-        return run_job_locally(config, job, tags, &opts).await;
+        return run_job_locally(config, job, tags, &opts, ctx).await;
     }
 
-    let ssh_timeouts = Some(ssh_timeouts_from_settings(&config.settings));
     let workspace = workspace_path(config);
     let host = job.host.clone();
 
     // Generate unique job ID
     let job_id = generate_job_id(&job.name);
     let job_dir = job_path(config, &job_id);
-    let ssh = prepare_remote_workspace(
-        config,
-        &host,
-        &workspace,
-        &job_dir,
-        &job.inputs,
-        debug,
-        ssh_timeouts,
-    )
-    .await?;
+    let ssh =
+        prepare_remote_workspace(config, &host, &workspace, &job_dir, &job.inputs, ctx).await?;
 
     // Generate and upload sbatch script
     println!("{} Submitting job to Slurm...", style("[4/4]").bold().dim());
@@ -641,15 +605,7 @@ async fn run_job_with_resolved(
     if !background {
         println!();
         let log_path = format!("{job_dir}/job.out");
-        follow_job_logs(
-            &host,
-            &slurm_id,
-            &log_path,
-            debug,
-            config.settings.poll_interval_remote_secs,
-            ssh_timeouts,
-        )
-        .await?;
+        follow_job_logs(&host, &slurm_id, &log_path, ctx).await?;
     }
 
     Ok(())
@@ -665,9 +621,8 @@ pub async fn exec_command(
     command: &str,
     env_overrides: &[(String, String)],
     host_override: Option<&str>,
-    debug: bool,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
-    let ssh_timeouts = Some(ssh_timeouts_from_settings(&config.settings));
     let host = host_override.map_or_else(|| config.remote.host.clone(), String::from);
 
     // Local execution path
@@ -677,7 +632,7 @@ pub async fn exec_command(
 
     // Remote execution path
     let workspace = workspace_path(config);
-    let ssh = ssh_client(&host, debug, ssh_timeouts);
+    let ssh = ctx.ssh(&host);
 
     // Create workspace if needed
     println!(
@@ -800,16 +755,14 @@ async fn follow_job_logs(
     host: &str,
     slurm_id: &str,
     log_path: &str,
-    debug: bool,
-    poll_interval: u64,
-    ssh_timeouts: Option<SshTimeouts>,
+    ctx: RuntimeCtx,
 ) -> Result<JobStatus> {
     println!(
         "{}",
         style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
     );
 
-    let ssh = ssh_client(host, debug, ssh_timeouts);
+    let ssh = ctx.ssh(host);
     let mut child = ssh.tail_follow(log_path)?;
 
     // Poll job status until it reaches a terminal state
@@ -819,8 +772,8 @@ async fn follow_job_logs(
     let host_for_check = host.clone();
     let status_check = async move {
         loop {
-            tokio::time::sleep(Duration::from_secs(poll_interval)).await;
-            let ssh = ssh_client(&host_for_check, debug, ssh_timeouts);
+            tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
+            let ssh = ctx.ssh(&host_for_check);
             if let Ok(status) = get_job_status(&ssh, &slurm_id_for_check).await {
                 match status {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
@@ -836,7 +789,7 @@ async fn follow_job_logs(
     let final_status = tokio::select! {
         _ = child.wait() => {
             // Tail exited on its own - check final status
-            let ssh = ssh_client(&host, debug, ssh_timeouts);
+            let ssh = ctx.ssh(&host);
             get_job_status(&ssh, &slurm_id).await.unwrap_or(JobStatus::Failed)
         }
         status = status_check => {
@@ -879,20 +832,14 @@ async fn follow_job_logs(
 /// Waits for a job to complete and sends a terminal notification.
 ///
 /// Polls the job status every few seconds until it reaches a terminal state.
-async fn wait_and_notify(
-    job_id: &str,
-    remote_host: &str,
-    debug: bool,
-    poll_interval: u64,
-    ssh_timeouts: Option<SshTimeouts>,
-) -> Result<()> {
+async fn wait_and_notify(job_id: &str, remote_host: &str, ctx: RuntimeCtx) -> Result<()> {
     println!(
         "{}",
         style("Waiting for job to complete (will notify when done)...").dim()
     );
 
     let registry = Registry::open()?;
-    let ssh = ssh_client(remote_host, debug, ssh_timeouts);
+    let ssh = ctx.ssh(remote_host);
 
     loop {
         let job = registry.get_job(job_id)?;
@@ -923,7 +870,7 @@ async fn wait_and_notify(
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(poll_interval)).await;
+        tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
     }
 }
 

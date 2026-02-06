@@ -3,7 +3,7 @@
 use crate::config::ResolvedJob;
 use crate::error::{FlecheError, Result};
 use crate::registry::{JobStatus, Registry};
-use crate::runtime::{SshTimeouts, ssh_client};
+use crate::runtime::RuntimeCtx;
 use crate::slurm::get_job_status;
 use crate::ssh::SshClient;
 use crate::sync::{
@@ -22,8 +22,7 @@ pub async fn download_outputs(
     filters: &[String],
     tags: &[(String, String)],
     dry_run: bool,
-    debug: bool,
-    ssh_timeouts: Option<SshTimeouts>,
+    ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let job = resolve_job(&registry, job_id, tags, None)?;
@@ -37,7 +36,7 @@ pub async fn download_outputs(
         return Ok(());
     }
 
-    let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
+    let ssh = ctx.ssh(&job.remote_host);
 
     // Check job status
     if !partial && matches!(job.status, JobStatus::Pending | JobStatus::Running) {
