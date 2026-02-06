@@ -291,6 +291,14 @@ pub async fn clean_jobs(
         return Ok(());
     }
 
+    // Snapshot active jobs before deletions so workspace checks remain accurate
+    // even if selected running jobs are removed from the registry.
+    let active_jobs_snapshot = if opts.clean_workspace {
+        Some(registry.list_active_jobs()?)
+    } else {
+        None
+    };
+
     // Clean job directories
     for job in &jobs_to_clean {
         print!("Cleaning {}... ", job.id);
@@ -316,7 +324,9 @@ pub async fn clean_jobs(
 
     // Clean workspaces if requested (only for remote jobs)
     if opts.clean_workspace {
-        let active_jobs = registry.list_active_jobs()?;
+        let active_jobs = active_jobs_snapshot
+            .as_ref()
+            .expect("snapshot exists when clean_workspace is enabled");
         let mut seen = HashSet::new();
         let mut cleaned_any = false;
 
