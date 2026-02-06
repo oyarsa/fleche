@@ -3,7 +3,7 @@
 use crate::error::Result;
 use crate::local;
 use crate::registry::Registry;
-use crate::ssh::SshClient;
+use crate::runtime::{SshTimeouts, ssh_client};
 use console::style;
 use std::path::PathBuf;
 
@@ -24,6 +24,8 @@ pub struct ShowLogsOptions {
     pub raw: bool,
     /// Enable verbose SSH output.
     pub debug: bool,
+    /// Optional SSH timeout settings.
+    pub ssh_timeouts: Option<SshTimeouts>,
 }
 
 /// Displays logs from a job's stdout or stderr.
@@ -91,7 +93,7 @@ pub async fn show_logs(
     }
 
     // Remote job handling
-    let ssh = SshClient::new(&job.remote_host, opts.debug);
+    let ssh = ssh_client(&job.remote_host, opts.debug, opts.ssh_timeouts);
 
     let log_base = job_path_from_workspace(&job.remote_path, &job.id);
 

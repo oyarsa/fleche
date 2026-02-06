@@ -4,9 +4,8 @@ use crate::config::Config;
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobStatus, Registry};
-use crate::runtime::send_notification;
+use crate::runtime::{SshTimeouts, send_notification, ssh_client, ssh_timeouts_from_settings};
 use crate::slurm::{get_job_resource_usage, get_job_status};
-use crate::ssh::SshClient;
 use console::style;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -24,6 +23,7 @@ pub async fn wait_for_job(
     debug: bool,
     poll_interval_local: u64,
     poll_interval_remote: u64,
+    ssh_timeouts: Option<SshTimeouts>,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let job = resolve_job(&registry, job_id, tags, None)?;
@@ -50,7 +50,7 @@ pub async fn wait_for_job(
     }
 
     // Remote job handling
-    let ssh = SshClient::new(&job.remote_host, debug);
+    let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
 
     loop {
         if let Some(ref slurm_id) = job.slurm_id {
@@ -98,7 +98,11 @@ fn format_terminal_status(job_id: &str, status: JobStatus) -> Option<String> {
 /// Runs `scontrol ping` on the remote host and reports the status of the
 /// Slurm controller(s). Useful for diagnosing timeout issues.
 pub async fn ping_cluster(config: &Config, debug: bool) -> Result<()> {
-    let ssh = SshClient::new(&config.remote.host, debug);
+    let ssh = ssh_client(
+        &config.remote.host,
+        debug,
+        Some(ssh_timeouts_from_settings(&config.settings)),
+    );
 
     println!(
         "Pinging Slurm controller on {}...",
@@ -156,6 +160,7 @@ pub async fn show_stats(
     last: usize,
     tags: &[(String, String)],
     debug: bool,
+    ssh_timeouts: Option<SshTimeouts>,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -199,7 +204,7 @@ pub async fn show_stats(
             .slurm_id
             .as_ref()
             .expect("already filtered to jobs with slurm_id");
-        let ssh = SshClient::new(&job.remote_host, debug);
+        let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
 
         match get_job_resource_usage(&ssh, slurm_id).await {
             Ok(usage) => {

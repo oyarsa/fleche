@@ -5,7 +5,8 @@
 
 use crate::config::Config;
 use crate::registry::{JobStatus, Registry};
-use crate::ssh::SshClient;
+use crate::runtime::{ssh_client, ssh_timeouts_from_settings};
+use crate::ssh::{SshClient, shell_escape};
 use anyhow::Result;
 use chrono::Duration;
 use console::style;
@@ -17,7 +18,11 @@ pub async fn check_remote(config: &Config, debug: bool) -> Result<()> {
     println!("{}", style("Remote Validation").bold().underlined());
     println!();
 
-    let ssh = SshClient::new(&config.remote.host, debug);
+    let ssh = ssh_client(
+        &config.remote.host,
+        debug,
+        Some(ssh_timeouts_from_settings(&config.settings)),
+    );
 
     // Check SSH connectivity
     if !check_ssh_connection(&ssh).await {
@@ -94,7 +99,10 @@ async fn check_partition(ssh: &SshClient, partition: &str, constraint: Option<&s
     print!("  Partition '{partition}'... ");
     let _ = std::io::stdout().flush();
 
-    let cmd = format!("sinfo -p {partition} --noheader 2>/dev/null | head -1");
+    let cmd = format!(
+        "sinfo -p {} --noheader 2>/dev/null | head -1",
+        shell_escape(partition)
+    );
     match ssh.exec_allow_failure(&cmd).await {
         Ok((true, stdout, _)) if !stdout.trim().is_empty() => {
             // Parse sinfo output for node count
@@ -123,7 +131,8 @@ async fn check_constraint(ssh: &SshClient, partition: &str, constraint: &str) {
     let _ = std::io::stdout().flush();
 
     let cmd = format!(
-        "sinfo -p {partition} -o '%f' --noheader 2>/dev/null | sort -u | tr '\\n' ',' | sed 's/,$//'"
+        "sinfo -p {} -o '%f' --noheader 2>/dev/null | sort -u | tr '\\n' ',' | sed 's/,$//'",
+        shell_escape(partition)
     );
 
     match ssh.exec_allow_failure(&cmd).await {
@@ -166,7 +175,11 @@ async fn check_base_path(ssh: &SshClient, base_path: &str) {
     print!("  Base path writable... ");
     let _ = std::io::stdout().flush();
 
-    let cmd = format!("test -d {base_path} && test -w {base_path} && echo yes || echo no");
+    let cmd = format!(
+        "test -d {} && test -w {} && echo yes || echo no",
+        shell_escape(base_path),
+        shell_escape(base_path)
+    );
 
     match ssh.exec_allow_failure(&cmd).await {
         Ok((true, stdout, _)) if stdout.trim() == "yes" => {
@@ -174,8 +187,11 @@ async fn check_base_path(ssh: &SshClient, base_path: &str) {
         }
         _ => {
             // Try creating the directory
-            let mkdir_cmd =
-                format!("mkdir -p {base_path} && test -w {base_path} && echo yes || echo no");
+            let mkdir_cmd = format!(
+                "mkdir -p {} && test -w {} && echo yes || echo no",
+                shell_escape(base_path),
+                shell_escape(base_path)
+            );
             match ssh.exec_allow_failure(&mkdir_cmd).await {
                 Ok((true, stdout, _)) if stdout.trim() == "yes" => {
                     println!("{} (created)", style("yes").green());
@@ -196,7 +212,7 @@ async fn check_disk_space(ssh: &SshClient, base_path: &str) {
     print!("  Disk space... ");
     let _ = std::io::stdout().flush();
 
-    let cmd = format!("df -h {base_path} 2>/dev/null | tail -1");
+    let cmd = format!("df -h {} 2>/dev/null | tail -1", shell_escape(base_path));
 
     match ssh.exec_allow_failure(&cmd).await {
         Ok((true, stdout, _)) if !stdout.trim().is_empty() => {
@@ -490,7 +506,11 @@ async fn check_remote_connection(config: &Config, debug: bool, issues: &mut Vec<
     println!("{}", style("Remote Connection").bold());
     println!();
 
-    let ssh = SshClient::new(&config.remote.host, debug);
+    let ssh = ssh_client(
+        &config.remote.host,
+        debug,
+        Some(ssh_timeouts_from_settings(&config.settings)),
+    );
 
     // Check SSH
     print!("  SSH connection... ");
@@ -550,7 +570,7 @@ async fn check_disk_for_doctor(ssh: &SshClient, base_path: &str, issues: &mut Ve
     print!("  Disk space... ");
     let _ = std::io::stdout().flush();
 
-    let cmd = format!("df -h {base_path} 2>/dev/null | tail -1");
+    let cmd = format!("df -h {} 2>/dev/null | tail -1", shell_escape(base_path));
 
     if let Ok((true, stdout, _)) = ssh.exec_allow_failure(&cmd).await {
         if let Some(usage) = parse_disk_usage(&stdout) {

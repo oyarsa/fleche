@@ -422,38 +422,29 @@ impl Registry {
         }
 
         // Build regex for name filtering (applied in Rust after SQL query)
-        let name_regex = name_filter.and_then(|pattern| {
-            // Add implicit .* around the pattern unless anchors are present
-            let pattern = if pattern.starts_with('^') {
-                pattern.to_string()
-            } else {
-                format!(".*{pattern}")
-            };
-            let pattern = if pattern.ends_with('$') {
-                pattern
-            } else {
-                format!("{pattern}.*")
-            };
-            Regex::new(&pattern).ok()
-        });
+        let name_regex = if let Some(pattern) = name_filter {
+            let regex = build_job_filter_pattern(pattern);
+            Some(Regex::new(&regex).map_err(|e| {
+                FlecheError::InvalidRegexPattern(format!("--name '{pattern}': {e}"))
+            })?)
+        } else {
+            None
+        };
 
         // Build regex for note filtering (applied in Rust, case-insensitive)
-        let note_regex = note_filter.and_then(|pattern| {
-            let pattern = if pattern.starts_with('^') {
-                pattern.to_string()
-            } else {
-                format!(".*{pattern}")
-            };
-            let pattern = if pattern.ends_with('$') {
-                pattern
-            } else {
-                format!("{pattern}.*")
-            };
-            RegexBuilder::new(&pattern)
-                .case_insensitive(true)
-                .build()
-                .ok()
-        });
+        let note_regex = if let Some(pattern) = note_filter {
+            let regex = build_job_filter_pattern(pattern);
+            Some(
+                RegexBuilder::new(&regex)
+                    .case_insensitive(true)
+                    .build()
+                    .map_err(|e| {
+                        FlecheError::InvalidRegexPattern(format!("--note '{pattern}': {e}"))
+                    })?,
+            )
+        } else {
+            None
+        };
 
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -606,6 +597,23 @@ impl Registry {
     }
 }
 
+/// Builds a permissive regex for job filters.
+///
+/// Adds implicit `.*` around unanchored patterns for substring matching.
+fn build_job_filter_pattern(pattern: &str) -> String {
+    let pattern = if pattern.starts_with('^') {
+        pattern.to_string()
+    } else {
+        format!(".*{pattern}")
+    };
+
+    if pattern.ends_with('$') {
+        pattern
+    } else {
+        format!("{pattern}.*")
+    }
+}
+
 /// Returns the path to the registry database file.
 fn get_db_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir().ok_or(FlecheError::ConfigDirNotFound)?;
@@ -690,6 +698,26 @@ mod tests {
         assert!(parse_duration("7x").is_err());
         assert!(parse_duration("abc").is_err());
         assert!(parse_duration("").is_err());
+    }
+
+    #[test]
+    fn test_build_job_filter_pattern_unanchored() {
+        assert_eq!(build_job_filter_pattern("train"), ".*train.*");
+    }
+
+    #[test]
+    fn test_build_job_filter_pattern_anchored_start() {
+        assert_eq!(build_job_filter_pattern("^train"), "^train.*");
+    }
+
+    #[test]
+    fn test_build_job_filter_pattern_anchored_end() {
+        assert_eq!(build_job_filter_pattern("train$"), ".*train$");
+    }
+
+    #[test]
+    fn test_build_job_filter_pattern_anchored_both() {
+        assert_eq!(build_job_filter_pattern("^train$"), "^train$");
     }
 
     #[test]

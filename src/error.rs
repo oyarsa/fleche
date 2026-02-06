@@ -97,6 +97,10 @@ pub enum FlecheError {
     #[error("Invalid glob pattern: {0}")]
     InvalidGlobPattern(String),
 
+    /// Invalid regex pattern for filtering jobs.
+    #[error("Invalid regex pattern: {0}")]
+    InvalidRegexPattern(String),
+
     /// Unknown job status string from database.
     #[error("Unknown job status: {0}")]
     UnknownJobStatus(String),

@@ -4,9 +4,9 @@ use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobStatus, Registry};
-use crate::runtime::send_notification;
+use crate::runtime::{SshTimeouts, send_notification, ssh_client, ssh_timeouts_from_settings};
 use crate::slurm::{generate_sbatch_script, get_job_status, submit_job};
-use crate::ssh::{SshClient, shell_escape};
+use crate::ssh::shell_escape;
 use crate::sync::{sync_inputs_to_workspace, sync_project_to_workspace};
 use chrono::Utc;
 use console::style;
@@ -75,6 +75,8 @@ pub async fn run_job(
     host_override: Option<&str>,
     opts: RunJobOptions,
 ) -> Result<()> {
+    let ssh_timeouts = Some(ssh_timeouts_from_settings(&config.settings));
+
     // Determine if job_or_command is a job name or a command
     let (job_name, actual_command) = if let Some(joc) = job_or_command {
         if config.jobs.contains_key(joc) {
@@ -126,33 +128,17 @@ pub async fn run_job(
         return Ok(());
     }
 
-    let ssh = SshClient::new(&host, opts.debug);
-
-    // Create directories
-    println!(
-        "{} Creating remote directories...",
-        style("[1/4]").bold().dim()
-    );
-    ssh.mkdir(&workspace).await?;
     let job_dir = job_path(config, &job_id);
-    ssh.mkdir(&job_dir).await?;
-
-    // Sync project code to workspace
-    print!("{} Syncing project code...", style("[2/4]").bold().dim());
-    let _ = std::io::stdout().flush();
-    let stats = sync_project_to_workspace(&config.project_path, &host, &workspace).await?;
-    println!(" {}", style(format!("({})", stats.human_readable())).dim());
-
-    // Sync inputs to workspace
-    if job.inputs.is_empty() {
-        println!("{} No input files to sync", style("[3/4]").bold().dim());
-    } else {
-        print!("{} Syncing input files...", style("[3/4]").bold().dim());
-        let _ = std::io::stdout().flush();
-        let stats =
-            sync_inputs_to_workspace(&config.project_path, &job.inputs, &host, &workspace).await?;
-        println!(" {}", style(format!("({})", stats.human_readable())).dim());
-    }
+    let ssh = prepare_remote_workspace(
+        config,
+        &host,
+        &workspace,
+        &job_dir,
+        &job.inputs,
+        opts.debug,
+        ssh_timeouts,
+    )
+    .await?;
 
     // Retry loop
     let max_attempts = opts.retry.map_or(1, |r| r + 1);
@@ -230,6 +216,7 @@ pub async fn run_job(
                     &host,
                     opts.debug,
                     config.settings.poll_interval_remote_secs,
+                    ssh_timeouts,
                 )
                 .await?;
             }
@@ -246,6 +233,7 @@ pub async fn run_job(
             &log_path,
             opts.debug,
             config.settings.poll_interval_remote_secs,
+            ssh_timeouts,
         )
         .await?;
 
@@ -513,6 +501,42 @@ async fn run_job_locally(
     Ok(())
 }
 
+/// Prepares remote workspace and job directory, then syncs code and inputs.
+async fn prepare_remote_workspace(
+    config: &Config,
+    host: &str,
+    workspace: &str,
+    job_dir: &str,
+    inputs: &[String],
+    debug: bool,
+    ssh_timeouts: Option<SshTimeouts>,
+) -> Result<crate::ssh::SshClient> {
+    let ssh = ssh_client(host, debug, ssh_timeouts);
+
+    println!(
+        "{} Creating remote directories...",
+        style("[1/4]").bold().dim()
+    );
+    ssh.mkdir(workspace).await?;
+    ssh.mkdir(job_dir).await?;
+
+    print!("{} Syncing project code...", style("[2/4]").bold().dim());
+    let _ = std::io::stdout().flush();
+    let stats = sync_project_to_workspace(&config.project_path, host, workspace).await?;
+    println!(" {}", style(format!("({})", stats.human_readable())).dim());
+
+    if inputs.is_empty() {
+        println!("{} No input files to sync", style("[3/4]").bold().dim());
+    } else {
+        print!("{} Syncing input files...", style("[3/4]").bold().dim());
+        let _ = std::io::stdout().flush();
+        let stats = sync_inputs_to_workspace(&config.project_path, inputs, host, workspace).await?;
+        println!(" {}", style(format!("({})", stats.human_readable())).dim());
+    }
+
+    Ok(ssh)
+}
+
 /// Re-runs a previous job with the same settings.
 ///
 /// Fetches the job configuration from the registry and submits a new job
@@ -569,47 +593,23 @@ async fn run_job_with_resolved(
         return run_job_locally(config, job, tags, &opts).await;
     }
 
+    let ssh_timeouts = Some(ssh_timeouts_from_settings(&config.settings));
     let workspace = workspace_path(config);
     let host = job.host.clone();
-    let ssh = SshClient::new(&host, debug);
 
     // Generate unique job ID
     let job_id = generate_job_id(&job.name);
-    let job_dir = format!(
-        "{}/{}/.fleche/jobs/{}",
-        config.remote.base_path, config.project_name, job_id
-    );
-
-    // Create directories
-    println!(
-        "{} Creating remote directories...",
-        style("[1/4]").bold().dim()
-    );
-    ssh.mkdir(&workspace).await?;
-    ssh.mkdir(&job_dir).await?;
-
-    // Sync project code
-    print!("{} Syncing project code...", style("[2/4]").bold().dim());
-    let _ = std::io::stdout().flush();
-    let stats =
-        sync_project_to_workspace(&config.project_path, &host, &workspace).await?;
-    println!(" {}", style(format!("({})", stats.human_readable())).dim());
-
-    // Sync inputs if any
-    if job.inputs.is_empty() {
-        println!("{} Submitting job to Slurm...", style("[3/4]").bold().dim());
-    } else {
-        print!("{} Syncing input files...", style("[3/4]").bold().dim());
-        let _ = std::io::stdout().flush();
-        let stats = sync_inputs_to_workspace(
-            &config.project_path,
-            &job.inputs,
-            &host,
-            &workspace,
-        )
-        .await?;
-        println!(" {}", style(format!("({})", stats.human_readable())).dim());
-    }
+    let job_dir = job_path(config, &job_id);
+    let ssh = prepare_remote_workspace(
+        config,
+        &host,
+        &workspace,
+        &job_dir,
+        &job.inputs,
+        debug,
+        ssh_timeouts,
+    )
+    .await?;
 
     // Generate and upload sbatch script
     println!("{} Submitting job to Slurm...", style("[4/4]").bold().dim());
@@ -647,6 +647,7 @@ async fn run_job_with_resolved(
             &log_path,
             debug,
             config.settings.poll_interval_remote_secs,
+            ssh_timeouts,
         )
         .await?;
     }
@@ -666,6 +667,7 @@ pub async fn exec_command(
     host_override: Option<&str>,
     debug: bool,
 ) -> Result<()> {
+    let ssh_timeouts = Some(ssh_timeouts_from_settings(&config.settings));
     let host = host_override.map_or_else(|| config.remote.host.clone(), String::from);
 
     // Local execution path
@@ -675,7 +677,7 @@ pub async fn exec_command(
 
     // Remote execution path
     let workspace = workspace_path(config);
-    let ssh = SshClient::new(&host, debug);
+    let ssh = ssh_client(&host, debug, ssh_timeouts);
 
     // Create workspace if needed
     println!(
@@ -800,13 +802,14 @@ async fn follow_job_logs(
     log_path: &str,
     debug: bool,
     poll_interval: u64,
+    ssh_timeouts: Option<SshTimeouts>,
 ) -> Result<JobStatus> {
     println!(
         "{}",
         style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
     );
 
-    let ssh = SshClient::new(host, debug);
+    let ssh = ssh_client(host, debug, ssh_timeouts);
     let mut child = ssh.tail_follow(log_path)?;
 
     // Poll job status until it reaches a terminal state
@@ -817,7 +820,7 @@ async fn follow_job_logs(
     let status_check = async move {
         loop {
             tokio::time::sleep(Duration::from_secs(poll_interval)).await;
-            let ssh = SshClient::new(&host_for_check, debug);
+            let ssh = ssh_client(&host_for_check, debug, ssh_timeouts);
             if let Ok(status) = get_job_status(&ssh, &slurm_id_for_check).await {
                 match status {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
@@ -833,7 +836,7 @@ async fn follow_job_logs(
     let final_status = tokio::select! {
         _ = child.wait() => {
             // Tail exited on its own - check final status
-            let ssh = SshClient::new(&host, debug);
+            let ssh = ssh_client(&host, debug, ssh_timeouts);
             get_job_status(&ssh, &slurm_id).await.unwrap_or(JobStatus::Failed)
         }
         status = status_check => {
@@ -881,6 +884,7 @@ async fn wait_and_notify(
     remote_host: &str,
     debug: bool,
     poll_interval: u64,
+    ssh_timeouts: Option<SshTimeouts>,
 ) -> Result<()> {
     println!(
         "{}",
@@ -888,7 +892,7 @@ async fn wait_and_notify(
     );
 
     let registry = Registry::open()?;
-    let ssh = SshClient::new(remote_host, debug);
+    let ssh = ssh_client(remote_host, debug, ssh_timeouts);
 
     loop {
         let job = registry.get_job(job_id)?;

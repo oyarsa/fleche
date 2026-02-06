@@ -3,8 +3,8 @@
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
+use crate::runtime::{SshTimeouts, ssh_client};
 use crate::slurm::cancel_job;
-use crate::ssh::SshClient;
 use console::style;
 use std::collections::HashSet;
 use std::io::Write;
@@ -27,6 +27,8 @@ pub struct CleanJobsOptions {
     pub skip_confirm: bool,
     /// Enable verbose SSH output.
     pub debug: bool,
+    /// Optional SSH timeout settings.
+    pub ssh_timeouts: Option<SshTimeouts>,
 }
 
 /// Cancels running or pending Slurm jobs.
@@ -36,6 +38,7 @@ pub async fn cancel_jobs(
     skip_confirm: bool,
     tags: &[(String, String)],
     debug: bool,
+    ssh_timeouts: Option<SshTimeouts>,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -129,7 +132,7 @@ pub async fn cancel_jobs(
                 continue;
             };
 
-            let ssh = SshClient::new(&job.remote_host, debug);
+            let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
             if let Err(e) = cancel_job(&ssh, slurm_id).await {
                 eprintln!("  Warning: Could not cancel {}: {e}", job.id);
                 continue;
@@ -300,7 +303,7 @@ pub async fn clean_jobs(
             }
         } else {
             // Clean remote job directory (logs/metadata only, not workspace)
-            let ssh = SshClient::new(&job.remote_host, opts.debug);
+            let ssh = ssh_client(&job.remote_host, opts.debug, opts.ssh_timeouts);
             let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
             if let Err(e) = ssh.rm_rf(&job_dir).await {
                 eprintln!("warning: could not delete job directory: {e}");
@@ -342,7 +345,7 @@ pub async fn clean_jobs(
                 continue;
             }
 
-            let ssh = SshClient::new(&key.0, opts.debug);
+            let ssh = ssh_client(&key.0, opts.debug, opts.ssh_timeouts);
             print!("Cleaning workspace on {}... ", key.0);
             if let Err(e) = ssh.rm_rf(&key.1).await {
                 eprintln!("warning: could not delete workspace: {e}");

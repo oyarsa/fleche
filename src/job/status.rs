@@ -3,8 +3,8 @@
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobRecord, JobStatus, Registry};
+use crate::runtime::{SshTimeouts, ssh_client};
 use crate::slurm::get_job_status;
-use crate::ssh::SshClient;
 use console::style;
 use std::path::PathBuf;
 
@@ -31,6 +31,7 @@ pub async fn show_status(
     default_limit: Option<usize>,
     archived_filter: Option<bool>,
     debug: bool,
+    ssh_timeouts: Option<SshTimeouts>,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -50,7 +51,7 @@ pub async fn show_status(
             }
         } else if let Some(ref slurm_id) = job.slurm_id {
             // Remote job - check Slurm status
-            let ssh = SshClient::new(&job.remote_host, debug);
+            let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
             match get_job_status(&ssh, slurm_id).await {
                 Ok(status) => {
                     registry.update_status(&job.id, status)?;
@@ -65,7 +66,7 @@ pub async fn show_status(
         print_job_details(&job, current_status);
     } else {
         // Refresh status for all pending/running jobs
-        refresh_active_job_statuses(&registry, debug).await?;
+        refresh_active_job_statuses(&registry, debug, ssh_timeouts).await?;
 
         // Parse status filters
         let status_filters: Vec<JobStatus> = filters
@@ -152,7 +153,11 @@ pub fn list_tags() -> Result<()> {
 }
 
 /// Refreshes the status of all pending/running jobs from Slurm or local process status.
-pub async fn refresh_active_job_statuses(registry: &Registry, debug: bool) -> Result<()> {
+pub async fn refresh_active_job_statuses(
+    registry: &Registry,
+    debug: bool,
+    ssh_timeouts: Option<SshTimeouts>,
+) -> Result<()> {
     let active_jobs = registry.list_active_jobs()?;
 
     for job in active_jobs {
@@ -166,7 +171,7 @@ pub async fn refresh_active_job_statuses(registry: &Registry, debug: bool) -> Re
             }
         } else if let Some(ref slurm_id) = job.slurm_id {
             // Check remote Slurm job status
-            let ssh = SshClient::new(&job.remote_host, debug);
+            let ssh = ssh_client(&job.remote_host, debug, ssh_timeouts);
             if let Ok(status) = get_job_status(&ssh, slurm_id).await {
                 if status != job.status {
                     registry.update_status(&job.id, status)?;
