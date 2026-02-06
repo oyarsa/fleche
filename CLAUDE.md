@@ -1,4 +1,4 @@
-# Claude Code Instructions
+# Agent instructions
 
 Project-specific instructions for working on fleche.
 
