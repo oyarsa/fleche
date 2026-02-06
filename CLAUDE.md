@@ -44,6 +44,7 @@ Typical workflow:
 - Do NOT add `Co-Authored-By` lines to commits
 - Use natural, descriptive commit messages (no "conventional commits" format)
 - Commit messages should explain what and why, not how
+- Commit summary lines MUST be less than 70 characters
 
 ## Versioning
 
