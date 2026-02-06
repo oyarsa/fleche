@@ -92,6 +92,10 @@ async fn run() -> Result<()> {
         })?;
     }
 
+    // Optional settings are used by commands that can run without a project config.
+    let optional_settings = Config::find_and_load().ok().map(|c| c.settings);
+    let ssh_timeouts = optional_settings.as_ref().map(ssh_timeouts_from_settings);
+
     match cli.command {
         Commands::Run {
             job_or_command,
@@ -167,12 +171,7 @@ async fn run() -> Result<()> {
                 None // Default: show only non-archived
             };
 
-            // Try to load config for settings, but don't fail if not in a project
-            let config = Config::find_and_load().ok();
-            let default_limit = config.as_ref().map(|c| c.settings.default_list_limit);
-            let ssh_timeouts = config
-                .as_ref()
-                .map(|c| ssh_timeouts_from_settings(&c.settings));
+            let default_limit = optional_settings.as_ref().map(|s| s.default_list_limit);
 
             job::show_status(
                 job_id.as_deref(),
@@ -198,9 +197,6 @@ async fn run() -> Result<()> {
             tags,
             note,
         } => {
-            let ssh_timeouts = Config::find_and_load()
-                .ok()
-                .map(|c| ssh_timeouts_from_settings(&c.settings));
             job::show_logs(
                 job_id.as_deref(),
                 &tags,
@@ -226,9 +222,6 @@ async fn run() -> Result<()> {
             tags,
             dry_run,
         } => {
-            let ssh_timeouts = Config::find_and_load()
-                .ok()
-                .map(|c| ssh_timeouts_from_settings(&c.settings));
             job::download_outputs(
                 job_id.as_deref(),
                 partial,
@@ -248,9 +241,6 @@ async fn run() -> Result<()> {
             yes,
             tags,
         } => {
-            let ssh_timeouts = Config::find_and_load()
-                .ok()
-                .map(|c| ssh_timeouts_from_settings(&c.settings));
             job::cancel_jobs(job_id.as_deref(), all, yes, &tags, cli.debug, ssh_timeouts).await?;
         }
 
@@ -264,9 +254,6 @@ async fn run() -> Result<()> {
             yes,
             tags,
         } => {
-            let ssh_timeouts = Config::find_and_load()
-                .ok()
-                .map(|c| ssh_timeouts_from_settings(&c.settings));
             job::clean_jobs(
                 job_id.as_deref(),
                 older_than.as_deref(),
@@ -322,16 +309,9 @@ async fn run() -> Result<()> {
             tags,
         } => {
             // Load config for poll intervals, using defaults if not available
-            let config = Config::find_and_load().ok();
-            let (poll_local, poll_remote) = config.as_ref().map_or((2, 5), |c| {
-                (
-                    c.settings.poll_interval_local_secs,
-                    c.settings.poll_interval_remote_secs,
-                )
+            let (poll_local, poll_remote) = optional_settings.as_ref().map_or((2, 5), |s| {
+                (s.poll_interval_local_secs, s.poll_interval_remote_secs)
             });
-            let ssh_timeouts = config
-                .as_ref()
-                .map(|c| ssh_timeouts_from_settings(&c.settings));
             job::wait_for_job(
                 job_id.as_deref(),
                 notify,
@@ -349,9 +329,6 @@ async fn run() -> Result<()> {
         }
 
         Commands::Stats { job_id, last, tags } => {
-            let ssh_timeouts = Config::find_and_load()
-                .ok()
-                .map(|c| ssh_timeouts_from_settings(&c.settings));
             job::show_stats(job_id.as_deref(), last, &tags, cli.debug, ssh_timeouts).await?;
         }
 
