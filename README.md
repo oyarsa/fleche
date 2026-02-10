@@ -9,6 +9,7 @@ A CLI tool for submitting and managing jobs on remote Slurm clusters via SSH. El
 - **Stream output** in real-time by default
 - **Track job status** and download outputs
 - **Direct SSH execution** for quick tests without Slurm
+- **Exec mode** for configured jobs that bypass Slurm (`exec = true`)
 - **Local execution** for running jobs on your machine
 - **Job chaining** via shared workspace
 - **Job dependencies** with `--after` for sequential workflows
@@ -106,6 +107,10 @@ memory = "64G"
 
 [jobs.train.env]          # Additional env vars for this job
 CONFIG = "default"
+
+[jobs.setup]
+command = "bash setup.sh"
+exec = true               # Run directly via SSH, skip Slurm
 ```
 
 ### Environment Variable Substitution
@@ -186,6 +191,7 @@ Options:
   --tag <KEY=VALUE>     Add tag for filtering (repeatable)
   --note <text>         Add a note/annotation to the job
   --host <host>         Run on specific host ("local" for local execution)
+  --exec                Run directly via SSH instead of submitting to Slurm
   --after <job-id>      Run after another job completes successfully
   --retry <n>           Retry up to n times on failure (exponential backoff)
   --partition <name>    Override Slurm partition
@@ -263,6 +269,23 @@ fleche exec "ls -la"
 ```
 
 This syncs your project and runs the command directly over SSH.
+
+### Exec Mode (Configured Direct Execution)
+
+For jobs that should always run directly via SSH (bypassing Slurm), set `exec = true`.
+Unlike `fleche exec`, exec mode jobs are tracked with full status/logs/cancel support:
+
+```toml
+[jobs.setup]
+command = "bash setup.sh"
+exec = true
+```
+
+```bash
+fleche run setup            # Runs directly via SSH (foreground)
+fleche run setup --bg       # Runs in background
+fleche run train --exec     # Override: skip Slurm for this run only
+```
 
 ### Local Execution
 
@@ -433,8 +456,8 @@ All jobs share a workspace directory:
 4. **Remote directories created** (workspace + job dir)
 5. **Project code synced** to workspace via rsync (respects `.gitignore`)
 6. **Input files synced** to workspace
-7. **sbatch script generated and uploaded** to job dir
-8. **Job submitted** to Slurm
+7. **sbatch script generated and uploaded** to job dir (or exec script if `exec = true`)
+8. **Job submitted** to Slurm (or started directly via SSH if exec mode)
 9. **Job recorded** in local registry
 10. **Output streamed** (unless `--bg`)
 
@@ -468,7 +491,7 @@ These can be set in config or passed via CLI:
 - Rust 1.85+ (for building, required by Rust 2024 edition)
 - SSH access to the remote cluster
 - rsync installed locally and on the cluster
-- Slurm scheduler on the remote cluster
+- Slurm scheduler on the remote cluster (not required for `exec = true` jobs)
 
 ### Platform Support
 
@@ -487,7 +510,8 @@ These can be set in config or passed via CLI:
 - Use `fleche check` to validate config after editing
 - Job IDs look like `train-20260115-153042-847-x7k2`
 - Ctrl+C during streaming disconnects but doesn't cancel the job
-- Use `fleche exec` for quick tests without Slurm queue wait
+- Use `fleche exec` for quick ad-hoc tests without Slurm queue wait
+- Use `exec = true` in config for jobs that should always bypass Slurm
 - Jobs share workspace, so chained jobs can read each other's outputs
 - Use `--retry` for flaky jobs that may fail due to transient issues
 - Use `--note` to document experiment parameters for future reference

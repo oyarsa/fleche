@@ -98,6 +98,10 @@ memory = "64G"
 [jobs.train.env]          # Additional env vars for this job
 CONFIG = "default"
 
+[jobs.setup]
+command = "bash setup.sh"
+exec = true               # Run directly via SSH, skip Slurm
+
 # Optional settings to tune behavior
 [settings]
 # default_list_limit = 20           # Jobs shown in fleche status
@@ -251,6 +255,40 @@ fleche exec "ls -la"
 ```
 
 This syncs your project and runs the command directly over SSH.
+
+### Exec Mode (Configured Direct Execution)
+
+For jobs that should always run directly via SSH (bypassing Slurm), set `exec = true`
+in the job definition. Unlike `fleche exec`, exec mode jobs are tracked in the registry
+with full support for status, logs, cancel, wait, retry, and background execution.
+
+```toml
+[jobs.setup]
+command = "bash setup.sh"
+exec = true
+```
+
+```bash
+# Run in foreground (streams output)
+fleche run setup
+
+# Run in background
+fleche run setup --bg
+
+# All standard operations work
+fleche status
+fleche logs
+fleche cancel
+fleche wait
+```
+
+Use `--exec` to override any job to run directly:
+
+```bash
+fleche run train --exec   # Bypasses Slurm for this run only
+```
+
+Slurm options are ignored for exec jobs (a warning is shown if any are set).
 
 ### Local Execution
 
@@ -443,7 +481,7 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 
 | Command | Description |
 |---------|-------------|
-| `fleche run [job\|cmd] [opts]` | Submit a job via Slurm (or locally with `--host local`) |
+| `fleche run [job\|cmd] [opts]` | Submit a job via Slurm (or directly with `--exec`, locally with `--host local`) |
 | `fleche rerun <job-id>` | Re-run a previous job with same settings |
 | `fleche exec <cmd>` | Run command directly via SSH (or locally with `--host local`) |
 | `fleche status [job-id]` | Show job status (defaults to listing all) |
@@ -575,7 +613,8 @@ Useful for debugging why one job succeeded while another failed.
 - Job IDs look like `train-20260115-153042-847-x7k2` (use suffix like `x7k2` for short)
 - The job registry is at `~/.config/fleche/jobs.db`
 - Ctrl+C during streaming disconnects but doesn't cancel the job
-- Use `fleche exec` for quick tests without Slurm queue wait
+- Use `fleche exec` for quick ad-hoc tests without Slurm queue wait
+- Use `exec = true` in config for jobs that should always bypass Slurm
 - Jobs share workspace, so chained jobs can read each other's outputs
 - Use `--retry` for flaky jobs that may fail due to transient issues
 - Use `--note` to document experiment parameters for future reference

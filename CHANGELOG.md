@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.7.0] - 2026-02-10
+
+### Added
+- **Exec mode** for running configured jobs directly via SSH, bypassing Slurm
+  - Set `exec = true` in job definition to always run directly
+  - `--exec` CLI flag to override any job to run directly for a single invocation
+  - Full support for foreground streaming, background (`--bg`), retry, status,
+    logs, cancel, and wait — same as Slurm jobs
+  - Slurm options are ignored with a warning when exec mode is active
+  - Remote job status tracked via PID and exit_code files
+- **Dotenv forwarding** with `dotenv = ".env"` config option
+  - Injects all variables from a dotenv file into job environments as exports
+  - Per-job override: `dotenv = ".env.train"` replaces global (not additive)
+  - Precedence: dotenv < global `[env]` < job `[env]` < CLI `--env`
+  - Configured file must exist (missing file is an error)
+
+### Changed
+- Internal refactoring: introduced `RuntimeCtx` for shared runtime settings
+  across all command handlers (SSH timeouts, poll intervals, debug flag)
+- Replaced SSH timeout tuple alias with typed `SshTimeouts` struct
+- Snapshot active jobs before workspace cleanup to prevent deleting
+  workspaces with running jobs from other clean batches
+
 ## [6.6.2] - 2026-02-01
 
 ### Changed
