@@ -50,6 +50,9 @@ fn print_config_summary(config: &Config) {
         style("Config path:").bold(),
         config.project_path.join("fleche.toml").display()
     );
+    if let Some(dotenv) = config.dotenv_file() {
+        println!("  {:<14} {}", style("Dotenv file:").bold(), dotenv);
+    }
 }
 
 fn print_available_jobs(config: &Config) {

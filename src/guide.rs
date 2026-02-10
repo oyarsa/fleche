@@ -159,6 +159,35 @@ base_path = "${SCRATCH}/fleche"
 
 This enables user-agnostic configs that can be committed to version control.
 
+### Forwarding .env Variables to Jobs
+
+By default, `.env` variables are only used for `${VAR}` expansion in config values.
+They are NOT exported into job environments. To inject all variables from a dotenv
+file as exports in the sbatch script, use the `dotenv` option:
+
+```toml
+# fleche.toml
+dotenv = ".env"           # All vars from .env are exported in every job
+```
+
+Per-job override (replaces global, not additive):
+
+```toml
+dotenv = ".env"
+
+[jobs.train]
+dotenv = ".env.train"     # This job uses .env.train instead of .env
+```
+
+Precedence (lowest to highest):
+1. `dotenv` file variables
+2. Global `[env]`
+3. Job-specific `[jobs.<name>.env]`
+4. CLI `--env`
+
+The configured file must exist — unlike the implicit `.env` lookup, a missing
+`dotenv` file is an error.
+
 ### Separate Job Files
 
 Jobs can also be defined in `fleche/*.toml`. The filename becomes the job name:

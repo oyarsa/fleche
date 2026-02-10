@@ -17,15 +17,45 @@ use std::path::{Path, PathBuf};
 /// Variables are loaded as literal values (no expansion).
 fn load_dotenv(project_path: &Path) -> HashMap<String, String> {
     let dotenv_path = project_path.join(".env");
+    load_dotenv_from(&dotenv_path).unwrap_or_default()
+}
+
+/// Loads variables from a specific dotenv file.
+///
+/// Returns `Ok(vars)` if the file exists and parses, or `Ok(empty)` if the
+/// file doesn't exist. Returns `Err` only on parse errors.
+fn load_dotenv_from(path: &Path) -> std::result::Result<HashMap<String, String>, String> {
     let mut vars = HashMap::new();
-
-    if let Ok(iter) = dotenvy::from_path_iter(&dotenv_path) {
-        for item in iter.flatten() {
-            vars.insert(item.0, item.1);
+    match dotenvy::from_path_iter(path) {
+        Ok(iter) => {
+            for item in iter {
+                let (k, v) = item.map_err(|e| format!("{e}"))?;
+                vars.insert(k, v);
+            }
+            Ok(vars)
         }
+        Err(dotenvy::Error::Io(_)) => Ok(vars), // file not found
+        Err(e) => Err(format!("{e}")),
     }
+}
 
-    vars
+/// Loads variables from a configured dotenv file, erroring if the file is missing.
+///
+/// Unlike `load_dotenv`, this function returns an error when the file doesn't
+/// exist, since the user explicitly configured this path.
+fn load_dotenv_strict(path: &Path) -> Result<HashMap<String, String>> {
+    if !path.exists() {
+        return Err(FlecheError::ConfigParse(format!(
+            "dotenv file not found: {}",
+            path.display()
+        )));
+    }
+    load_dotenv_from(path).map_err(|e| {
+        FlecheError::ConfigParse(format!(
+            "failed to parse dotenv file {}: {e}",
+            path.display()
+        ))
+    })
 }
 
 /// Expands `${VAR}` patterns in a string.
@@ -227,6 +257,10 @@ pub struct JobDefinition {
     pub env: IndexMap<String, String>,
     /// Host to run on (defaults to remote.host, use "local" for local execution).
     pub host: Option<String>,
+    /// Path to a dotenv file whose variables are injected into the job environment.
+    /// Per-job dotenv replaces the global one (not additive).
+    #[serde(default)]
+    pub dotenv: Option<String>,
 }
 
 /// A fully resolved job ready for submission.
@@ -271,6 +305,8 @@ pub struct Config {
     pub jobs: HashMap<String, JobDefinition>,
     /// Optional settings to override defaults.
     pub settings: Settings,
+    /// Global dotenv file path (injects vars into job environments).
+    global_dotenv: Option<String>,
 }
 
 /// Raw config structure for TOML deserialization.
@@ -287,6 +323,8 @@ struct RawConfig {
     jobs: HashMap<String, JobDefinition>,
     #[serde(default)]
     settings: Settings,
+    /// Path to a dotenv file whose variables are injected into all job environments.
+    dotenv: Option<String>,
 }
 
 /// Raw job file structure for TOML deserialization.
@@ -302,6 +340,8 @@ struct RawJobFile {
     #[serde(default)]
     env: IndexMap<String, String>,
     host: Option<String>,
+    /// Path to a dotenv file whose variables are injected into this job's environment.
+    dotenv: Option<String>,
 }
 
 impl Config {
@@ -374,6 +414,7 @@ impl Config {
             global_slurm: raw.slurm,
             jobs,
             settings: raw.settings,
+            global_dotenv: raw.dotenv,
         })
     }
 
@@ -411,8 +452,16 @@ impl Config {
         let merged_slurm = self.global_slurm.merge(&job_def.slurm);
         let final_slurm = merged_slurm.merge(slurm_overrides);
 
-        // Merge raw env: global -> job -> CLI (all unexpanded)
-        let mut raw_env = self.global_env.clone();
+        // Load dotenv file if configured (job-level overrides global)
+        let dotenv_path = job_def.dotenv.as_ref().or(self.global_dotenv.as_ref());
+        let dotenv_vars = match dotenv_path {
+            Some(path) => load_dotenv_strict(&self.project_path.join(path))?,
+            None => HashMap::new(),
+        };
+
+        // Merge raw env: dotenv -> global -> job -> CLI (all unexpanded)
+        let mut raw_env: IndexMap<String, String> = dotenv_vars.into_iter().collect();
+        raw_env.extend(self.global_env.clone());
         raw_env.extend(job_def.env.clone());
         for (k, v) in env_overrides {
             raw_env.insert(k.clone(), v.clone());
@@ -458,6 +507,11 @@ impl Config {
             env: expanded_env,
             host,
         })
+    }
+
+    /// Returns the configured global dotenv file path, if any.
+    pub fn dotenv_file(&self) -> Option<&str> {
+        self.global_dotenv.as_deref()
     }
 
     /// Returns all job names, sorted alphabetically.
@@ -539,6 +593,7 @@ fn load_jobs_from_dir(
                     slurm: raw.slurm,
                     env: raw.env,
                     host: raw.host,
+                    dotenv: raw.dotenv,
                 },
             );
         }
@@ -549,7 +604,9 @@ fn load_jobs_from_dir(
 
 /// Generates a template fleche.toml configuration file.
 pub fn generate_init_config() -> &'static str {
-    r#"[project]
+    r#"# dotenv = ".env"  # Load .env file vars into job environments
+
+[project]
 # name = "my-project"  # Optional, defaults to directory name
 
 [remote]
@@ -745,5 +802,208 @@ mod tests {
         dotenv.insert("PROJECT".to_string(), "from_dotenv".to_string());
         let result = expand_variables("${PROJECT}", "builtin", &context, &dotenv).unwrap();
         assert_eq!(result, "builtin");
+    }
+
+    #[test]
+    fn test_load_dotenv_strict_missing_file_errors() {
+        let path = Path::new("/tmp/fleche_test_nonexistent/.env");
+        let result = load_dotenv_strict(path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("dotenv file not found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_load_dotenv_strict_reads_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_path = dir.path().join(".env");
+        std::fs::write(&env_path, "API_KEY=secret123\nDB_HOST=localhost\n").unwrap();
+
+        let vars = load_dotenv_strict(&env_path).unwrap();
+        assert_eq!(vars.get("API_KEY").unwrap(), "secret123");
+        assert_eq!(vars.get("DB_HOST").unwrap(), "localhost");
+    }
+
+    /// Helper: creates a temporary project with fleche.toml and optional dotenv files.
+    fn create_test_project(
+        toml_content: &str,
+        dotenv_files: &[(&str, &str)],
+    ) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("fleche.toml");
+        std::fs::write(&config_path, toml_content).unwrap();
+        for (name, content) in dotenv_files {
+            std::fs::write(dir.path().join(name), content).unwrap();
+        }
+        (dir, config_path)
+    }
+
+    #[test]
+    fn test_dotenv_injects_vars_into_job_env() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                dotenv = ".env"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+            "#,
+            &[(".env", "INJECTED_VAR=hello_world\n")],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let job = config
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .unwrap();
+        assert_eq!(job.env.get("INJECTED_VAR").unwrap(), "hello_world");
+    }
+
+    #[test]
+    fn test_dotenv_global_env_overrides_dotenv_vars() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                dotenv = ".env"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [env]
+                SHARED = "from_global"
+                [jobs.train]
+                command = "echo hi"
+            "#,
+            &[(".env", "SHARED=from_dotenv\n")],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let job = config
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .unwrap();
+        assert_eq!(job.env.get("SHARED").unwrap(), "from_global");
+    }
+
+    #[test]
+    fn test_dotenv_job_env_overrides_dotenv_vars() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                dotenv = ".env"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+                [jobs.train.env]
+                SHARED = "from_job"
+            "#,
+            &[(".env", "SHARED=from_dotenv\n")],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let job = config
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .unwrap();
+        assert_eq!(job.env.get("SHARED").unwrap(), "from_job");
+    }
+
+    #[test]
+    fn test_dotenv_cli_env_overrides_dotenv_vars() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                dotenv = ".env"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+            "#,
+            &[(".env", "SHARED=from_dotenv\n")],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let overrides = vec![("SHARED".to_string(), "from_cli".to_string())];
+        let job = config
+            .resolve_job(Some("train"), None, &overrides, &SlurmConfig::default())
+            .unwrap();
+        assert_eq!(job.env.get("SHARED").unwrap(), "from_cli");
+    }
+
+    #[test]
+    fn test_dotenv_per_job_overrides_global() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                dotenv = ".env"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+                dotenv = ".env.train"
+            "#,
+            &[
+                (".env", "SOURCE=global\nGLOBAL_ONLY=yes\n"),
+                (".env.train", "SOURCE=train\nTRAIN_ONLY=yes\n"),
+            ],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let job = config
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .unwrap();
+        // Per-job dotenv replaces global (not additive)
+        assert_eq!(job.env.get("SOURCE").unwrap(), "train");
+        assert_eq!(job.env.get("TRAIN_ONLY").unwrap(), "yes");
+        assert!(job.env.get("GLOBAL_ONLY").is_none());
+    }
+
+    #[test]
+    fn test_dotenv_missing_configured_file_errors() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                dotenv = ".env.missing"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("dotenv file not found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_dotenv_accessor() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                dotenv = ".env"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+            "#,
+            &[(".env", "")],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        assert_eq!(config.dotenv_file(), Some(".env"));
+    }
+
+    #[test]
+    fn test_dotenv_accessor_none_when_unset() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        assert_eq!(config.dotenv_file(), None);
     }
 }
