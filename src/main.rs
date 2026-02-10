@@ -115,6 +115,7 @@ async fn run() -> Result<()> {
             after,
             dry_run,
             host,
+            exec,
             retry,
             note,
         } => {
@@ -139,6 +140,7 @@ async fn run() -> Result<()> {
                     after,
                     retry,
                     note,
+                    exec,
                 },
                 runtime_ctx,
             )

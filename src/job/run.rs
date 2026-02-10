@@ -6,7 +6,7 @@ use crate::local;
 use crate::registry::{JobStatus, Registry};
 use crate::runtime::{RuntimeCtx, send_notification};
 use crate::slurm::{generate_sbatch_script, get_job_status, submit_job};
-use crate::ssh::shell_escape;
+use crate::ssh::{SshClient, shell_escape};
 use crate::sync::{sync_inputs_to_workspace, sync_project_to_workspace};
 use chrono::Utc;
 use console::style;
@@ -51,6 +51,8 @@ pub struct RunJobOptions {
     pub retry: Option<u32>,
     /// Note/annotation to attach to the job.
     pub note: Option<String>,
+    /// CLI override: run directly via SSH instead of submitting to Slurm.
+    pub exec: bool,
 }
 
 /// Runs a job on the remote cluster via Slurm (or locally if host is "local").
@@ -87,7 +89,12 @@ pub async fn run_job(
         (None, command_override)
     };
 
-    let job = config.resolve_job(job_name, actual_command, env_overrides, &slurm_overrides)?;
+    let mut job = config.resolve_job(job_name, actual_command, env_overrides, &slurm_overrides)?;
+
+    // CLI --exec overrides config
+    if opts.exec {
+        job.exec = true;
+    }
 
     // Determine final host: CLI override -> job definition -> remote.host
     let host = host_override.map_or_else(|| job.host.clone(), String::from);
@@ -95,6 +102,11 @@ pub async fn run_job(
     // Branch based on host
     if host == "local" {
         return run_job_locally(config, &job, tags, &opts, ctx).await;
+    }
+
+    // Direct remote execution (exec mode) bypasses Slurm
+    if job.exec {
+        return run_job_direct_remote(config, &job, &host, tags, &opts, ctx).await;
     }
 
     // Resolve dependency if specified
@@ -562,8 +574,23 @@ async fn run_job_with_resolved(
             after: None,
             retry: None,
             note: None,
+            exec: false,
         };
         return run_job_locally(config, job, tags, &opts, ctx).await;
+    }
+
+    // Direct remote execution (exec mode) bypasses Slurm
+    if job.exec {
+        let opts = RunJobOptions {
+            background,
+            notify: false,
+            dry_run: false,
+            after: None,
+            retry: None,
+            note: None,
+            exec: true,
+        };
+        return run_job_direct_remote(config, job, &job.host, tags, &opts, ctx).await;
     }
 
     let workspace = workspace_path(config);
@@ -874,6 +901,380 @@ async fn wait_and_notify(job_id: &str, remote_host: &str, ctx: RuntimeCtx) -> Re
     }
 }
 
+/// Runs a job directly on a remote host via SSH (no Slurm).
+async fn run_job_direct_remote(
+    config: &Config,
+    job: &ResolvedJob,
+    host: &str,
+    tags: &[(String, String)],
+    opts: &RunJobOptions,
+    ctx: RuntimeCtx,
+) -> Result<()> {
+    // Warn about Slurm options that don't apply in exec mode
+    if job.slurm.partition.is_some()
+        || job.slurm.time.is_some()
+        || job.slurm.gpus.is_some()
+        || job.slurm.cpus.is_some()
+        || job.slurm.memory.is_some()
+    {
+        eprintln!(
+            "{}",
+            style("Warning: Slurm options are ignored for exec jobs").yellow()
+        );
+    }
+
+    let job_id = generate_job_id(&job.name);
+    let workspace = workspace_path(config);
+    let job_dir = job_path(config, &job_id);
+
+    if opts.dry_run {
+        let script = generate_exec_script(job, &workspace, &job_dir);
+        println!(
+            "{}",
+            style("[dry-run] Generated exec script:").bold().yellow()
+        );
+        println!();
+        println!("{script}");
+        return Ok(());
+    }
+
+    let ssh =
+        prepare_remote_workspace(config, host, &workspace, &job_dir, &job.inputs, ctx).await?;
+
+    // Retry loop
+    let max_attempts = opts.retry.map_or(1, |r| r + 1);
+    let mut attempt = 0;
+
+    loop {
+        attempt += 1;
+
+        // Generate new job ID for each attempt
+        let job_id = if attempt == 1 {
+            job_id.clone()
+        } else {
+            generate_job_id(&job.name)
+        };
+        let job_dir = job_path(config, &job_id);
+
+        // Create job directory for this attempt
+        if attempt > 1 {
+            ssh.mkdir(&job_dir).await?;
+        }
+
+        // Generate and upload exec script
+        let script = generate_exec_script(job, &workspace, &job_dir);
+
+        println!(
+            "{} Starting remote exec job...",
+            style("[4/4]").bold().dim()
+        );
+        ssh.write_file(&format!("{job_dir}/run.sh"), &script)
+            .await?;
+
+        // Start the job via nohup
+        ssh.exec(&format!(
+            "nohup sh {job_dir}/run.sh > /dev/null 2>&1 & echo started"
+        ))
+        .await?;
+
+        // Record in registry (slurm_id = None for exec jobs)
+        let registry = Registry::open()?;
+        let job_note = if attempt == 1 {
+            opts.note.as_deref()
+        } else {
+            None
+        };
+        registry.insert_job(
+            &job_id,
+            None, // No Slurm ID for exec jobs
+            job,
+            &config.project_name,
+            &config.project_path.to_string_lossy(),
+            host,
+            &workspace,
+            tags,
+            job_note,
+        )?;
+
+        // Update status to running
+        registry.update_status(&job_id, JobStatus::Running)?;
+
+        println!();
+        if attempt > 1 {
+            println!(
+                "{} {} (attempt {}/{})",
+                style("Job ID:").green().bold(),
+                job_id,
+                attempt,
+                max_attempts
+            );
+        } else {
+            println!("{} {}", style("Job ID:").green().bold(), job_id);
+        }
+
+        if opts.background {
+            println!(
+                "{}",
+                style("Job running in background. Use 'fleche logs' to view output.").dim()
+            );
+
+            if ctx.should_notify(opts.notify) {
+                wait_and_notify_direct(&job_id, host, &job_dir, ctx).await?;
+            }
+            // Background mode doesn't support retry
+            break;
+        }
+
+        // Foreground mode: follow logs and check result
+        println!();
+        let final_status = follow_direct_job_logs(host, &job_dir, ctx).await?;
+
+        // Update registry with final status
+        registry.update_status(&job_id, final_status)?;
+
+        // Check if we should retry
+        if final_status == JobStatus::Failed && attempt < max_attempts {
+            let delay_secs = ctx.retry_base_delay_secs * (1 << (attempt - 1));
+            println!();
+            println!(
+                "{} Retrying in {} seconds (attempt {}/{})...",
+                style("↻").yellow().bold(),
+                delay_secs,
+                attempt + 1,
+                max_attempts
+            );
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            println!();
+        } else {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Generates a wrapper script for direct remote execution.
+///
+/// The script writes a PID file, sets up the environment, runs the command,
+/// and writes the exit code on completion. This mirrors the local background
+/// execution pattern but runs on the remote host.
+fn generate_exec_script(job: &ResolvedJob, workspace: &str, job_dir: &str) -> String {
+    let mut script = String::from("#!/bin/sh\n");
+    script.push_str(&format!("echo $$ > {job_dir}/pid\n"));
+    script.push_str(&format!("cd {}\n", shell_escape(workspace)));
+
+    // Environment variables
+    for (key, value) in &job.env {
+        script.push_str(&format!("export {}={}\n", key, shell_escape(value)));
+    }
+
+    // Command with output redirection
+    script.push_str(&format!(
+        "{} > {job_dir}/job.out 2> {job_dir}/job.err\n",
+        job.command
+    ));
+    script.push_str(&format!("echo $? > {job_dir}/exit_code\n"));
+
+    script
+}
+
+/// Checks the status of a remote direct (exec) job by inspecting files via SSH.
+///
+/// Checks in order:
+/// 1. `exit_code` file exists → completed (0) or failed (non-zero)
+/// 2. `pid` file exists and process running → running
+/// 3. `pid` file exists but process gone → failed (crashed without exit code)
+/// 4. Neither file → pending
+pub async fn get_remote_direct_job_status(ssh: &SshClient, job_dir: &str) -> Result<JobStatus> {
+    // Check if exit_code exists
+    let (has_exit_code, exit_code_content, _) = ssh
+        .exec_allow_failure(&format!("cat {job_dir}/exit_code 2>/dev/null"))
+        .await?;
+
+    if has_exit_code && !exit_code_content.trim().is_empty() {
+        let code: i32 = exit_code_content.trim().parse().unwrap_or(1);
+        return Ok(if code == 0 {
+            JobStatus::Completed
+        } else {
+            JobStatus::Failed
+        });
+    }
+
+    // Check if PID exists and process is running
+    let (has_pid, pid_content, _) = ssh
+        .exec_allow_failure(&format!("cat {job_dir}/pid 2>/dev/null"))
+        .await?;
+
+    if has_pid && !pid_content.trim().is_empty() {
+        let pid = pid_content.trim();
+        // Check if process is still running
+        let (is_running, _, _) = ssh
+            .exec_allow_failure(&format!("kill -0 {pid} 2>/dev/null"))
+            .await?;
+
+        if is_running {
+            return Ok(JobStatus::Running);
+        }
+
+        // PID exists but process is gone - job failed without writing exit code
+        return Ok(JobStatus::Failed);
+    }
+
+    // No PID file - job hasn't started yet
+    Ok(JobStatus::Pending)
+}
+
+/// Follows logs of a remote direct job and polls for completion.
+///
+/// Returns the final job status when the job completes.
+async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> Result<JobStatus> {
+    println!(
+        "{}",
+        style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
+    );
+
+    let ssh = ctx.ssh(host);
+    let log_path = format!("{job_dir}/job.out");
+    let mut child = ssh.tail_follow(&log_path)?;
+
+    // Poll job status until it reaches a terminal state
+    let job_dir_owned = job_dir.to_string();
+    let host_owned = host.to_string();
+    let status_check = async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
+            let ssh = ctx.ssh(&host_owned);
+            if let Ok(status) = get_remote_direct_job_status(&ssh, &job_dir_owned).await {
+                match status {
+                    JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
+                        return status;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    };
+
+    // Wait for either the tail process to exit or the job to finish
+    let final_status = tokio::select! {
+        _ = child.wait() => {
+            // Tail exited on its own - check final status
+            let ssh = ctx.ssh(host);
+            get_remote_direct_job_status(&ssh, job_dir)
+                .await
+                .unwrap_or(JobStatus::Failed)
+        }
+        status = status_check => {
+            // Job finished, kill tail
+            let _ = child.kill().await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            status
+        }
+    };
+
+    println!();
+    let message = match final_status {
+        JobStatus::Completed => "Job completed successfully.",
+        JobStatus::Failed => "Job failed.",
+        JobStatus::Cancelled => "Job cancelled.",
+        _ => "Job finished.",
+    };
+
+    match final_status {
+        JobStatus::Completed => {
+            println!("{}", style(message).green().bold());
+        }
+        JobStatus::Failed => {
+            println!("{}", style(message).red().bold());
+        }
+        JobStatus::Cancelled => {
+            println!("{}", style(message).yellow().bold());
+        }
+        _ => {}
+    }
+
+    send_notification(message);
+
+    Ok(final_status)
+}
+
+/// Waits for a remote direct job to complete and sends a notification.
+async fn wait_and_notify_direct(
+    job_id: &str,
+    remote_host: &str,
+    job_dir: &str,
+    ctx: RuntimeCtx,
+) -> Result<()> {
+    println!(
+        "{}",
+        style("Waiting for job to complete (will notify when done)...").dim()
+    );
+
+    let ssh = ctx.ssh(remote_host);
+
+    loop {
+        let status = get_remote_direct_job_status(&ssh, job_dir).await?;
+
+        if let Ok(registry) = Registry::open() {
+            let _ = registry.update_status(job_id, status);
+        }
+
+        match status {
+            JobStatus::Completed => {
+                let message = format!("Job {job_id} completed successfully.");
+                println!("{}", style(&message).green().bold());
+                send_notification(&message);
+                return Ok(());
+            }
+            JobStatus::Failed => {
+                let message = format!("Job {job_id} failed.");
+                println!("{}", style(&message).red().bold());
+                send_notification(&message);
+                return Ok(());
+            }
+            JobStatus::Cancelled => {
+                let message = format!("Job {job_id} was cancelled.");
+                println!("{}", style(&message).yellow().bold());
+                send_notification(&message);
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
+    }
+}
+
+/// Cancels a remote direct job by killing its PID via SSH.
+///
+/// Returns `Ok(true)` if the process was killed, `Ok(false)` if no PID found.
+pub async fn cancel_remote_direct_job(ssh: &SshClient, job_dir: &str) -> Result<bool> {
+    // Read PID file
+    let (has_pid, pid_content, _) = ssh
+        .exec_allow_failure(&format!("cat {job_dir}/pid 2>/dev/null"))
+        .await?;
+
+    if !has_pid || pid_content.trim().is_empty() {
+        return Ok(false);
+    }
+
+    let pid = pid_content.trim();
+
+    // Kill the process
+    let (success, _, _) = ssh
+        .exec_allow_failure(&format!("kill {pid} 2>/dev/null"))
+        .await?;
+
+    if success {
+        // Write exit code to indicate cancellation (143 = 128 + 15 SIGTERM)
+        let _ = ssh
+            .exec_allow_failure(&format!("echo 143 > {job_dir}/exit_code"))
+            .await;
+    }
+
+    Ok(success)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -918,5 +1319,57 @@ mod tests {
         // Still has correct structure despite hyphens in name
         let suffix = id.split('-').next_back().unwrap();
         assert_eq!(suffix.len(), 4);
+    }
+
+    #[test]
+    fn test_generate_exec_script_basic() {
+        use crate::config::{ResolvedJob, SlurmConfig};
+        use indexmap::IndexMap;
+
+        let job = ResolvedJob {
+            name: "test".to_string(),
+            command: "echo hello".to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            slurm: SlurmConfig::default(),
+            env: IndexMap::new(),
+            host: "cluster".to_string(),
+            exec: true,
+        };
+
+        let script = generate_exec_script(&job, "/workspace", "/jobs/test-123");
+
+        assert!(script.starts_with("#!/bin/sh\n"));
+        assert!(script.contains("echo $$ > /jobs/test-123/pid"));
+        assert!(script.contains("cd '/workspace'"));
+        assert!(script.contains("echo hello > /jobs/test-123/job.out 2> /jobs/test-123/job.err"));
+        assert!(script.contains("echo $? > /jobs/test-123/exit_code"));
+    }
+
+    #[test]
+    fn test_generate_exec_script_with_env() {
+        use crate::config::{ResolvedJob, SlurmConfig};
+        use indexmap::IndexMap;
+
+        let mut env = IndexMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        env.insert("PATH_VAR".to_string(), "/some/path".to_string());
+
+        let job = ResolvedJob {
+            name: "test".to_string(),
+            command: "python train.py".to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            slurm: SlurmConfig::default(),
+            env,
+            host: "cluster".to_string(),
+            exec: true,
+        };
+
+        let script = generate_exec_script(&job, "/ws", "/jobs/test-456");
+
+        assert!(script.contains("export FOO='bar'"));
+        assert!(script.contains("export PATH_VAR='/some/path'"));
+        assert!(script.contains("python train.py > /jobs/test-456/job.out"));
     }
 }

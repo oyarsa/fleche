@@ -392,6 +392,7 @@ mod tests {
             slurm: SlurmConfig::default(),
             env: IndexMap::new(),
             host: "test".to_string(),
+            exec: false,
         };
 
         let script = generate_sbatch_script("test-123", &job, "/workspace", "/jobs/test-123");
@@ -423,6 +424,7 @@ mod tests {
             },
             env: IndexMap::new(),
             host: "test".to_string(),
+            exec: false,
         };
 
         let script = generate_sbatch_script("train-456", &job, "/workspace", "/jobs/train-456");
@@ -451,6 +453,7 @@ mod tests {
             slurm: SlurmConfig::default(),
             env,
             host: "test".to_string(),
+            exec: false,
         };
 
         let script = generate_sbatch_script("test-789", &job, "/ws", "/jobs/test-789");
@@ -472,6 +475,7 @@ mod tests {
             slurm: SlurmConfig::default(),
             env,
             host: "test".to_string(),
+            exec: false,
         };
 
         let script = generate_sbatch_script("test-esc", &job, "/ws", "/jobs/test-esc");

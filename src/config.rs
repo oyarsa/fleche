@@ -257,6 +257,9 @@ pub struct JobDefinition {
     pub env: IndexMap<String, String>,
     /// Host to run on (defaults to remote.host, use "local" for local execution).
     pub host: Option<String>,
+    /// Run directly via SSH instead of submitting to Slurm.
+    #[serde(default)]
+    pub exec: Option<bool>,
     /// Path to a dotenv file whose variables are injected into the job environment.
     /// Per-job dotenv replaces the global one (not additive).
     #[serde(default)]
@@ -283,6 +286,9 @@ pub struct ResolvedJob {
     pub env: IndexMap<String, String>,
     /// Target host ("local" for local execution, otherwise remote host).
     pub host: String,
+    /// Run directly via SSH instead of submitting to Slurm.
+    #[serde(default)]
+    pub exec: bool,
 }
 
 /// The complete loaded configuration for a project.
@@ -340,6 +346,9 @@ struct RawJobFile {
     #[serde(default)]
     env: IndexMap<String, String>,
     host: Option<String>,
+    /// Run directly via SSH instead of submitting to Slurm.
+    #[serde(default)]
+    exec: Option<bool>,
     /// Path to a dotenv file whose variables are injected into this job's environment.
     dotenv: Option<String>,
 }
@@ -498,6 +507,9 @@ impl Config {
         // Resolve host: job definition -> remote.host
         let host = job_def.host.unwrap_or_else(|| self.remote.host.clone());
 
+        // Resolve exec: job definition (default false)
+        let exec = job_def.exec.unwrap_or(false);
+
         Ok(ResolvedJob {
             name,
             command,
@@ -506,6 +518,7 @@ impl Config {
             slurm: final_slurm,
             env: expanded_env,
             host,
+            exec,
         })
     }
 
@@ -593,6 +606,7 @@ fn load_jobs_from_dir(
                     slurm: raw.slurm,
                     env: raw.env,
                     host: raw.host,
+                    exec: raw.exec,
                     dotenv: raw.dotenv,
                 },
             );
@@ -638,6 +652,7 @@ base_path = "~/fleche"              # Remote base directory for all projects
 # command = "python train.py"
 # inputs = ["data/"]          # gitignored files to copy to workspace
 # outputs = ["checkpoints/"]  # files to download with `fleche download`
+# exec = true                 # run directly via SSH instead of Slurm
 #
 # [jobs.train.slurm]
 # time = "24:00:00"

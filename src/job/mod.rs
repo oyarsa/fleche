@@ -23,7 +23,10 @@ pub use cleanup::{CleanJobsOptions, cancel_jobs, clean_jobs};
 pub use download::download_outputs;
 pub use logs::{ShowLogsOptions, show_logs};
 pub use ops::{ping_cluster, show_stats, wait_for_job};
-pub use run::{RunJobOptions, exec_command, rerun_job, run_job};
+pub use run::{
+    RunJobOptions, cancel_remote_direct_job, exec_command, get_remote_direct_job_status, rerun_job,
+    run_job,
+};
 pub use status::{list_tags, note_job, show_status};
 
 /// Returns the workspace path for a project on the remote host.

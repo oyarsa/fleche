@@ -10,6 +10,8 @@ use console::style;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use super::get_remote_direct_job_status;
+use super::job_path_from_workspace;
 use super::status::resolve_job;
 
 /// Waits for a job to complete.
@@ -50,18 +52,21 @@ pub async fn wait_for_job(
     let ssh = ctx.ssh(&job.remote_host);
 
     loop {
-        if let Some(ref slurm_id) = job.slurm_id {
-            let status = get_job_status(&ssh, slurm_id).await?;
-            registry.update_status(&job.id, status)?;
-
-            if let Some(msg) = format_terminal_status(&job.id, status) {
-                if ctx.should_notify(notify) {
-                    send_notification(&msg);
-                }
-                return Ok(());
-            }
+        let status = if let Some(ref slurm_id) = job.slurm_id {
+            get_job_status(&ssh, slurm_id).await?
         } else {
-            return Err(FlecheError::NoSlurmId(job.id.clone()));
+            // Remote direct (exec) job - check via PID/exit_code files
+            let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
+            get_remote_direct_job_status(&ssh, &job_dir).await?
+        };
+
+        registry.update_status(&job.id, status)?;
+
+        if let Some(msg) = format_terminal_status(&job.id, status) {
+            if ctx.should_notify(notify) {
+                send_notification(&msg);
+            }
+            return Ok(());
         }
 
         tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;

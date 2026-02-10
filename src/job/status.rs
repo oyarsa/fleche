@@ -9,6 +9,8 @@ use console::style;
 use std::path::PathBuf;
 
 use super::display::{print_job_details, print_job_table};
+use super::get_remote_direct_job_status;
+use super::job_path_from_workspace;
 
 /// Default number of jobs to show when no limit is specified and no config is available.
 const DEFAULT_LIST_LIMIT: usize = 20;
@@ -49,7 +51,7 @@ pub async fn show_status(
                 Err(_) => job.status,
             }
         } else if let Some(ref slurm_id) = job.slurm_id {
-            // Remote job - check Slurm status
+            // Remote Slurm job - check Slurm status
             let ssh = ctx.ssh(&job.remote_host);
             match get_job_status(&ssh, slurm_id).await {
                 Ok(status) => {
@@ -59,7 +61,16 @@ pub async fn show_status(
                 Err(_) => job.status,
             }
         } else {
-            job.status
+            // Remote direct (exec) job - check via PID/exit_code files
+            let ssh = ctx.ssh(&job.remote_host);
+            let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
+            match get_remote_direct_job_status(&ssh, &job_dir).await {
+                Ok(status) => {
+                    registry.update_status(&job.id, status)?;
+                    status
+                }
+                Err(_) => job.status,
+            }
         };
 
         print_job_details(&job, current_status);
@@ -168,6 +179,15 @@ pub async fn refresh_active_job_statuses(registry: &Registry, ctx: RuntimeCtx) -
             // Check remote Slurm job status
             let ssh = ctx.ssh(&job.remote_host);
             if let Ok(status) = get_job_status(&ssh, slurm_id).await {
+                if status != job.status {
+                    registry.update_status(&job.id, status)?;
+                }
+            }
+        } else {
+            // Remote direct (exec) job - check via PID/exit_code files
+            let ssh = ctx.ssh(&job.remote_host);
+            let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
+            if let Ok(status) = get_remote_direct_job_status(&ssh, &job_dir).await {
                 if status != job.status {
                     registry.update_status(&job.id, status)?;
                 }

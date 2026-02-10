@@ -119,6 +119,10 @@ pub enum Commands {
         #[arg(long)]
         host: Option<String>,
 
+        /// Run directly via SSH instead of submitting to Slurm
+        #[arg(long)]
+        exec: bool,
+
         /// Retry failed jobs with exponential backoff (e.g., --retry 3)
         #[arg(long)]
         retry: Option<u32>,

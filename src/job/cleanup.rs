@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 
+use super::cancel_remote_direct_job;
 use super::job_path_from_workspace;
 
 /// Options for cleaning up jobs.
@@ -122,13 +123,8 @@ pub async fn cancel_jobs(
                     eprintln!("  Warning: Could not cancel {}: {e}", job.id);
                 }
             }
-        } else {
+        } else if let Some(ref slurm_id) = job.slurm_id {
             // Cancel remote Slurm job
-            let Some(ref slurm_id) = job.slurm_id else {
-                eprintln!("  Warning: Job {} has no Slurm ID, skipping", job.id);
-                continue;
-            };
-
             let ssh = ctx.ssh(&job.remote_host);
             if let Err(e) = cancel_job(&ssh, slurm_id).await {
                 eprintln!("  Warning: Could not cancel {}: {e}", job.id);
@@ -136,6 +132,22 @@ pub async fn cancel_jobs(
             }
             registry.update_status(&job.id, JobStatus::Cancelled)?;
             println!("{} Job {} cancelled", style("✓").green(), job.id);
+        } else {
+            // Cancel remote direct (exec) job
+            let ssh = ctx.ssh(&job.remote_host);
+            let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
+            match cancel_remote_direct_job(&ssh, &job_dir).await {
+                Ok(true) => {
+                    registry.update_status(&job.id, JobStatus::Cancelled)?;
+                    println!("{} Job {} cancelled", style("✓").green(), job.id);
+                }
+                Ok(false) => {
+                    eprintln!("  Warning: Could not cancel {} (process not found)", job.id);
+                }
+                Err(e) => {
+                    eprintln!("  Warning: Could not cancel {}: {e}", job.id);
+                }
+            }
         }
     }
 
