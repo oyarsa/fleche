@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.8.0] - 2026-02-11
+
+### Fixed
+- Shell escaping now preserves `${...}` variable references for remote expansion
+  - Previously, `shell_escape()` single-quoted entire paths, preventing the remote
+    shell from expanding variables like `${SSH_USER}` in `base_path`
+  - Now literal segments are single-quoted while `${...}` references are left bare
+  - Example: `/scratch/${USER}/fleche` becomes `'/scratch/'${USER}'/fleche'`
+
 ## [6.7.0] - 2026-02-10
 
 ### Added

@@ -542,13 +542,50 @@ impl SshClient {
 
 /// Escapes a string for safe use in a shell command.
 ///
-/// Handles tilde expansion specially: `~/path` becomes `~/'path'` so that
-/// the tilde is expanded by the shell while the rest of the path is quoted.
+/// Shell-escapes a string for safe use in remote SSH commands.
+///
+/// Handles two kinds of shell expansion:
+/// - Tilde: `~/path` becomes `~/'path'` so `~` is expanded by the shell
+/// - Variables: `/path/${VAR}/rest` becomes `'/path/'${VAR}'/rest'` so
+///   `${VAR}` references are expanded by the remote shell
+///
+/// All other content is single-quoted to prevent injection.
 pub fn shell_escape(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("~/") {
-        format!("~/{}", quote_single(rest))
+        format!("~/{}", quote_with_vars(rest))
     } else {
-        quote_single(s)
+        quote_with_vars(s)
+    }
+}
+
+/// Single-quotes a string, leaving `${...}` references unquoted for shell expansion.
+fn quote_with_vars(s: &str) -> String {
+    // Split the input into segments: literal text and ${...} variable references.
+    // Literal segments are single-quoted; variable references are left bare.
+    let mut segments: Vec<String> = Vec::new();
+    let mut rest = s;
+
+    while let Some(start) = rest.find("${") {
+        if let Some(end) = rest[start..].find('}') {
+            let literal = &rest[..start];
+            if !literal.is_empty() {
+                segments.push(quote_single(literal));
+            }
+            segments.push(rest[start..=(start + end)].to_string());
+            rest = &rest[start + end + 1..];
+        } else {
+            break;
+        }
+    }
+
+    if !rest.is_empty() {
+        segments.push(quote_single(rest));
+    }
+
+    if segments.is_empty() {
+        "''".to_string()
+    } else {
+        segments.join("")
     }
 }
 
@@ -562,26 +599,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_quote_single_simple() {
-        assert_eq!(quote_single("hello"), "'hello'");
-        assert_eq!(quote_single("path/to/file"), "'path/to/file'");
+    fn test_quote_with_vars_simple() {
+        assert_eq!(quote_with_vars("hello"), "'hello'");
+        assert_eq!(quote_with_vars("path/to/file"), "'path/to/file'");
     }
 
     #[test]
-    fn test_quote_single_with_spaces() {
-        assert_eq!(quote_single("hello world"), "'hello world'");
-        assert_eq!(quote_single("path with spaces"), "'path with spaces'");
+    fn test_quote_with_vars_spaces() {
+        assert_eq!(quote_with_vars("hello world"), "'hello world'");
     }
 
     #[test]
-    fn test_quote_single_with_single_quotes() {
-        assert_eq!(quote_single("it's"), "'it'\\''s'");
-        assert_eq!(quote_single("don't"), "'don'\\''t'");
+    fn test_quote_with_vars_single_quotes() {
+        assert_eq!(quote_with_vars("it's"), "'it'\\''s'");
     }
 
     #[test]
-    fn test_quote_single_empty() {
-        assert_eq!(quote_single(""), "''");
+    fn test_quote_with_vars_empty() {
+        assert_eq!(quote_with_vars(""), "''");
+    }
+
+    #[test]
+    fn test_quote_with_vars_variable() {
+        assert_eq!(
+            quote_with_vars("/scratch/${SSH_USER}/fleche"),
+            "'/scratch/'${SSH_USER}'/fleche'"
+        );
+    }
+
+    #[test]
+    fn test_quote_with_vars_multiple() {
+        assert_eq!(quote_with_vars("${A}/mid/${B}"), "${A}'/mid/'${B}");
+    }
+
+    #[test]
+    fn test_quote_with_vars_unclosed_brace() {
+        // Unclosed ${... is treated as literal
+        assert_eq!(quote_with_vars("${NOPE"), "'${NOPE'");
     }
 
     #[test]
@@ -592,14 +646,12 @@ mod tests {
 
     #[test]
     fn test_shell_escape_tilde_expansion() {
-        // Tilde at start should be preserved for shell expansion
         assert_eq!(shell_escape("~/path"), "~/'path'");
         assert_eq!(shell_escape("~/path/to/file"), "~/'path/to/file'");
     }
 
     #[test]
     fn test_shell_escape_tilde_not_at_start() {
-        // Tilde not at start should be quoted normally
         assert_eq!(shell_escape("/home/~user"), "'/home/~user'");
         assert_eq!(shell_escape("some~path"), "'some~path'");
     }
@@ -607,6 +659,7 @@ mod tests {
     #[test]
     fn test_shell_escape_special_chars() {
         assert_eq!(shell_escape("file with spaces"), "'file with spaces'");
+        // Bare $var (no braces) stays quoted — only ${...} is unquoted
         assert_eq!(shell_escape("file$var"), "'file$var'");
         assert_eq!(shell_escape("file;cmd"), "'file;cmd'");
     }
@@ -615,5 +668,18 @@ mod tests {
     fn test_shell_escape_tilde_with_special_chars() {
         assert_eq!(shell_escape("~/my files"), "~/'my files'");
         assert_eq!(shell_escape("~/path's"), "~/'path'\\''s'");
+    }
+
+    #[test]
+    fn test_shell_escape_variable_in_path() {
+        assert_eq!(
+            shell_escape("/scratch/users/${SSH_USER}/fleche"),
+            "'/scratch/users/'${SSH_USER}'/fleche'"
+        );
+    }
+
+    #[test]
+    fn test_shell_escape_tilde_with_variable() {
+        assert_eq!(shell_escape("~/${USER}/fleche"), "~/${USER}'/fleche'");
     }
 }
