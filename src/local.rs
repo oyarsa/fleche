@@ -325,21 +325,31 @@ fn shell_escape(s: &str) -> String {
     }
 }
 
-/// Follows a local log file in real-time (similar to tail -f).
+/// Follows local log files in real-time (similar to tail -f).
+///
+/// Follows both stdout (job.out) and stderr (job.err) simultaneously.
 pub fn follow_local_logs(project_path: &Path, job_id: &str) -> Result<()> {
     let job_dir = local_job_dir(project_path, job_id);
-    let log_path = job_dir.join("job.out");
+    let stdout_path = job_dir.join("job.out");
+    let stderr_path = job_dir.join("job.err");
     let exit_code_path = job_dir.join("exit_code");
 
-    // Wait for log file to exist
-    while !log_path.exists() {
+    // Wait for at least one log file to exist
+    while !stdout_path.exists() && !stderr_path.exists() {
         if exit_code_path.exists() {
             // Job finished before we could start following
-            if log_path.exists() {
+            if stdout_path.exists() {
                 print!(
                     "{}",
-                    fs::read_to_string(&log_path)
-                        .io_context(|| format!("reading log file '{}'", log_path.display()))?
+                    fs::read_to_string(&stdout_path)
+                        .io_context(|| format!("reading '{}'", stdout_path.display()))?
+                );
+            }
+            if stderr_path.exists() {
+                eprint!(
+                    "{}",
+                    fs::read_to_string(&stderr_path)
+                        .io_context(|| format!("reading '{}'", stderr_path.display()))?
                 );
             }
             return Ok(());
@@ -347,34 +357,77 @@ pub fn follow_local_logs(project_path: &Path, job_id: &str) -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    let file = File::open(&log_path)
-        .io_context(|| format!("opening log file '{}'", log_path.display()))?;
-    let mut reader = BufReader::new(file);
+    let mut stdout_reader = open_if_exists(&stdout_path)?;
+    let mut stderr_reader = open_if_exists(&stderr_path)?;
     let mut buffer = String::new();
 
     loop {
-        buffer.clear();
-        match reader.read_to_string(&mut buffer) {
-            Ok(0) => {
-                // No new data, check if job finished
-                if exit_code_path.exists() {
-                    // Read any final output
-                    buffer.clear();
-                    let _ = reader.read_to_string(&mut buffer);
-                    if !buffer.is_empty() {
-                        print!("{buffer}");
-                    }
-                    break;
+        let mut any_output = false;
+
+        // Try to open files that didn't exist yet
+        if stdout_reader.is_none() && stdout_path.exists() {
+            stdout_reader = open_if_exists(&stdout_path)?;
+        }
+        if stderr_reader.is_none() && stderr_path.exists() {
+            stderr_reader = open_if_exists(&stderr_path)?;
+        }
+
+        // Read stdout
+        if let Some(reader) = &mut stdout_reader {
+            buffer.clear();
+            if let Ok(n) = reader.read_to_string(&mut buffer) {
+                if n > 0 {
+                    print!("{buffer}");
+                    any_output = true;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            Ok(_) => {
-                print!("{buffer}");
-                let _ = std::io::stdout().flush();
+        }
+
+        // Read stderr
+        if let Some(reader) = &mut stderr_reader {
+            buffer.clear();
+            if let Ok(n) = reader.read_to_string(&mut buffer) {
+                if n > 0 {
+                    eprint!("{buffer}");
+                    any_output = true;
+                }
             }
-            Err(_) => break,
+        }
+
+        if any_output {
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+        } else if exit_code_path.exists() {
+            // Drain any final output
+            if let Some(reader) = &mut stdout_reader {
+                buffer.clear();
+                let _ = reader.read_to_string(&mut buffer);
+                if !buffer.is_empty() {
+                    print!("{buffer}");
+                }
+            }
+            if let Some(reader) = &mut stderr_reader {
+                buffer.clear();
+                let _ = reader.read_to_string(&mut buffer);
+                if !buffer.is_empty() {
+                    eprint!("{buffer}");
+                }
+            }
+            break;
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
     }
 
     Ok(())
+}
+
+fn open_if_exists(path: &Path) -> Result<Option<BufReader<File>>> {
+    if path.exists() {
+        let file =
+            File::open(path).io_context(|| format!("opening log file '{}'", path.display()))?;
+        Ok(Some(BufReader::new(file)))
+    } else {
+        Ok(None)
+    }
 }

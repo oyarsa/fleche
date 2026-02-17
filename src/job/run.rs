@@ -220,8 +220,7 @@ pub async fn run_job(
 
         // Foreground mode: follow logs and check result
         println!();
-        let log_path = format!("{job_dir}/job.out");
-        let final_status = follow_job_logs(&host, &slurm_id, &log_path, ctx).await?;
+        let final_status = follow_job_logs(&host, &slurm_id, &job_dir, ctx).await?;
 
         // Update registry with final status
         registry.update_status(&job_id, final_status)?;
@@ -631,8 +630,7 @@ async fn run_job_with_resolved(
 
     if !background {
         println!();
-        let log_path = format!("{job_dir}/job.out");
-        follow_job_logs(&host, &slurm_id, &log_path, ctx).await?;
+        follow_job_logs(&host, &slurm_id, &job_dir, ctx).await?;
     }
 
     Ok(())
@@ -781,7 +779,7 @@ fn generate_job_id(job_name: &str) -> String {
 async fn follow_job_logs(
     host: &str,
     slurm_id: &str,
-    log_path: &str,
+    job_dir: &str,
     ctx: RuntimeCtx,
 ) -> Result<JobStatus> {
     println!(
@@ -790,7 +788,9 @@ async fn follow_job_logs(
     );
 
     let ssh = ctx.ssh(host);
-    let mut child = ssh.tail_follow(log_path)?;
+    let stdout_path = format!("{job_dir}/job.out");
+    let stderr_path = format!("{job_dir}/job.err");
+    let mut child = ssh.tail_follow(&[&stdout_path, &stderr_path])?;
 
     // Poll job status until it reaches a terminal state
     let slurm_id = slurm_id.to_string();
@@ -1134,8 +1134,9 @@ async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> R
     );
 
     let ssh = ctx.ssh(host);
-    let log_path = format!("{job_dir}/job.out");
-    let mut child = ssh.tail_follow(&log_path)?;
+    let stdout_path = format!("{job_dir}/job.out");
+    let stderr_path = format!("{job_dir}/job.err");
+    let mut child = ssh.tail_follow(&[&stdout_path, &stderr_path])?;
 
     // Poll job status until it reaches a terminal state
     let job_dir_owned = job_dir.to_string();

@@ -508,7 +508,7 @@ impl SshClient {
             .collect())
     }
 
-    /// Spawns a process that follows a file on the remote host.
+    /// Spawns a process that follows one or more files on the remote host.
     ///
     /// Uses `tail -F -n +1` which will retry if the file doesn't exist yet
     /// and start from the beginning of the file. This ensures no output is
@@ -517,7 +517,7 @@ impl SshClient {
     /// the retry period (unless debug mode).
     ///
     /// The child process's stdout is inherited by the current process.
-    pub fn tail_follow(&self, path: &str) -> Result<tokio::process::Child> {
+    pub fn tail_follow(&self, paths: &[&str]) -> Result<tokio::process::Child> {
         // In debug mode, show stderr for SSH verbose output
         let stderr_cfg = if self.debug {
             Stdio::inherit()
@@ -525,12 +525,16 @@ impl SshClient {
             Stdio::null()
         };
 
+        let escaped: Vec<String> = paths.iter().map(|p| shell_escape(p)).collect();
+        let paths_arg = escaped.join(" ");
+
         // -F: follow by name (retry if file doesn't exist)
         // -n +1: start from line 1 (beginning of file, not end)
+        // -q: suppress headers when following multiple files
         let child = Command::new("ssh")
             .args(self.ssh_args())
             .arg(&self.host)
-            .arg(format!("tail -F -n +1 {} 2>/dev/null", shell_escape(path)))
+            .arg(format!("tail -F -n +1 -q {paths_arg} 2>/dev/null"))
             .stdout(Stdio::inherit())
             .stderr(stderr_cfg)
             .spawn()

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.9.0] - 2026-02-17
+
+### Changed
+- Output following now shows both stdout and stderr interleaved
+  - Applies to `fleche run` (foreground), `fleche logs --follow`, and local jobs
+  - Previously only stdout was shown; stderr was silently discarded
+  - `fleche logs --stdout` and `--stderr` still filter to a single stream
+
 ## [6.8.0] - 2026-02-11
 
 ### Fixed

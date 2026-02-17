@@ -96,12 +96,14 @@ pub async fn show_logs(
     let log_base = job_path_from_workspace(&job.remote_path, &job.id);
 
     if opts.follow {
-        let log_file = if opts.only_stderr {
-            "job.err"
+        let paths = if opts.only_stderr {
+            vec![format!("{log_base}/job.err")]
+        } else if opts.only_stdout {
+            vec![format!("{log_base}/job.out")]
         } else {
-            "job.out"
+            vec![format!("{log_base}/job.out"), format!("{log_base}/job.err")]
         };
-        let log_path = format!("{log_base}/{log_file}");
+        let path_refs: Vec<&str> = paths.iter().map(String::as_str).collect();
 
         if job.slurm_id.is_some() {
             println!(
@@ -109,7 +111,7 @@ pub async fn show_logs(
                 style("Following output (Ctrl+C to disconnect)...").yellow()
             );
         }
-        let mut child = ssh.tail_follow(&log_path)?;
+        let mut child = ssh.tail_follow(&path_refs)?;
         let _ = child.wait().await;
     } else if show_both {
         println!("{}", style("=== STDOUT ===").bold());
