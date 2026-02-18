@@ -25,6 +25,7 @@ mod guide;
 mod handlers;
 mod job;
 mod local;
+mod proxy;
 mod registry;
 mod runtime;
 mod slurm;
@@ -328,6 +329,21 @@ async fn run() -> Result<()> {
 
         Commands::Compare { job_a, job_b } => {
             handlers::compare_jobs(&job_a, &job_b)?;
+        }
+
+        Commands::Proxy {
+            command,
+            port,
+            host,
+        } => {
+            let host = match host {
+                Some(h) => h,
+                None => Config::find_and_load()?.remote.host,
+            };
+            let code = proxy::run_proxy_command(&host, &command, port, cli.debug).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
         }
     }
 

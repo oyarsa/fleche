@@ -417,6 +417,28 @@ pub enum Commands {
         /// Second job ID
         job_b: String,
     },
+
+    /// Run a command through a SOCKS proxy tunnel to the remote host
+    ///
+    /// Opens an SSH dynamic port forward to the configured remote, sets
+    /// proxy environment variables (`ALL_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`,
+    /// etc.), and runs the given command. The tunnel is cached per-host
+    /// so repeated invocations reuse the same connection.
+    ///
+    /// Example: fleche proxy -- curl <https://example.com>
+    Proxy {
+        /// Command and arguments to run through the proxy
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+
+        /// SOCKS proxy port (default: random available port)
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Override remote host (default: from fleche.toml)
+        #[arg(long)]
+        host: Option<String>,
+    },
 }
 
 /// Parses a KEY=VALUE string into a tuple.
