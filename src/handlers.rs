@@ -72,6 +72,30 @@ fn print_available_jobs(config: &Config) {
     }
 }
 
+/// Handles the `jobs` command - lists available jobs from config.
+pub fn list_jobs(config: &Config) {
+    let job_names = config.job_names();
+
+    if job_names.is_empty() {
+        println!(
+            "{}",
+            style("No jobs defined. Add jobs to fleche.toml or create fleche/*.toml files.")
+                .yellow()
+        );
+        return;
+    }
+
+    for name in &job_names {
+        if let Some(job_def) = config.jobs.get(name) {
+            if let Some(ref cmd) = job_def.command {
+                println!("{} {}", style(name).bold(), style(cmd).dim());
+            } else {
+                println!("{}", style(name).bold());
+            }
+        }
+    }
+}
+
 /// Handles the `compare` command - shows differences between two jobs.
 pub fn compare_jobs(first_id: &str, second_id: &str) -> Result<()> {
     let registry = Registry::open()?;

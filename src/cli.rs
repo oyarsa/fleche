@@ -12,7 +12,7 @@ use clap_complete::Shell;
 fn long_version() -> &'static str {
     concat!(
         env!("CARGO_PKG_VERSION"),
-        " (2026-02-17)\n", // Update date when releasing
+        " (2026-02-17)\n\n", // Update date when releasing
         "Copyright (C) 2026 Italo Silva\n",
         "License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>\n",
         "This is free software: you are free to change and redistribute it.\n",
@@ -303,6 +303,12 @@ pub enum Commands {
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
     },
+
+    /// List available jobs from configuration
+    ///
+    /// Reads fleche.toml (and fleche/*.toml files) and prints all defined
+    /// job names with their commands.
+    Jobs,
 
     /// List all unique tags across jobs
     Tags,

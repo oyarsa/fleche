@@ -19,6 +19,7 @@ A CLI tool for submitting and managing jobs on remote Slurm clusters via SSH. El
 - **Job notes** for annotating experiments (with search)
 - **Job archiving** to hide completed jobs without deletion
 - **Resource statistics** via sacct integration
+- **SOCKS proxy** for routing traffic through the cluster
 - **Shell completions** for bash, zsh, and fish
 
 ## Installation
@@ -173,12 +174,14 @@ fleche/
 | `fleche stats [job-id]`      | Show resource usage (time, CPU, memory)        |
 | `fleche note <job-id> [text]`| View or set job note                           |
 | `fleche wait [job-id]`       | Wait for job to complete                       |
+| `fleche proxy -- <cmd>`      | Run command through SOCKS proxy to remote      |
+| `fleche jobs`                | List available jobs from configuration         |
 | `fleche init`                | Create starter config                          |
 | `fleche check`               | Validate config                                |
 | `fleche guide`               | Print comprehensive usage guide                |
 | `fleche completions <shell>` | Generate shell completions                     |
 
-All commands except `run`, `rerun`, `exec`, `tags`, `init`, `check`, and `guide` support `--tag` for filtering.
+All commands except `run`, `rerun`, `exec`, `tags`, `jobs`, `init`, `check`, and `guide` support `--tag` for filtering.
 
 ### Run Options
 
@@ -403,6 +406,25 @@ fleche clean --archive <job-id>
 fleche clean --unarchive <job-id>
 ```
 
+### Listing Available Jobs
+
+```bash
+fleche jobs
+```
+
+Shows all configured jobs with their commands.
+
+### SOCKS Proxy
+
+Route traffic through the cluster's network:
+
+```bash
+fleche proxy -- curl https://example.com
+fleche proxy -- wget https://huggingface.co/model/weights.bin
+```
+
+Opens an SSH SOCKS tunnel, sets proxy environment variables, runs the command, and tears down the tunnel.
+
 ## Architecture
 
 fleche runs entirely on your local machine. All cluster interaction happens via standard Unix tools:
@@ -517,6 +539,8 @@ These can be set in config or passed via CLI:
 - Use `--note` to document experiment parameters for future reference
 - Use `fleche logs --note <pattern>` to find jobs by note content
 - Use `--archive` to hide old jobs without deleting them
+- Use `fleche jobs` to see what jobs are available in the project
+- Use `fleche proxy` to route traffic through the cluster's network
 - Enable shell completions: `fleche completions bash >> ~/.bashrc`
 - The job registry is at `~/.config/fleche/jobs.db`
 

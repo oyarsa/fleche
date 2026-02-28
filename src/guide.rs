@@ -519,6 +519,8 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 | `fleche check --remote` | Also validate against remote server |
 | `fleche doctor` | Comprehensive troubleshooting diagnostics |
 | `fleche compare <a> <b>` | Compare two job configurations side-by-side |
+| `fleche proxy -- <cmd>` | Run command through SOCKS proxy to remote host |
+| `fleche jobs` | List available jobs from configuration |
 | `fleche completions <shell>` | Generate shell completions (bash/zsh/fish) |
 
 ## Slurm Options
@@ -605,6 +607,38 @@ fleche compare <job-a> <job-b>
 Shows differences in command, Slurm settings, environment, tags, and more.
 Useful for debugging why one job succeeded while another failed.
 
+### Listing Available Jobs
+
+See which jobs are defined in your configuration:
+
+```bash
+fleche jobs
+```
+
+Shows each job name alongside its command. Useful when working in an unfamiliar
+project or to quickly recall job names.
+
+### SOCKS Proxy
+
+Route traffic through the remote host using an SSH SOCKS tunnel:
+
+```bash
+# Run curl through the cluster
+fleche proxy -- curl https://example.com
+
+# Download a model via the cluster's network
+fleche proxy -- wget https://huggingface.co/model/weights.bin
+
+# Use a specific port
+fleche proxy --port 1080 -- curl https://example.com
+
+# Use a different host than fleche.toml
+fleche proxy --host other-cluster -- curl https://example.com
+```
+
+The tunnel opens automatically, sets `ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`
+environment variables on the child process, and closes when the command exits.
+
 ## Tips
 
 - Use `--dry-run` to preview the sbatch script before submitting
@@ -619,5 +653,7 @@ Useful for debugging why one job succeeded while another failed.
 - Use `--retry` for flaky jobs that may fail due to transient issues
 - Use `--note` to document experiment parameters for future reference
 - Use `--archive` to hide old jobs without deleting them
+- Use `fleche jobs` to see what jobs are available in the project
+- Use `fleche proxy` to route traffic through the cluster's network
 - Enable shell completions: `fleche completions bash >> ~/.bashrc`
 "#;

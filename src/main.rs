@@ -272,6 +272,11 @@ async fn run() -> Result<()> {
             .await?;
         }
 
+        Commands::Jobs => {
+            let config = Config::find_and_load()?;
+            handlers::list_jobs(&config);
+        }
+
         Commands::Tags => {
             job::list_tags()?;
         }
