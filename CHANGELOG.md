@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.10.0] - 2026-02-28
+
+### Added
+- `fleche proxy -- <cmd>` subcommand for routing traffic through a SOCKS proxy
+  tunnel to the remote host
+  - Opens SSH dynamic port forward, sets proxy environment variables
+    (`ALL_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, etc.), runs the command, and
+    tears down the tunnel on exit
+  - `--port` to specify a fixed port (default: random available port)
+  - `--host` to override the remote host from fleche.toml
+- `fleche jobs` subcommand to list available jobs from configuration
+  - Reads fleche.toml and fleche/*.toml files
+  - Shows each job name with its command
+
 ## [6.9.0] - 2026-02-17
 
 ### Changed
