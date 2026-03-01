@@ -5,7 +5,7 @@
 
 use crate::config::{ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
-use crate::registry::JobStatus;
+use crate::registry::{JobStatus, LiveStatus};
 use crate::ssh::{SshClient, shell_escape};
 
 /// Generates an sbatch script for a job.
@@ -231,7 +231,7 @@ pub fn parse_sacct_exit_code(raw: &str) -> Option<i32> {
 ///
 /// First checks `squeue` to see if the job is still in the queue (pending or running).
 /// If not found in the queue, falls back to `sacct` to get the final state and exit code.
-pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<(JobStatus, Option<i32>)> {
+pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<LiveStatus> {
     let escaped_id = shell_escape(slurm_id);
 
     // First try squeue to see if job is still in queue
@@ -240,7 +240,11 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<(JobStatu
         .await?;
 
     if success && !stdout.trim().is_empty() {
-        return Ok((parse_squeue_state(stdout.trim()), None));
+        return Ok(LiveStatus {
+            status: parse_squeue_state(stdout.trim()),
+            exit_code: None,
+            slurm_state: None,
+        });
     }
 
     // Job not in queue, check sacct for final state and exit code
@@ -252,9 +256,14 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<(JobStatu
 
     if success && !stdout.trim().is_empty() {
         let fields: Vec<&str> = stdout.trim().split('|').collect();
-        let status = parse_sacct_state(fields.first().unwrap_or(&""));
+        let raw_state = fields.first().unwrap_or(&"").to_string();
+        let status = parse_sacct_state(&raw_state);
         let exit_code = fields.get(1).and_then(|s| parse_sacct_exit_code(s));
-        return Ok((status, exit_code));
+        return Ok(LiveStatus {
+            status,
+            exit_code,
+            slurm_state: Some(raw_state),
+        });
     }
 
     Err(FlecheError::SlurmQueryFailed(slurm_id.to_string()))

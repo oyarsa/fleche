@@ -28,6 +28,13 @@ pub fn print_job_details(job: &JobRecord) {
         };
         println!("  {:<14} {}", style("Exit Code:").bold(), styled_code);
     }
+    if let Some(ref slurm_state) = job.slurm_state {
+        println!(
+            "  {:<14} {}",
+            style("Slurm State:").bold(),
+            format_slurm_state(slurm_state)
+        );
+    }
     println!("  {:<14} {}", style("Remote Host:").bold(), job.remote_host);
     println!("  {:<14} {}", style("Workspace:").bold(), job.remote_path);
     println!(
@@ -133,6 +140,19 @@ pub fn format_status(status: JobStatus) -> String {
         JobStatus::Completed => style(format!("{:<12}", "completed")).green().to_string(),
         JobStatus::Failed => style(format!("{:<12}", "failed")).red().to_string(),
         JobStatus::Cancelled => style(format!("{:<12}", "cancelled")).dim().to_string(),
+    }
+}
+
+/// Formats a raw Slurm state string with appropriate colors.
+fn format_slurm_state(state: &str) -> String {
+    let base = state.split_whitespace().next().unwrap_or(state);
+    match base.to_uppercase().as_str() {
+        "COMPLETED" => style(state.to_string()).green().to_string(),
+        "CANCELLED" | "PREEMPTED" | "TIMEOUT" => style(state.to_string()).yellow().to_string(),
+        "FAILED" | "OUT_OF_MEMORY" | "NODE_FAIL" | "BOOT_FAIL" | "DEADLINE" => {
+            style(state.to_string()).red().to_string()
+        }
+        _ => state.to_string(),
     }
 }
 

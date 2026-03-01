@@ -41,9 +41,10 @@ pub async fn download_outputs(
     // Check job status
     if !partial && matches!(job.status, JobStatus::Pending | JobStatus::Running) {
         if let Some(ref slurm_id) = job.slurm_id {
-            let (current_status, _) = get_job_status(&ssh, slurm_id)
+            let current_status = get_job_status(&ssh, slurm_id)
                 .await
-                .unwrap_or((job.status, job.exit_code));
+                .map(|live| live.status)
+                .unwrap_or(job.status);
             if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
                 eprintln!(
                     "{}",

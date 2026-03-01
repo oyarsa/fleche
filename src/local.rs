@@ -4,7 +4,7 @@
 //! Local jobs run directly in the project directory with logs stored in `.fleche/jobs/{id}/`.
 
 use crate::error::{IoResultExt, Result};
-use crate::registry::JobStatus;
+use crate::registry::{JobStatus, LiveStatus};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -184,7 +184,7 @@ echo $? > {}
 }
 
 /// Gets the status and exit code of a local job by checking PID and `exit_code` files.
-pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<(JobStatus, Option<i32>)> {
+pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<LiveStatus> {
     let job_dir = local_job_dir(project_path, job_id);
     let exit_code_path = job_dir.join("exit_code");
     let pid_path = job_dir.join("pid");
@@ -202,7 +202,11 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<(JobSta
         } else {
             JobStatus::Failed
         };
-        return Ok((status, Some(exit_code)));
+        return Ok(LiveStatus {
+            status,
+            exit_code: Some(exit_code),
+            slurm_state: None,
+        });
     }
 
     // Check if PID exists and process is still running
@@ -214,15 +218,27 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<(JobSta
             .unwrap_or(0);
 
         if pid > 0 && is_process_running(pid) {
-            return Ok((JobStatus::Running, None));
+            return Ok(LiveStatus {
+                status: JobStatus::Running,
+                exit_code: None,
+                slurm_state: None,
+            });
         }
 
         // PID exists but process is not running - job failed without writing exit code
-        return Ok((JobStatus::Failed, None));
+        return Ok(LiveStatus {
+            status: JobStatus::Failed,
+            exit_code: None,
+            slurm_state: None,
+        });
     }
 
     // No PID file - job hasn't started or something went wrong
-    Ok((JobStatus::Pending, None))
+    Ok(LiveStatus {
+        status: JobStatus::Pending,
+        exit_code: None,
+        slurm_state: None,
+    })
 }
 
 /// Cancels a local job by sending SIGTERM to the process.

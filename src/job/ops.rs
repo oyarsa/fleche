@@ -3,7 +3,7 @@
 use crate::config::Config;
 use crate::error::{FlecheError, Result};
 use crate::local;
-use crate::registry::{JobStatus, Registry};
+use crate::registry::{JobStatus, LiveStatus, Registry};
 use crate::runtime::{RuntimeCtx, send_notification};
 use crate::slurm::{get_job_resource_usage, get_job_status};
 use console::style;
@@ -34,10 +34,10 @@ pub async fn wait_for_job(
         let project_path = PathBuf::from(&job.project_path);
 
         loop {
-            let (status, exit_code) = local::get_local_job_status(&project_path, &job.id)?;
-            registry.update_status(&job.id, status, exit_code)?;
+            let live = local::get_local_job_status(&project_path, &job.id)?;
+            registry.update_status(&job.id, &live)?;
 
-            if let Some(msg) = format_terminal_status(&job.id, status, exit_code) {
+            if let Some(msg) = format_terminal_status(&job.id, &live) {
                 if ctx.should_notify(notify) {
                     send_notification(&msg);
                 }
@@ -52,7 +52,7 @@ pub async fn wait_for_job(
     let ssh = ctx.ssh(&job.remote_host);
 
     loop {
-        let (status, exit_code) = if let Some(ref slurm_id) = job.slurm_id {
+        let live = if let Some(ref slurm_id) = job.slurm_id {
             get_job_status(&ssh, slurm_id).await?
         } else {
             // Remote direct (exec) job - check via PID/exit_code files
@@ -60,9 +60,9 @@ pub async fn wait_for_job(
             get_remote_direct_job_status(&ssh, &job_dir).await?
         };
 
-        registry.update_status(&job.id, status, exit_code)?;
+        registry.update_status(&job.id, &live)?;
 
-        if let Some(msg) = format_terminal_status(&job.id, status, exit_code) {
+        if let Some(msg) = format_terminal_status(&job.id, &live) {
             if ctx.should_notify(notify) {
                 send_notification(&msg);
             }
@@ -74,22 +74,21 @@ pub async fn wait_for_job(
 }
 
 /// Formats a message for terminal job states, returning None for non-terminal states.
-fn format_terminal_status(
-    job_id: &str,
-    status: JobStatus,
-    exit_code: Option<i32>,
-) -> Option<String> {
-    match status {
+fn format_terminal_status(job_id: &str, live: &LiveStatus) -> Option<String> {
+    match live.status {
         JobStatus::Completed => {
             let msg = format!("Job {job_id} completed successfully.");
             println!("{}", style(&msg).green().bold());
             Some(msg)
         }
         JobStatus::Failed => {
-            let msg = match exit_code {
-                Some(code) => format!("Job {job_id} failed (exit code: {code})."),
-                None => format!("Job {job_id} failed."),
+            let detail = match (&live.slurm_state, live.exit_code) {
+                (Some(state), Some(code)) => format!(" ({state}, exit code: {code})"),
+                (Some(state), None) => format!(" ({state})"),
+                (None, Some(code)) => format!(" (exit code: {code})"),
+                (None, None) => String::new(),
             };
+            let msg = format!("Job {job_id} failed{detail}.");
             println!("{}", style(&msg).red().bold());
             Some(msg)
         }

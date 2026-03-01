@@ -2,7 +2,9 @@
 
 use crate::error::{FlecheError, Result};
 use crate::local;
-use crate::registry::{ArchivedFilter, JobRecord, JobStatus, Registry, build_job_filter_pattern};
+use crate::registry::{
+    ArchivedFilter, JobRecord, JobStatus, LiveStatus, Registry, build_job_filter_pattern,
+};
 use crate::runtime::RuntimeCtx;
 use crate::slurm::get_job_status;
 use console::style;
@@ -43,11 +45,11 @@ pub struct StatusOptions<'a> {
     pub archived: ArchivedFilter,
 }
 
-/// Queries the live status and exit code of a job from its execution environment.
+/// Queries the live status of a job from its execution environment.
 ///
 /// Dispatches to the appropriate backend (local process, Slurm, or remote exec)
 /// based on the job record. Does not update the registry — callers handle that.
-async fn query_live_status(job: &JobRecord, ctx: &RuntimeCtx) -> Result<(JobStatus, Option<i32>)> {
+async fn query_live_status(job: &JobRecord, ctx: &RuntimeCtx) -> Result<LiveStatus> {
     if job.remote_host == "local" {
         let project_path = PathBuf::from(&job.project_path);
         return local::get_local_job_status(&project_path, &job.id);
@@ -91,10 +93,11 @@ pub async fn show_status(
 async fn show_job_detail(registry: &Registry, id: &str, ctx: &RuntimeCtx) -> Result<()> {
     let mut job = registry.get_job(id)?;
 
-    if let Ok((status, exit_code)) = query_live_status(&job, ctx).await {
-        registry.update_status(&job.id, status, exit_code)?;
-        job.status = status;
-        job.exit_code = exit_code;
+    if let Ok(live) = query_live_status(&job, ctx).await {
+        registry.update_status(&job.id, &live)?;
+        job.status = live.status;
+        job.exit_code = live.exit_code;
+        job.slurm_state = live.slurm_state;
     }
 
     print_job_details(&job);
@@ -249,9 +252,9 @@ pub async fn refresh_active_job_statuses(registry: &Registry, ctx: &RuntimeCtx) 
     let active_jobs = registry.list_active_jobs()?;
 
     for job in active_jobs {
-        if let Ok((status, exit_code)) = query_live_status(&job, ctx).await {
-            if status != job.status {
-                registry.update_status(&job.id, status, exit_code)?;
+        if let Ok(live) = query_live_status(&job, ctx).await {
+            if live.status != job.status {
+                registry.update_status(&job.id, &live)?;
             }
         }
     }

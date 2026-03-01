@@ -2,7 +2,7 @@
 
 use crate::error::{FlecheError, Result};
 use crate::local;
-use crate::registry::{JobRecord, JobStatus, Registry, parse_duration};
+use crate::registry::{JobRecord, JobStatus, LiveStatus, Registry, parse_duration};
 use crate::runtime::RuntimeCtx;
 use crate::slurm::cancel_job;
 use console::style;
@@ -113,7 +113,14 @@ pub async fn cancel_jobs(
             let project_path = PathBuf::from(&job.project_path);
             match local::cancel_local_job(&project_path, &job.id) {
                 Ok(true) => {
-                    registry.update_status(&job.id, JobStatus::Cancelled, Some(143))?;
+                    registry.update_status(
+                        &job.id,
+                        &LiveStatus {
+                            status: JobStatus::Cancelled,
+                            exit_code: Some(143),
+                            slurm_state: None,
+                        },
+                    )?;
                     println!("{} Job {} cancelled", style("✓").green(), job.id);
                 }
                 Ok(false) => {
@@ -130,7 +137,14 @@ pub async fn cancel_jobs(
                 eprintln!("  Warning: Could not cancel {}: {e}", job.id);
                 continue;
             }
-            registry.update_status(&job.id, JobStatus::Cancelled, None)?;
+            registry.update_status(
+                &job.id,
+                &LiveStatus {
+                    status: JobStatus::Cancelled,
+                    exit_code: None,
+                    slurm_state: None,
+                },
+            )?;
             println!("{} Job {} cancelled", style("✓").green(), job.id);
         } else {
             // Cancel remote direct (exec) job
@@ -138,7 +152,14 @@ pub async fn cancel_jobs(
             let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
             match cancel_remote_direct_job(&ssh, &job_dir).await {
                 Ok(true) => {
-                    registry.update_status(&job.id, JobStatus::Cancelled, Some(143))?;
+                    registry.update_status(
+                        &job.id,
+                        &LiveStatus {
+                            status: JobStatus::Cancelled,
+                            exit_code: Some(143),
+                            slurm_state: None,
+                        },
+                    )?;
                     println!("{} Job {} cancelled", style("✓").green(), job.id);
                 }
                 Ok(false) => {

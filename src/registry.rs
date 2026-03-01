@@ -17,7 +17,8 @@ use std::path::PathBuf;
 const JOB_SELECT_COLUMNS: &str = r"
     id, slurm_id, job_name, project_name, project_path,
     remote_host, remote_path, command, status, config_json,
-    created_at, updated_at, outputs_synced, note, archived, exit_code";
+    created_at, updated_at, outputs_synced, note, archived, exit_code,
+    slurm_state";
 
 /// A record of a submitted job stored in the local registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +57,8 @@ pub struct JobRecord {
     pub archived: bool,
     /// Process exit code (0 = success, non-zero = failure).
     pub exit_code: Option<i32>,
+    /// Raw Slurm job state from sacct (e.g., "TIMEOUT", "`OUT_OF_MEMORY`", "COMPLETED").
+    pub slurm_state: Option<String>,
 }
 
 impl JobRecord {
@@ -88,6 +91,7 @@ impl JobRecord {
             note: row.get(13)?,
             archived: row.get::<_, Option<i32>>(14)?.unwrap_or(0) == 1,
             exit_code: row.get(15)?,
+            slurm_state: row.get(16)?,
         })
     }
 }
@@ -102,6 +106,16 @@ pub enum ArchivedFilter {
     OnlyArchived,
     /// Show all jobs regardless of archived state.
     IncludeAll,
+}
+
+/// Live status information returned by job backends.
+///
+/// Bundles the job status, optional exit code, and optional raw Slurm state
+/// so callers don't need to thread multiple values separately.
+pub struct LiveStatus {
+    pub status: JobStatus,
+    pub exit_code: Option<i32>,
+    pub slurm_state: Option<String>,
 }
 
 /// The status of a job in its lifecycle.
@@ -223,6 +237,11 @@ impl Registry {
             .conn
             .execute("ALTER TABLE jobs ADD COLUMN exit_code INTEGER", []);
 
+        // Migration: add slurm_state column if it doesn't exist (for existing databases)
+        let _ = self
+            .conn
+            .execute("ALTER TABLE jobs ADD COLUMN slurm_state TEXT", []);
+
         Ok(())
     }
 
@@ -287,12 +306,12 @@ impl Registry {
         Ok(())
     }
 
-    /// Updates the status and optional exit code of a job.
-    pub fn update_status(&self, id: &str, status: JobStatus, exit_code: Option<i32>) -> Result<()> {
+    /// Updates the status, exit code, and optional Slurm state of a job.
+    pub fn update_status(&self, id: &str, live: &LiveStatus) -> Result<()> {
         let now = Utc::now();
         self.conn.execute(
-            "UPDATE jobs SET status = ?1, updated_at = ?2, exit_code = ?3 WHERE id = ?4",
-            params![status.to_string(), now.to_rfc3339(), exit_code, id],
+            "UPDATE jobs SET status = ?1, updated_at = ?2, exit_code = ?3, slurm_state = ?4 WHERE id = ?5",
+            params![live.status.to_string(), now.to_rfc3339(), live.exit_code, live.slurm_state, id],
         )?;
         Ok(())
     }
@@ -454,7 +473,7 @@ impl Registry {
             SELECT DISTINCT j.id, j.slurm_id, j.job_name, j.project_name, j.project_path,
                    j.remote_host, j.remote_path, j.command, j.status, j.config_json,
                    j.created_at, j.updated_at, j.outputs_synced, j.note, j.archived,
-                   j.exit_code
+                   j.exit_code, j.slurm_state
             FROM jobs j
             ",
         );
