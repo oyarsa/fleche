@@ -255,6 +255,11 @@ fleche exec "ls -la"
 ```
 
 This syncs your project and runs the command directly over SSH.
+Use `--no-sync` to skip syncing (useful when code is already on the remote):
+
+```bash
+fleche exec "python test.py" --no-sync
+```
 
 ### Exec Mode (Configured Direct Execution)
 
@@ -483,7 +488,7 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 |---------|-------------|
 | `fleche run [job\|cmd] [opts]` | Submit a job via Slurm (or directly with `--exec`, locally with `--host local`) |
 | `fleche rerun <job-id>` | Re-run a previous job with same settings |
-| `fleche exec <cmd>` | Run command directly via SSH (or locally with `--host local`) |
+| `fleche exec <cmd>` | Run command directly via SSH (or locally with `--host local`, `--no-sync` to skip sync) |
 | `fleche status [job-id\|#N]` | Show job status (defaults to listing all) |
 | `fleche status -n 50` | Show last 50 jobs |
 | `fleche status --filter running` | Filter by status (repeatable) |
@@ -672,6 +677,7 @@ but the numbers always resolve to the same job.
 - Use numeric indices from `fleche status` for quick access (e.g., `fleche logs 1`)
 - The job registry is at `~/.config/fleche/jobs.db`
 - Ctrl+C during streaming disconnects but doesn't cancel the job
+- Exit codes are tracked and shown in `fleche status <job-id>` and failure messages
 - Use `fleche exec` for quick ad-hoc tests without Slurm queue wait
 - Use `exec = true` in config for jobs that should always bypass Slurm
 - Jobs share workspace, so chained jobs can read each other's outputs
