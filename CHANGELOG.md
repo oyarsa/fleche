@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.11.0] - 2026-03-01
+
+### Added
+- Numeric index aliases for jobs — `fleche status` now shows a `#` column
+  with 1-based indices (1 = most recent), usable anywhere a job ID is accepted
+  - `fleche logs 1`, `fleche cancel 1`, `fleche download 2`, etc.
+  - Indices correspond to the unfiltered global list; filtered views show gaps
+    but indices always resolve to the same job
+
+### Changed
+- Internal refactoring: extracted `StatusOptions` struct, `ArchivedFilter` enum,
+  named structs for CLI command variants, and shared `query_live_status` helper
+
 ## [6.10.0] - 2026-02-28
 
 ### Added
