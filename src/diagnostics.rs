@@ -375,7 +375,7 @@ fn check_registry(issues: &mut Vec<String>) {
 }
 
 fn check_job_statistics(registry: &Registry, issues: &mut Vec<String>) {
-    let all_jobs = registry.list_jobs(None, &[], None, None, &[], None, 10000);
+    let all_jobs = registry.list_all_jobs(10000);
     let archived_jobs = registry.list_archived_jobs();
 
     if let Ok(jobs) = &all_jobs {

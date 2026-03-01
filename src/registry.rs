@@ -294,7 +294,7 @@ impl Registry {
     ///
     /// Delegates to `list_jobs` so that ordering and filtering are defined in one place.
     fn get_job_by_index(&self, index: usize) -> Result<JobRecord> {
-        let jobs = self.list_jobs(None, &[], None, None, &[], None, index)?;
+        let jobs = self.list_all_jobs(index)?;
         if let Some(job) = jobs.into_iter().last() {
             Ok(job)
         } else {
@@ -379,6 +379,23 @@ impl Registry {
                 Ok(JobRecord { tags, ..job })
             })
             .collect()
+    }
+
+    /// Lists the most recent non-archived jobs with no filters.
+    ///
+    /// Convenience wrapper around `list_jobs` for the common case of fetching
+    /// the global job list (e.g., for index-based lookup or statistics).
+    pub fn list_all_jobs(&self, limit: usize) -> Result<Vec<JobRecord>> {
+        self.list_jobs(None, &[], None, None, &[], None, limit)
+    }
+
+    /// Lists the most recent non-archived jobs filtered by tags only.
+    pub fn list_jobs_by_tags(
+        &self,
+        tags: &[(String, String)],
+        limit: usize,
+    ) -> Result<Vec<JobRecord>> {
+        self.list_jobs(None, &[], None, None, tags, None, limit)
     }
 
     /// Lists jobs matching the given filters.

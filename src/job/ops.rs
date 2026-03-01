@@ -165,7 +165,7 @@ pub async fn show_stats(
     let jobs = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
     } else {
-        registry.list_jobs(None, &[], None, None, tags, None, last)?
+        registry.list_jobs_by_tags(tags, last)?
     };
 
     if jobs.is_empty() {

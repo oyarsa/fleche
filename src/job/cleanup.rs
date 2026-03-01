@@ -58,7 +58,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], None, None, tags, None, usize::MAX)?
+                .list_jobs_by_tags(tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -69,7 +69,7 @@ pub async fn cancel_jobs(
             registry.list_active_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], None, None, tags, None, usize::MAX)?
+                .list_jobs_by_tags(tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
                 .collect()
@@ -206,7 +206,7 @@ pub async fn clean_jobs(
             registry.list_finished_jobs()?
         } else {
             registry
-                .list_jobs(None, &[], None, None, tags, None, usize::MAX)?
+                .list_jobs_by_tags(tags, usize::MAX)?
                 .into_iter()
                 .filter(|j| {
                     matches!(
