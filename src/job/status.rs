@@ -89,17 +89,15 @@ pub async fn show_status(
 
 /// Shows detailed status for a single job, refreshing its live status first.
 async fn show_job_detail(registry: &Registry, id: &str, ctx: &RuntimeCtx) -> Result<()> {
-    let job = registry.get_job(id)?;
+    let mut job = registry.get_job(id)?;
 
-    let (current_status, exit_code) = match query_live_status(&job, ctx).await {
-        Ok((status, exit_code)) => {
-            registry.update_status(&job.id, status, exit_code)?;
-            (status, exit_code)
-        }
-        Err(_) => (job.status, job.exit_code),
-    };
+    if let Ok((status, exit_code)) = query_live_status(&job, ctx).await {
+        registry.update_status(&job.id, status, exit_code)?;
+        job.status = status;
+        job.exit_code = exit_code;
+    }
 
-    print_job_details(&job, current_status, exit_code);
+    print_job_details(&job);
     Ok(())
 }
 

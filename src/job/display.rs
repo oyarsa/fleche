@@ -4,7 +4,7 @@ use crate::registry::{JobRecord, JobStatus};
 use console::style;
 
 /// Prints detailed information about a single job.
-pub fn print_job_details(job: &JobRecord, status: JobStatus, exit_code: Option<i32>) {
+pub fn print_job_details(job: &JobRecord) {
     println!("{}", style("Job Details").bold().underlined());
     println!();
     println!("  {:<14} {}", style("ID:").bold(), job.id);
@@ -18,9 +18,9 @@ pub fn print_job_details(job: &JobRecord, status: JobStatus, exit_code: Option<i
     println!(
         "  {:<14} {}",
         style("Status:").bold(),
-        format_status(status)
+        format_status(job.status)
     );
-    if let Some(code) = exit_code {
+    if let Some(code) = job.exit_code {
         let styled_code = if code == 0 {
             style(code.to_string()).green()
         } else {
