@@ -89,6 +89,17 @@ impl JobRecord {
     }
 }
 
+/// Controls which jobs are visible based on their archived state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchivedFilter {
+    /// Show only non-archived jobs.
+    ExcludeArchived,
+    /// Show only archived jobs.
+    OnlyArchived,
+    /// Show all jobs regardless of archived state.
+    IncludeAll,
+}
+
 /// The status of a job in its lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -386,7 +397,15 @@ impl Registry {
     /// Convenience wrapper around `list_jobs` for the common case of fetching
     /// the global job list (e.g., for index-based lookup or statistics).
     pub fn list_all_jobs(&self, limit: usize) -> Result<Vec<JobRecord>> {
-        self.list_jobs(None, &[], None, None, &[], None, limit)
+        self.list_jobs(
+            None,
+            &[],
+            None,
+            None,
+            &[],
+            ArchivedFilter::ExcludeArchived,
+            limit,
+        )
     }
 
     /// Lists the most recent non-archived jobs filtered by tags only.
@@ -395,7 +414,15 @@ impl Registry {
         tags: &[(String, String)],
         limit: usize,
     ) -> Result<Vec<JobRecord>> {
-        self.list_jobs(None, &[], None, None, tags, None, limit)
+        self.list_jobs(
+            None,
+            &[],
+            None,
+            None,
+            tags,
+            ArchivedFilter::ExcludeArchived,
+            limit,
+        )
     }
 
     /// Lists jobs matching the given filters.
@@ -403,10 +430,6 @@ impl Registry {
     /// Jobs can be filtered by project path, status, name prefix, note content, and tags.
     /// Results are ordered by creation time (newest first) and limited to `limit` results.
     ///
-    /// The `archived_filter` parameter controls visibility of archived jobs:
-    /// - `None`: Show only non-archived jobs (default)
-    /// - `Some(true)`: Show only archived jobs
-    /// - `Some(false)`: Show all jobs (both archived and non-archived)
     pub fn list_jobs(
         &self,
         project_filter: Option<&str>,
@@ -414,7 +437,7 @@ impl Registry {
         name_filter: Option<&str>,
         note_filter: Option<&str>,
         tag_filters: &[(String, String)],
-        archived_filter: Option<bool>,
+        archived_filter: ArchivedFilter,
         limit: usize,
     ) -> Result<Vec<JobRecord>> {
         let mut sql = String::from(
@@ -454,19 +477,14 @@ impl Registry {
             }
         }
 
-        // Handle archived filter
         match archived_filter {
-            None => {
-                // Default: show only non-archived jobs
+            ArchivedFilter::ExcludeArchived => {
                 conditions.push("(j.archived = 0 OR j.archived IS NULL)".to_string());
             }
-            Some(true) => {
-                // Show only archived jobs
+            ArchivedFilter::OnlyArchived => {
                 conditions.push("j.archived = 1".to_string());
             }
-            Some(false) => {
-                // Show all jobs (no condition added)
-            }
+            ArchivedFilter::IncludeAll => {}
         }
 
         // Build regex for name filtering (applied in Rust after SQL query)

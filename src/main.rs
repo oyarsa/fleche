@@ -37,6 +37,7 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
 use config::Config;
 use console::style;
+use registry::ArchivedFilter;
 use runtime::RuntimeCtx;
 use slurm::slurm_config_from_cli;
 
@@ -169,11 +170,11 @@ async fn run() -> Result<()> {
         } => {
             // Determine archived filter based on flags
             let archived_filter = if archived {
-                Some(true) // Show only archived
+                ArchivedFilter::OnlyArchived
             } else if all_jobs {
-                Some(false) // Show all (both archived and non-archived)
+                ArchivedFilter::IncludeAll
             } else {
-                None // Default: show only non-archived
+                ArchivedFilter::ExcludeArchived
             };
 
             let default_limit = optional_settings.as_ref().map(|s| s.default_list_limit);

@@ -2,7 +2,7 @@
 
 use crate::error::{FlecheError, Result};
 use crate::local;
-use crate::registry::{JobRecord, JobStatus, Registry, build_job_filter_pattern};
+use crate::registry::{ArchivedFilter, JobRecord, JobStatus, Registry, build_job_filter_pattern};
 use crate::runtime::RuntimeCtx;
 use crate::slurm::get_job_status;
 use console::style;
@@ -37,13 +37,22 @@ async fn query_live_status(job: &JobRecord, ctx: &RuntimeCtx) -> Result<JobStatu
 
 /// Shows the status of a specific job or lists recent jobs.
 ///
-/// The `archived_filter` parameter controls visibility of archived jobs:
-/// - `None`: Show only non-archived jobs (default)
-/// - `Some(true)`: Show only archived jobs
-/// - `Some(false)`: Show all jobs (both archived and non-archived)
+/// When `job_id` is provided, queries the job's live status from its execution
+/// environment (local process, Slurm, or remote exec), updates the registry,
+/// and prints detailed information. All other parameters are ignored.
 ///
-/// The `default_limit` parameter specifies the default number of jobs to show
-/// when `last` is None. If `default_limit` is also None, uses `DEFAULT_LIST_LIMIT`.
+/// When `job_id` is `None`, refreshes all active jobs and lists recent ones
+/// with optional filtering:
+///
+/// - `filters` — status strings (e.g. `"failed"`, `"running"`) to restrict results.
+/// - `name_filter` — regex pattern matched against job IDs.
+/// - `tags` — key-value pairs that must all match for a job to be included.
+/// - `last` — maximum number of jobs to display. Falls back to `default_limit`,
+///   then to [`DEFAULT_LIST_LIMIT`].
+/// - `default_limit` — caller-supplied default (typically from config) used when
+///   `last` is `None`.
+/// - `archived_filter` — controls visibility of archived jobs.
+/// - `ctx` — runtime context providing SSH clients for remote status checks.
 pub async fn show_status(
     job_id: Option<&str>,
     filters: &[String],
@@ -51,7 +60,7 @@ pub async fn show_status(
     tags: &[(String, String)],
     last: Option<usize>,
     default_limit: Option<usize>,
-    archived_filter: Option<bool>,
+    archived_filter: ArchivedFilter,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -98,7 +107,7 @@ fn list_recent_jobs(
     tags: &[(String, String)],
     last: Option<usize>,
     default_limit: Option<usize>,
-    archived_filter: Option<bool>,
+    archived_filter: ArchivedFilter,
 ) -> Result<()> {
     let status_filters: Vec<JobStatus> = filters
         .iter()
@@ -107,7 +116,7 @@ fn list_recent_jobs(
 
     let limit = last.unwrap_or_else(|| default_limit.unwrap_or(DEFAULT_LIST_LIMIT));
 
-    if archived_filter.is_none() {
+    if archived_filter == ArchivedFilter::ExcludeArchived {
         // Default (non-archived) view: fetch global list, filter in Rust,
         // and preserve global indices so they match get_job_by_index().
         let has_filters = !status_filters.is_empty() || name_filter.is_some() || !tags.is_empty();
@@ -253,7 +262,15 @@ pub fn resolve_job(
         registry.get_job(id)
     } else {
         registry
-            .list_jobs(None, &[], None, note_filter, tags, None, 1)?
+            .list_jobs(
+                None,
+                &[],
+                None,
+                note_filter,
+                tags,
+                ArchivedFilter::ExcludeArchived,
+                1,
+            )?
             .into_iter()
             .next()
             .ok_or(FlecheError::NoRecentJob)
