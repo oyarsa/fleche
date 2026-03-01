@@ -2,10 +2,11 @@
 
 use crate::error::{FlecheError, Result};
 use crate::local;
-use crate::registry::{JobRecord, JobStatus, Registry};
+use crate::registry::{JobRecord, JobStatus, Registry, build_job_filter_pattern};
 use crate::runtime::RuntimeCtx;
 use crate::slurm::get_job_status;
 use console::style;
+use regex::Regex;
 use std::path::PathBuf;
 
 use super::display::{print_job_details, print_job_table};
@@ -85,22 +86,69 @@ pub async fn show_status(
             .collect::<Result<Vec<_>>>()?;
 
         let limit = last.unwrap_or_else(|| default_limit.unwrap_or(DEFAULT_LIST_LIMIT));
-        let jobs = registry.list_jobs(
-            None,
-            &status_filters,
-            name_filter,
-            None,
-            tags,
-            archived_filter,
-            limit,
-        )?;
 
-        if jobs.is_empty() {
-            println!("No jobs found. Run `fleche run` to submit a job.");
-            return Ok(());
+        if archived_filter.is_none() {
+            // Default (non-archived) view: fetch global list, filter in Rust,
+            // and preserve global indices so they match get_job_by_index().
+            let has_filters =
+                !status_filters.is_empty() || name_filter.is_some() || !tags.is_empty();
+            let fetch_limit = if has_filters {
+                limit.saturating_mul(10).max(1000)
+            } else {
+                limit
+            };
+
+            let all_jobs = registry.list_jobs(None, &[], None, None, &[], None, fetch_limit)?;
+
+            let name_re = name_filter
+                .map(|p| {
+                    let pattern = build_job_filter_pattern(p);
+                    Regex::new(&pattern)
+                        .map_err(|e| FlecheError::InvalidRegexPattern(format!("--name '{p}': {e}")))
+                })
+                .transpose()?;
+
+            let (indices, jobs): (Vec<usize>, Vec<JobRecord>) = all_jobs
+                .into_iter()
+                .enumerate()
+                .filter(|(_, job)| {
+                    status_filters.is_empty() || status_filters.contains(&job.status)
+                })
+                .filter(|(_, job)| name_re.as_ref().is_none_or(|re| re.is_match(&job.id)))
+                .filter(|(_, job)| {
+                    tags.iter()
+                        .all(|(k, v)| job.tags.get(k).is_some_and(|tv| tv == v))
+                })
+                .take(limit)
+                .map(|(i, job)| (i + 1, job))
+                .unzip();
+
+            if jobs.is_empty() {
+                println!("No jobs found. Run `fleche run` to submit a job.");
+                return Ok(());
+            }
+
+            print_job_table(&jobs, Some(&indices));
+        } else {
+            // Archived or "show all" view: indices would not match
+            // get_job_by_index(), so omit them.
+            let jobs = registry.list_jobs(
+                None,
+                &status_filters,
+                name_filter,
+                None,
+                tags,
+                archived_filter,
+                limit,
+            )?;
+
+            if jobs.is_empty() {
+                println!("No jobs found. Run `fleche run` to submit a job.");
+                return Ok(());
+            }
+
+            print_job_table(&jobs, None);
         }
-
-        print_job_table(&jobs);
     }
 
     Ok(())

@@ -48,17 +48,53 @@ pub fn print_job_details(job: &JobRecord, status: JobStatus) {
     }
 }
 
-/// Prints a table of jobs.
-pub fn print_job_table(jobs: &[JobRecord]) {
-    println!(
-        "{:<45} {:<12} {:<12} {:<20}",
-        style("ID").bold().underlined(),
-        style("STATUS").bold().underlined(),
-        style("SLURM ID").bold().underlined(),
-        style("CREATED").bold().underlined(),
-    );
+/// Prints a table of jobs with optional global index numbers.
+///
+/// When `global_indices` is `Some`, a `#` column is shown with the provided
+/// values (which correspond to positions in the unfiltered global job list).
+/// When `None`, no index column is shown (e.g., for archived views where
+/// numeric indices wouldn't resolve correctly via `get_job_by_index`).
+pub fn print_job_table(jobs: &[JobRecord], global_indices: Option<&[usize]>) {
+    if let Some(indices) = global_indices {
+        println!(
+            "{:>3}  {:<45} {:<12} {:<12} {:<20}",
+            style("#").bold().underlined(),
+            style("ID").bold().underlined(),
+            style("STATUS").bold().underlined(),
+            style("SLURM ID").bold().underlined(),
+            style("CREATED").bold().underlined(),
+        );
 
-    for job in jobs {
+        for (idx, job) in indices.iter().zip(jobs) {
+            print_job_row(job, Some(*idx));
+        }
+    } else {
+        println!(
+            "{:<45} {:<12} {:<12} {:<20}",
+            style("ID").bold().underlined(),
+            style("STATUS").bold().underlined(),
+            style("SLURM ID").bold().underlined(),
+            style("CREATED").bold().underlined(),
+        );
+
+        for job in jobs {
+            print_job_row(job, None);
+        }
+    }
+}
+
+/// Prints a single job row, optionally prefixed with a global index.
+fn print_job_row(job: &JobRecord, index: Option<usize>) {
+    if let Some(idx) = index {
+        println!(
+            "{}  {:<45} {} {:<12} {:<20}",
+            style(format!("{idx:>3}")).dim(),
+            truncate(&job.id, 44),
+            format_status(job.status),
+            job.slurm_id.as_deref().unwrap_or("-"),
+            job.created_at.format("%Y-%m-%d %H:%M"),
+        );
+    } else {
         println!(
             "{:<45} {} {:<12} {:<20}",
             truncate(&job.id, 44),
@@ -66,19 +102,21 @@ pub fn print_job_table(jobs: &[JobRecord]) {
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
         );
-        // Show job name if it differs from the ID prefix (i.e., provides useful info)
-        let id_prefix = job.id.split('-').next().unwrap_or("");
-        if job.job_name != id_prefix {
-            print!("    {}", style(&job.job_name).dim());
-            if !job.tags.is_empty() {
-                let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
-                print!("  {}", style(tags.join(" ")).dim());
-            }
-            println!();
-        } else if !job.tags.is_empty() {
+    }
+
+    // Show job name if it differs from the ID prefix (i.e., provides useful info)
+    let indent = if index.is_some() { "      " } else { "    " };
+    let id_prefix = job.id.split('-').next().unwrap_or("");
+    if job.job_name != id_prefix {
+        print!("{indent}{}", style(&job.job_name).dim());
+        if !job.tags.is_empty() {
             let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            println!("    {}", style(tags.join(" ")).dim());
+            print!("  {}", style(tags.join(" ")).dim());
         }
+        println!();
+    } else if !job.tags.is_empty() {
+        let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        println!("{indent}{}", style(tags.join(" ")).dim());
     }
 }
 

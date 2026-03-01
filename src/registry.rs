@@ -287,14 +287,43 @@ impl Registry {
         Ok(())
     }
 
-    /// Retrieves a job by its ID or unique suffix.
+    /// Retrieves a job by its numeric index (1-based, most recent first).
     ///
-    /// If `id` exactly matches a job ID, that job is returned. Otherwise, we search
-    /// for jobs whose ID ends with `id`. If exactly one match is found, that job is
-    /// returned. If multiple matches are found, an error is returned listing the
-    /// ambiguous matches.
+    /// Indices correspond to the position in the default job list (non-archived,
+    /// ordered by `created_at DESC`), matching the `#` column in `fleche status`.
+    ///
+    /// Delegates to `list_jobs` so that ordering and filtering are defined in one place.
+    fn get_job_by_index(&self, index: usize) -> Result<JobRecord> {
+        let jobs = self.list_jobs(None, &[], None, None, &[], None, index)?;
+        if let Some(job) = jobs.into_iter().last() { Ok(job) } else {
+            let count: usize = self.conn.query_row(
+                "SELECT COUNT(*) FROM jobs WHERE (archived = 0 OR archived IS NULL)",
+                [],
+                |row| row.get(0),
+            )?;
+            Err(FlecheError::JobIdNotFound(format!(
+                "index {index} (only {count} jobs exist)"
+            )))
+        }
+    }
+
+    /// Retrieves a job by its ID, unique suffix, or numeric index.
+    ///
+    /// If `id` is a positive integer, it is treated as a 1-based index into the
+    /// global job list (most recent first), matching the `#` column in `fleche status`.
+    /// Otherwise, if `id` exactly matches a job ID, that job is returned.
+    /// Otherwise, we search for jobs whose ID ends with `id`. If exactly one match
+    /// is found, that job is returned. If multiple matches are found, an error is
+    /// returned listing the ambiguous matches.
     pub fn get_job(&self, id: &str) -> Result<JobRecord> {
-        // First try exact match
+        // Try numeric index first
+        if let Ok(index) = id.parse::<usize>() {
+            if index >= 1 {
+                return self.get_job_by_index(index);
+            }
+        }
+
+        // Try exact match
         let sql = format!("SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id = ?1");
         let mut stmt = self.conn.prepare(&sql)?;
 
@@ -600,7 +629,7 @@ impl Registry {
 /// Builds a permissive regex for job filters.
 ///
 /// Adds implicit `.*` around unanchored patterns for substring matching.
-fn build_job_filter_pattern(pattern: &str) -> String {
+pub fn build_job_filter_pattern(pattern: &str) -> String {
     let pattern = if pattern.starts_with('^') {
         pattern.to_string()
     } else {
