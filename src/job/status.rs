@@ -9,7 +9,7 @@ use console::style;
 use regex::Regex;
 use std::path::PathBuf;
 
-use super::display::{print_job_details, print_job_table};
+use super::display::{print_indexed_job_table, print_job_details, print_job_table};
 use super::get_remote_direct_job_status;
 use super::job_path_from_workspace;
 
@@ -128,7 +128,7 @@ pub async fn show_status(
                 return Ok(());
             }
 
-            print_job_table(&jobs, Some(&indices));
+            print_indexed_job_table(&jobs, &indices);
         } else {
             // Archived or "show all" view: indices would not match
             // get_job_by_index(), so omit them.
@@ -147,7 +147,7 @@ pub async fn show_status(
                 return Ok(());
             }
 
-            print_job_table(&jobs, None);
+            print_job_table(&jobs);
         }
     }
 

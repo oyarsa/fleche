@@ -48,44 +48,22 @@ pub fn print_job_details(job: &JobRecord, status: JobStatus) {
     }
 }
 
-/// Prints a table of jobs with optional global index numbers.
+/// Prints a table of jobs with a `#` column showing global index positions.
 ///
-/// When `global_indices` is `Some`, a `#` column is shown with the provided
-/// values (which correspond to positions in the unfiltered global job list).
-/// When `None`, no index column is shown (e.g., for archived views where
-/// numeric indices wouldn't resolve correctly via `get_job_by_index`).
-pub fn print_job_table(jobs: &[JobRecord], global_indices: Option<&[usize]>) {
-    if let Some(indices) = global_indices {
-        println!(
-            "{:>3}  {:<45} {:<12} {:<12} {:<20}",
-            style("#").bold().underlined(),
-            style("ID").bold().underlined(),
-            style("STATUS").bold().underlined(),
-            style("SLURM ID").bold().underlined(),
-            style("CREATED").bold().underlined(),
-        );
+/// The indices correspond to positions in the unfiltered global job list,
+/// matching what `get_job_by_index` resolves. Filtered views show gaps
+/// (e.g., `#3, #7, #10`) so numeric lookup always works correctly.
+pub fn print_indexed_job_table(jobs: &[JobRecord], global_indices: &[usize]) {
+    println!(
+        "{:>3}  {:<45} {:<12} {:<12} {:<20}",
+        style("#").bold().underlined(),
+        style("ID").bold().underlined(),
+        style("STATUS").bold().underlined(),
+        style("SLURM ID").bold().underlined(),
+        style("CREATED").bold().underlined(),
+    );
 
-        for (idx, job) in indices.iter().zip(jobs) {
-            print_job_row(job, Some(*idx));
-        }
-    } else {
-        println!(
-            "{:<45} {:<12} {:<12} {:<20}",
-            style("ID").bold().underlined(),
-            style("STATUS").bold().underlined(),
-            style("SLURM ID").bold().underlined(),
-            style("CREATED").bold().underlined(),
-        );
-
-        for job in jobs {
-            print_job_row(job, None);
-        }
-    }
-}
-
-/// Prints a single job row, optionally prefixed with a global index.
-fn print_job_row(job: &JobRecord, index: Option<usize>) {
-    if let Some(idx) = index {
+    for (idx, job) in global_indices.iter().zip(jobs) {
         println!(
             "{}  {:<45} {} {:<12} {:<20}",
             style(format!("{idx:>3}")).dim(),
@@ -94,7 +72,24 @@ fn print_job_row(job: &JobRecord, index: Option<usize>) {
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
         );
-    } else {
+        print_job_subtitle(job, "      ");
+    }
+}
+
+/// Prints a table of jobs without index numbers.
+///
+/// Used for views (e.g., archived) where numeric indices would not resolve
+/// correctly via `get_job_by_index`.
+pub fn print_job_table(jobs: &[JobRecord]) {
+    println!(
+        "{:<45} {:<12} {:<12} {:<20}",
+        style("ID").bold().underlined(),
+        style("STATUS").bold().underlined(),
+        style("SLURM ID").bold().underlined(),
+        style("CREATED").bold().underlined(),
+    );
+
+    for job in jobs {
         println!(
             "{:<45} {} {:<12} {:<20}",
             truncate(&job.id, 44),
@@ -102,10 +97,12 @@ fn print_job_row(job: &JobRecord, index: Option<usize>) {
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
         );
+        print_job_subtitle(job, "    ");
     }
+}
 
-    // Show job name if it differs from the ID prefix (i.e., provides useful info)
-    let indent = if index.is_some() { "      " } else { "    " };
+/// Prints the optional subtitle line (job name and/or tags) below a job row.
+fn print_job_subtitle(job: &JobRecord, indent: &str) {
     let id_prefix = job.id.split('-').next().unwrap_or("");
     if job.job_name != id_prefix {
         print!("{indent}{}", style(&job.job_name).dim());

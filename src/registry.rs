@@ -295,7 +295,9 @@ impl Registry {
     /// Delegates to `list_jobs` so that ordering and filtering are defined in one place.
     fn get_job_by_index(&self, index: usize) -> Result<JobRecord> {
         let jobs = self.list_jobs(None, &[], None, None, &[], None, index)?;
-        if let Some(job) = jobs.into_iter().last() { Ok(job) } else {
+        if let Some(job) = jobs.into_iter().last() {
+            Ok(job)
+        } else {
             let count: usize = self.conn.query_row(
                 "SELECT COUNT(*) FROM jobs WHERE (archived = 0 OR archived IS NULL)",
                 [],
