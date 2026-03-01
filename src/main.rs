@@ -140,10 +140,19 @@ async fn run() -> Result<()> {
             command,
             env_vars,
             host,
+            no_sync,
         } => {
             let config = Config::find_and_load()?;
             let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
-            job::exec_command(&config, &command, &env_vars, host.as_deref(), runtime_ctx).await?;
+            job::exec_command(
+                &config,
+                &command,
+                &env_vars,
+                host.as_deref(),
+                no_sync,
+                runtime_ctx,
+            )
+            .await?;
         }
 
         Commands::Status(args) => {

@@ -64,6 +64,10 @@ pub enum Commands {
         /// Run on specific host ("local" for local execution)
         #[arg(long)]
         host: Option<String>,
+
+        /// Skip syncing project code and inputs before execution
+        #[arg(long)]
+        no_sync: bool,
     },
 
     /// Show status of jobs

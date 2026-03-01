@@ -646,6 +646,7 @@ pub async fn exec_command(
     command: &str,
     env_overrides: &[(String, String)],
     host_override: Option<&str>,
+    no_sync: bool,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let host = host_override.map_or_else(|| config.remote.host.clone(), String::from);
@@ -659,35 +660,39 @@ pub async fn exec_command(
     let workspace = workspace_path(config);
     let ssh = ctx.ssh(&host);
 
-    // Create workspace if needed
-    println!(
-        "{} Creating remote directories...",
-        style("[1/3]").bold().dim()
-    );
-    ssh.mkdir(&workspace).await?;
-
-    // Sync project code to workspace
-    print!("{} Syncing project code...", style("[2/3]").bold().dim());
-    let _ = std::io::stdout().flush();
-    let stats = sync_project_to_workspace(&config.project_path, &host, &workspace).await?;
-    println!(" {}", style(format!("({})", stats.human_readable())).dim());
-
-    // Sync global inputs
-    let global_inputs: Vec<String> = config
-        .jobs
-        .values()
-        .flat_map(|j| j.inputs.clone())
-        .collect();
-
-    if global_inputs.is_empty() {
-        println!("{} Executing command...", style("[3/3]").bold().dim());
+    if no_sync {
+        println!("Skipping sync, executing command directly...");
     } else {
-        print!("{} Syncing input files...", style("[3/3]").bold().dim());
+        // Create workspace if needed
+        println!(
+            "{} Creating remote directories...",
+            style("[1/3]").bold().dim()
+        );
+        ssh.mkdir(&workspace).await?;
+
+        // Sync project code to workspace
+        print!("{} Syncing project code...", style("[2/3]").bold().dim());
         let _ = std::io::stdout().flush();
-        let stats =
-            sync_inputs_to_workspace(&config.project_path, &global_inputs, &host, &workspace)
-                .await?;
+        let stats = sync_project_to_workspace(&config.project_path, &host, &workspace).await?;
         println!(" {}", style(format!("({})", stats.human_readable())).dim());
+
+        // Sync global inputs
+        let global_inputs: Vec<String> = config
+            .jobs
+            .values()
+            .flat_map(|j| j.inputs.clone())
+            .collect();
+
+        if global_inputs.is_empty() {
+            println!("{} Executing command...", style("[3/3]").bold().dim());
+        } else {
+            print!("{} Syncing input files...", style("[3/3]").bold().dim());
+            let _ = std::io::stdout().flush();
+            let stats =
+                sync_inputs_to_workspace(&config.project_path, &global_inputs, &host, &workspace)
+                    .await?;
+            println!(" {}", style(format!("({})", stats.human_readable())).dim());
+        }
     }
 
     // Build environment string
