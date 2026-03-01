@@ -37,6 +37,7 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
 use config::Config;
 use console::style;
+use job::StatusOptions;
 use registry::ArchivedFilter;
 use runtime::RuntimeCtx;
 use slurm::slurm_config_from_cli;
@@ -177,16 +178,16 @@ async fn run() -> Result<()> {
                 ArchivedFilter::ExcludeArchived
             };
 
-            let default_limit = optional_settings.as_ref().map(|s| s.default_list_limit);
-
             job::show_status(
                 job_id.as_deref(),
-                &filter,
-                name.as_deref(),
-                &tags,
-                last,
-                default_limit,
-                archived_filter,
+                StatusOptions {
+                    filters: &filter,
+                    name: name.as_deref(),
+                    tags: &tags,
+                    last,
+                    default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
+                    archived: archived_filter,
+                },
                 runtime_ctx,
             )
             .await?;

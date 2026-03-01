@@ -16,6 +16,33 @@ use super::job_path_from_workspace;
 /// Default number of jobs to show when no limit is specified and no config is available.
 const DEFAULT_LIST_LIMIT: usize = 20;
 
+/// Filtering and display options for job listings.
+///
+/// All fields default to their permissive/empty value, so callers can set only
+/// the fields they care about via struct update syntax:
+///
+/// ```ignore
+/// show_status(None, StatusOptions { last: Some(5), ..Default::default() }, ctx).await?;
+/// ```
+#[derive(Default)]
+pub struct StatusOptions<'a> {
+    /// Status strings (e.g. `"failed"`, `"running"`) to restrict results.
+    pub filters: &'a [String],
+    /// Regex pattern matched against job IDs.
+    pub name: Option<&'a str>,
+    /// Key-value pairs that must all match for a job to be included.
+    pub tags: &'a [(String, String)],
+    /// Maximum number of jobs to display. Falls back to `default_limit`,
+    /// then to [`DEFAULT_LIST_LIMIT`].
+    pub last: Option<usize>,
+    /// Caller-supplied default (typically from config) used when `last` is `None`.
+    pub default_limit: Option<usize>,
+    /// Controls visibility of archived jobs. The default
+    /// [`ExcludeArchived`](ArchivedFilter::ExcludeArchived) variant displays
+    /// numeric indices; other variants omit them.
+    pub archived: ArchivedFilter,
+}
+
 /// Queries the live status of a job from its execution environment.
 ///
 /// Dispatches to the appropriate backend (local process, Slurm, or remote exec)
@@ -39,28 +66,13 @@ async fn query_live_status(job: &JobRecord, ctx: &RuntimeCtx) -> Result<JobStatu
 ///
 /// When `job_id` is provided, queries the job's live status from its execution
 /// environment (local process, Slurm, or remote exec), updates the registry,
-/// and prints detailed information. All other parameters are ignored.
+/// and prints detailed information. The `opts` fields are ignored.
 ///
 /// When `job_id` is `None`, refreshes all active jobs and lists recent ones
-/// with optional filtering:
-///
-/// - `filters` — status strings (e.g. `"failed"`, `"running"`) to restrict results.
-/// - `name_filter` — regex pattern matched against job IDs.
-/// - `tags` — key-value pairs that must all match for a job to be included.
-/// - `last` — maximum number of jobs to display. Falls back to `default_limit`,
-///   then to [`DEFAULT_LIST_LIMIT`].
-/// - `default_limit` — caller-supplied default (typically from config) used when
-///   `last` is `None`.
-/// - `archived_filter` — controls visibility of archived jobs.
-/// - `ctx` — runtime context providing SSH clients for remote status checks.
+/// filtered according to `opts`.
 pub async fn show_status(
     job_id: Option<&str>,
-    filters: &[String],
-    name_filter: Option<&str>,
-    tags: &[(String, String)],
-    last: Option<usize>,
-    default_limit: Option<usize>,
-    archived_filter: ArchivedFilter,
+    opts: StatusOptions<'_>,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -69,15 +81,7 @@ pub async fn show_status(
         show_job_detail(&registry, id, &ctx).await?;
     } else {
         refresh_active_job_statuses(&registry, &ctx).await?;
-        list_recent_jobs(
-            &registry,
-            filters,
-            name_filter,
-            tags,
-            last,
-            default_limit,
-            archived_filter,
-        )?;
+        list_recent_jobs(&registry, &opts)?;
     }
 
     Ok(())
@@ -100,26 +104,22 @@ async fn show_job_detail(registry: &Registry, id: &str, ctx: &RuntimeCtx) -> Res
 }
 
 /// Lists recent jobs with optional filtering.
-fn list_recent_jobs(
-    registry: &Registry,
-    filters: &[String],
-    name_filter: Option<&str>,
-    tags: &[(String, String)],
-    last: Option<usize>,
-    default_limit: Option<usize>,
-    archived_filter: ArchivedFilter,
-) -> Result<()> {
-    let status_filters: Vec<JobStatus> = filters
+fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()> {
+    let status_filters: Vec<JobStatus> = opts
+        .filters
         .iter()
         .map(|f| f.parse())
         .collect::<Result<Vec<_>>>()?;
 
-    let limit = last.unwrap_or_else(|| default_limit.unwrap_or(DEFAULT_LIST_LIMIT));
+    let limit = opts
+        .last
+        .unwrap_or_else(|| opts.default_limit.unwrap_or(DEFAULT_LIST_LIMIT));
 
-    if archived_filter == ArchivedFilter::ExcludeArchived {
+    if opts.archived == ArchivedFilter::ExcludeArchived {
         // Default (non-archived) view: fetch global list, filter in Rust,
         // and preserve global indices so they match get_job_by_index().
-        let has_filters = !status_filters.is_empty() || name_filter.is_some() || !tags.is_empty();
+        let has_filters =
+            !status_filters.is_empty() || opts.name.is_some() || !opts.tags.is_empty();
         let fetch_limit = if has_filters {
             limit.saturating_mul(10).max(1000)
         } else {
@@ -128,7 +128,8 @@ fn list_recent_jobs(
 
         let all_jobs = registry.list_all_jobs(fetch_limit)?;
 
-        let name_re = name_filter
+        let name_re = opts
+            .name
             .map(|p| {
                 let pattern = build_job_filter_pattern(p);
                 Regex::new(&pattern)
@@ -142,7 +143,8 @@ fn list_recent_jobs(
             .filter(|(_, job)| {
                 (status_filters.is_empty() || status_filters.contains(&job.status))
                     && name_re.as_ref().is_none_or(|re| re.is_match(&job.id))
-                    && tags
+                    && opts
+                        .tags
                         .iter()
                         .all(|(k, v)| job.tags.get(k).is_some_and(|tv| tv == v))
             })
@@ -162,10 +164,10 @@ fn list_recent_jobs(
         let jobs = registry.list_jobs(
             None,
             &status_filters,
-            name_filter,
+            opts.name,
             None,
-            tags,
-            archived_filter,
+            opts.tags,
+            opts.archived,
             limit,
         )?;
 

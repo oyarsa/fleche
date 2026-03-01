@@ -90,9 +90,10 @@ impl JobRecord {
 }
 
 /// Controls which jobs are visible based on their archived state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ArchivedFilter {
     /// Show only non-archived jobs.
+    #[default]
     ExcludeArchived,
     /// Show only archived jobs.
     OnlyArchived,
