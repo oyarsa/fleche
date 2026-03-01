@@ -484,7 +484,7 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 | `fleche run [job\|cmd] [opts]` | Submit a job via Slurm (or directly with `--exec`, locally with `--host local`) |
 | `fleche rerun <job-id>` | Re-run a previous job with same settings |
 | `fleche exec <cmd>` | Run command directly via SSH (or locally with `--host local`) |
-| `fleche status [job-id]` | Show job status (defaults to listing all) |
+| `fleche status [job-id\|#N]` | Show job status (defaults to listing all) |
 | `fleche status -n 50` | Show last 50 jobs |
 | `fleche status --filter running` | Filter by status (repeatable) |
 | `fleche status --name <pattern>` | Filter by name (regex, implicit `.*` around) |
@@ -639,12 +639,37 @@ fleche proxy --host other-cluster -- curl https://example.com
 The tunnel opens automatically, sets `ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`
 environment variables on the child process, and closes when the command exits.
 
+### Numeric Index Aliases
+
+`fleche status` shows a `#` column with 1-based indices (1 = most recent).
+Use these numbers anywhere a job ID is accepted:
+
+```bash
+fleche status
+#    ID                                            STATUS       SLURM ID     CREATED
+  1  train-20260301-120000-abc1                    running      12345        2026-03-01 12:00
+  2  eval-20260228-090000-def2                     completed    12340        2026-02-28 09:00
+  3  train-20260227-150000-ghi3                    failed       12335        2026-02-27 15:00
+
+# Use index instead of job ID
+fleche logs 1           # Logs for most recent job
+fleche cancel 1         # Cancel most recent job
+fleche download 2       # Download outputs from job #2
+fleche stats 3          # Stats for job #3
+fleche status 1         # Detailed status for job #1
+```
+
+Indices are stable within a session — they correspond to position in the
+unfiltered global list. Filtered views may show gaps (e.g., `#1, #4, #7`)
+but the numbers always resolve to the same job.
+
 ## Tips
 
 - Use `--dry-run` to preview the sbatch script before submitting
 - Use `fleche check --remote` to validate config against the server
 - Use `fleche doctor` when things aren't working as expected
 - Job IDs look like `train-20260115-153042-847-x7k2` (use suffix like `x7k2` for short)
+- Use numeric indices from `fleche status` for quick access (e.g., `fleche logs 1`)
 - The job registry is at `~/.config/fleche/jobs.db`
 - Ctrl+C during streaming disconnects but doesn't cancel the job
 - Use `fleche exec` for quick ad-hoc tests without Slurm queue wait

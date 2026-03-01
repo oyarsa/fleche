@@ -526,11 +526,23 @@ These can be set in config or passed via CLI:
 
 *Requires ssh and rsync in PATH.
 
+### Numeric Index Aliases
+
+`fleche status` shows a `#` column with 1-based indices. Use these numbers
+anywhere a job ID is accepted:
+
+```bash
+fleche logs 1           # Logs for most recent job
+fleche cancel 1         # Cancel most recent job
+fleche download 2       # Download outputs from job #2
+fleche status 1         # Detailed status for job #1
+```
+
 ## Tips
 
 - Use `--dry-run` to preview the sbatch script before submitting
 - Use `fleche check` to validate config after editing
-- Job IDs look like `train-20260115-153042-847-x7k2`
+- Job IDs look like `train-20260115-153042-847-x7k2` — or just use `fleche logs 1`
 - Ctrl+C during streaming disconnects but doesn't cancel the job
 - Use `fleche exec` for quick ad-hoc tests without Slurm queue wait
 - Use `exec = true` in config for jobs that should always bypass Slurm
