@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.12.0] - 2026-03-02
+
+### Added
+- Exit code tracking — numeric exit codes are now stored in the job registry
+  and displayed in `fleche status <job-id>` (green for 0, red for non-zero)
+  - Failure messages include exit code: "Job failed (exit code: 1)."
+  - Slurm exit codes parsed from sacct `ExitCode` field (handles signal encoding)
+  - Local and remote-exec backends report exit codes from their exit_code files
+- `--no-sync` flag for `fleche exec` to skip project/input syncing before execution
+  - Useful when code is already on the remote or for commands that don't need project files
+
 ## [6.11.0] - 2026-03-01
 
 ### Added
