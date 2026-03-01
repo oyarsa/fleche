@@ -59,7 +59,7 @@ if [[ ! -f Cargo.toml ]] || [[ ! -f CLAUDE.md ]]; then
 fi
 
 # Check for uncommitted work (jj always auto-tracks, so check for changes)
-if [[ -n "$(jj diff --stat 2>/dev/null)" ]]; then
+if jj diff --stat 2>/dev/null | grep -qv '^0 files changed'; then
     echo "Error: working copy has uncommitted changes — commit or shelve first"
     exit 1
 fi
