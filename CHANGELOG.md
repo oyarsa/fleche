@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.13.0] - 2026-03-01
+
+### Added
+- Raw Slurm job state stored from sacct and shown in `fleche status <job-id>`
+  - Captures the exact Slurm terminal state: `TIMEOUT`, `OUT_OF_MEMORY`,
+    `NODE_FAIL`, `PREEMPTED`, `CANCELLED`, `COMPLETED`, etc.
+  - Displayed with color: green for COMPLETED, yellow for
+    CANCELLED/PREEMPTED/TIMEOUT, red for FAILED/OUT_OF_MEMORY/NODE_FAIL
+  - Stored in the registry alongside exit code for historical reference
+  - Enables distinguishing failure reasons that all map to `failed` status
+
 ## [6.12.0] - 2026-03-02
 
 ### Added
