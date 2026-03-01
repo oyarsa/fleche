@@ -115,49 +115,14 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
         .last
         .unwrap_or_else(|| opts.default_limit.unwrap_or(DEFAULT_LIST_LIMIT));
 
-    if opts.archived == ArchivedFilter::ExcludeArchived {
-        // Default (non-archived) view: fetch global list, filter in Rust,
-        // and preserve global indices so they match get_job_by_index().
-        let has_filters =
-            !status_filters.is_empty() || opts.name.is_some() || !opts.tags.is_empty();
-        let fetch_limit = if has_filters {
-            limit.saturating_mul(10).max(1000)
-        } else {
-            limit
-        };
-
-        let all_jobs = registry.list_all_jobs(fetch_limit)?;
-
-        let name_re = opts
-            .name
-            .map(|p| {
-                let pattern = build_job_filter_pattern(p);
-                Regex::new(&pattern)
-                    .map_err(|e| FlecheError::InvalidRegexPattern(format!("--name '{p}': {e}")))
-            })
-            .transpose()?;
-
-        let (indices, jobs): (Vec<usize>, Vec<JobRecord>) = all_jobs
-            .into_iter()
-            .enumerate()
-            .filter(|(_, job)| {
-                (status_filters.is_empty() || status_filters.contains(&job.status))
-                    && name_re.as_ref().is_none_or(|re| re.is_match(&job.id))
-                    && opts
-                        .tags
-                        .iter()
-                        .all(|(k, v)| job.tags.get(k).is_some_and(|tv| tv == v))
-            })
-            .take(limit)
-            .map(|(i, job)| (i + 1, job))
-            .unzip();
-
-        if jobs.is_empty() {
-            println!("No jobs found. Run `fleche run` to submit a job.");
-            return Ok(());
+    let jobs = if opts.archived == ArchivedFilter::ExcludeArchived {
+        // Default view: filter in Rust to preserve global indices that
+        // match get_job_by_index().
+        let (indices, jobs) = list_indexed_jobs(registry, opts, &status_filters, limit)?;
+        if !jobs.is_empty() {
+            print_indexed_job_table(&jobs, &indices);
         }
-
-        print_indexed_job_table(&jobs, &indices);
+        jobs
     } else {
         // Archived or "show all" view: indices would not match
         // get_job_by_index(), so omit them.
@@ -170,16 +135,59 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
             opts.archived,
             limit,
         )?;
-
-        if jobs.is_empty() {
-            println!("No jobs found. Run `fleche run` to submit a job.");
-            return Ok(());
+        if !jobs.is_empty() {
+            print_job_table(&jobs);
         }
+        jobs
+    };
 
-        print_job_table(&jobs);
+    if jobs.is_empty() {
+        println!("No jobs found. Run `fleche run` to submit a job.");
     }
 
     Ok(())
+}
+
+/// Fetches and filters non-archived jobs, returning 1-based global indices
+/// alongside the matched records.
+fn list_indexed_jobs(
+    registry: &Registry,
+    opts: &StatusOptions<'_>,
+    status_filters: &[JobStatus],
+    limit: usize,
+) -> Result<(Vec<usize>, Vec<JobRecord>)> {
+    let has_filters = !status_filters.is_empty() || opts.name.is_some() || !opts.tags.is_empty();
+    let fetch_limit = if has_filters {
+        limit.saturating_mul(10).max(1000)
+    } else {
+        limit
+    };
+
+    let all_jobs = registry.list_all_jobs(fetch_limit)?;
+
+    let name_re = opts
+        .name
+        .map(|p| {
+            let pattern = build_job_filter_pattern(p);
+            Regex::new(&pattern)
+                .map_err(|e| FlecheError::InvalidRegexPattern(format!("--name '{p}': {e}")))
+        })
+        .transpose()?;
+
+    Ok(all_jobs
+        .into_iter()
+        .enumerate()
+        .filter(|(_, job)| {
+            (status_filters.is_empty() || status_filters.contains(&job.status))
+                && name_re.as_ref().is_none_or(|re| re.is_match(&job.id))
+                && opts
+                    .tags
+                    .iter()
+                    .all(|(k, v)| job.tags.get(k).is_some_and(|tv| tv == v))
+        })
+        .take(limit)
+        .map(|(i, job)| (i + 1, job))
+        .unzip())
 }
 
 /// Adds or displays a note on a job.
