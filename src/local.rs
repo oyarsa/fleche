@@ -183,8 +183,8 @@ echo $? > {}
     Ok(pid)
 }
 
-/// Gets the status of a local job by checking PID and `exit_code` files.
-pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<JobStatus> {
+/// Gets the status and exit code of a local job by checking PID and `exit_code` files.
+pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<(JobStatus, Option<i32>)> {
     let job_dir = local_job_dir(project_path, job_id);
     let exit_code_path = job_dir.join("exit_code");
     let pid_path = job_dir.join("pid");
@@ -197,11 +197,12 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<JobStat
             .parse()
             .unwrap_or(1);
 
-        return Ok(if exit_code == 0 {
+        let status = if exit_code == 0 {
             JobStatus::Completed
         } else {
             JobStatus::Failed
-        });
+        };
+        return Ok((status, Some(exit_code)));
     }
 
     // Check if PID exists and process is still running
@@ -213,15 +214,15 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<JobStat
             .unwrap_or(0);
 
         if pid > 0 && is_process_running(pid) {
-            return Ok(JobStatus::Running);
+            return Ok((JobStatus::Running, None));
         }
 
         // PID exists but process is not running - job failed without writing exit code
-        return Ok(JobStatus::Failed);
+        return Ok((JobStatus::Failed, None));
     }
 
     // No PID file - job hasn't started or something went wrong
-    Ok(JobStatus::Pending)
+    Ok((JobStatus::Pending, None))
 }
 
 /// Cancels a local job by sending SIGTERM to the process.

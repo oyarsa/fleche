@@ -220,10 +220,10 @@ pub async fn run_job(
 
         // Foreground mode: follow logs and check result
         println!();
-        let final_status = follow_job_logs(&host, &slurm_id, &job_dir, ctx).await?;
+        let (final_status, exit_code) = follow_job_logs(&host, &slurm_id, &job_dir, ctx).await?;
 
         // Update registry with final status
-        registry.update_status(&job_id, final_status)?;
+        registry.update_status(&job_id, final_status, exit_code)?;
 
         // Check if we should retry
         if final_status == JobStatus::Failed && attempt < max_attempts {
@@ -350,7 +350,7 @@ async fn run_job_locally(
         );
 
         // Update status to running
-        registry.update_status(&job_id, JobStatus::Running)?;
+        registry.update_status(&job_id, JobStatus::Running, None)?;
 
         if ctx.should_notify(opts.notify) {
             // Spawn a background task to wait and notify
@@ -361,9 +361,9 @@ async fn run_job_locally(
                 loop {
                     tokio::time::sleep(Duration::from_secs(poll_interval)).await;
                     match local::get_local_job_status(&project_path, &job_id_clone) {
-                        Ok(status) => {
+                        Ok((status, exit_code)) => {
                             if let Ok(registry) = Registry::open() {
-                                let _ = registry.update_status(&job_id_clone, status);
+                                let _ = registry.update_status(&job_id_clone, status, exit_code);
                             }
                             match status {
                                 JobStatus::Completed => {
@@ -435,7 +435,7 @@ async fn run_job_locally(
 
             // Update status to running
             let registry = Registry::open()?;
-            registry.update_status(&job_id, JobStatus::Running)?;
+            registry.update_status(&job_id, JobStatus::Running, None)?;
 
             let exit_code =
                 local::run_foreground(&config.project_path, &job_id, &job.command, &job.env)?;
@@ -445,7 +445,7 @@ async fn run_job_locally(
             } else {
                 JobStatus::Failed
             };
-            registry.update_status(&job_id, final_status)?;
+            registry.update_status(&job_id, final_status, Some(exit_code))?;
 
             println!();
             if exit_code == 0 {
@@ -775,13 +775,13 @@ fn generate_job_id(job_name: &str) -> String {
 
 /// Follows job logs and automatically exits when the job finishes.
 ///
-/// Returns the final job status when the job completes.
+/// Returns the final job status and exit code when the job completes.
 async fn follow_job_logs(
     host: &str,
     slurm_id: &str,
     job_dir: &str,
     ctx: RuntimeCtx,
-) -> Result<JobStatus> {
+) -> Result<(JobStatus, Option<i32>)> {
     println!(
         "{}",
         style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
@@ -801,10 +801,10 @@ async fn follow_job_logs(
         loop {
             tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
             let ssh = ctx.ssh(&host_for_check);
-            if let Ok(status) = get_job_status(&ssh, &slurm_id_for_check).await {
-                match status {
+            if let Ok(result) = get_job_status(&ssh, &slurm_id_for_check).await {
+                match result.0 {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
-                        return status;
+                        return result;
                     }
                     _ => {}
                 }
@@ -813,47 +813,50 @@ async fn follow_job_logs(
     };
 
     // Wait for either the tail process to exit or the job to finish
-    let final_status = tokio::select! {
+    let (final_status, exit_code) = tokio::select! {
         _ = child.wait() => {
             // Tail exited on its own - check final status
             let ssh = ctx.ssh(&host);
-            get_job_status(&ssh, &slurm_id).await.unwrap_or(JobStatus::Failed)
+            get_job_status(&ssh, &slurm_id).await.unwrap_or((JobStatus::Failed, None))
         }
-        status = status_check => {
+        result = status_check => {
             // Job finished, kill tail and print status
             let _ = child.kill().await;
 
             // Give a moment for any final output to flush
             tokio::time::sleep(Duration::from_millis(500)).await;
 
-            status
+            result
         }
     };
 
     println!();
     let message = match final_status {
-        JobStatus::Completed => "Job completed successfully.",
-        JobStatus::Failed => "Job failed.",
-        JobStatus::Cancelled => "Job cancelled.",
-        _ => "Job finished.",
+        JobStatus::Completed => "Job completed successfully.".to_string(),
+        JobStatus::Failed => match exit_code {
+            Some(code) => format!("Job failed (exit code: {code})."),
+            None => "Job failed.".to_string(),
+        },
+        JobStatus::Cancelled => "Job cancelled.".to_string(),
+        _ => "Job finished.".to_string(),
     };
 
     match final_status {
         JobStatus::Completed => {
-            println!("{}", style(message).green().bold());
+            println!("{}", style(&message).green().bold());
         }
         JobStatus::Failed => {
-            println!("{}", style(message).red().bold());
+            println!("{}", style(&message).red().bold());
         }
         JobStatus::Cancelled => {
-            println!("{}", style(message).yellow().bold());
+            println!("{}", style(&message).yellow().bold());
         }
         _ => {}
     }
 
-    send_notification(message);
+    send_notification(&message);
 
-    Ok(final_status)
+    Ok((final_status, exit_code))
 }
 
 /// Waits for a job to complete and sends a terminal notification.
@@ -871,8 +874,8 @@ async fn wait_and_notify(job_id: &str, remote_host: &str, ctx: RuntimeCtx) -> Re
     loop {
         let job = registry.get_job(job_id)?;
         if let Some(ref slurm_id) = job.slurm_id {
-            let status = get_job_status(&ssh, slurm_id).await?;
-            registry.update_status(job_id, status)?;
+            let (status, exit_code) = get_job_status(&ssh, slurm_id).await?;
+            registry.update_status(job_id, status, exit_code)?;
 
             match status {
                 JobStatus::Completed => {
@@ -997,7 +1000,7 @@ async fn run_job_direct_remote(
         )?;
 
         // Update status to running
-        registry.update_status(&job_id, JobStatus::Running)?;
+        registry.update_status(&job_id, JobStatus::Running, None)?;
 
         println!();
         if attempt > 1 {
@@ -1027,10 +1030,10 @@ async fn run_job_direct_remote(
 
         // Foreground mode: follow logs and check result
         println!();
-        let final_status = follow_direct_job_logs(host, &job_dir, ctx).await?;
+        let (final_status, exit_code) = follow_direct_job_logs(host, &job_dir, ctx).await?;
 
         // Update registry with final status
-        registry.update_status(&job_id, final_status)?;
+        registry.update_status(&job_id, final_status, exit_code)?;
 
         // Check if we should retry
         if final_status == JobStatus::Failed && attempt < max_attempts {
@@ -1085,7 +1088,10 @@ fn generate_exec_script(job: &ResolvedJob, workspace: &str, job_dir: &str) -> St
 /// 2. `pid` file exists and process running → running
 /// 3. `pid` file exists but process gone → failed (crashed without exit code)
 /// 4. Neither file → pending
-pub async fn get_remote_direct_job_status(ssh: &SshClient, job_dir: &str) -> Result<JobStatus> {
+pub async fn get_remote_direct_job_status(
+    ssh: &SshClient,
+    job_dir: &str,
+) -> Result<(JobStatus, Option<i32>)> {
     // Check if exit_code exists
     let (has_exit_code, exit_code_content, _) = ssh
         .exec_allow_failure(&format!("cat {job_dir}/exit_code 2>/dev/null"))
@@ -1093,11 +1099,12 @@ pub async fn get_remote_direct_job_status(ssh: &SshClient, job_dir: &str) -> Res
 
     if has_exit_code && !exit_code_content.trim().is_empty() {
         let code: i32 = exit_code_content.trim().parse().unwrap_or(1);
-        return Ok(if code == 0 {
+        let status = if code == 0 {
             JobStatus::Completed
         } else {
             JobStatus::Failed
-        });
+        };
+        return Ok((status, Some(code)));
     }
 
     // Check if PID exists and process is running
@@ -1113,21 +1120,25 @@ pub async fn get_remote_direct_job_status(ssh: &SshClient, job_dir: &str) -> Res
             .await?;
 
         if is_running {
-            return Ok(JobStatus::Running);
+            return Ok((JobStatus::Running, None));
         }
 
         // PID exists but process is gone - job failed without writing exit code
-        return Ok(JobStatus::Failed);
+        return Ok((JobStatus::Failed, None));
     }
 
     // No PID file - job hasn't started yet
-    Ok(JobStatus::Pending)
+    Ok((JobStatus::Pending, None))
 }
 
 /// Follows logs of a remote direct job and polls for completion.
 ///
-/// Returns the final job status when the job completes.
-async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> Result<JobStatus> {
+/// Returns the final job status and exit code when the job completes.
+async fn follow_direct_job_logs(
+    host: &str,
+    job_dir: &str,
+    ctx: RuntimeCtx,
+) -> Result<(JobStatus, Option<i32>)> {
     println!(
         "{}",
         style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
@@ -1145,10 +1156,10 @@ async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> R
         loop {
             tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
             let ssh = ctx.ssh(&host_owned);
-            if let Ok(status) = get_remote_direct_job_status(&ssh, &job_dir_owned).await {
-                match status {
+            if let Ok(result) = get_remote_direct_job_status(&ssh, &job_dir_owned).await {
+                match result.0 {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
-                        return status;
+                        return result;
                     }
                     _ => {}
                 }
@@ -1157,46 +1168,49 @@ async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> R
     };
 
     // Wait for either the tail process to exit or the job to finish
-    let final_status = tokio::select! {
+    let (final_status, exit_code) = tokio::select! {
         _ = child.wait() => {
             // Tail exited on its own - check final status
             let ssh = ctx.ssh(host);
             get_remote_direct_job_status(&ssh, job_dir)
                 .await
-                .unwrap_or(JobStatus::Failed)
+                .unwrap_or((JobStatus::Failed, None))
         }
-        status = status_check => {
+        result = status_check => {
             // Job finished, kill tail
             let _ = child.kill().await;
             tokio::time::sleep(Duration::from_millis(500)).await;
-            status
+            result
         }
     };
 
     println!();
     let message = match final_status {
-        JobStatus::Completed => "Job completed successfully.",
-        JobStatus::Failed => "Job failed.",
-        JobStatus::Cancelled => "Job cancelled.",
-        _ => "Job finished.",
+        JobStatus::Completed => "Job completed successfully.".to_string(),
+        JobStatus::Failed => match exit_code {
+            Some(code) => format!("Job failed (exit code: {code})."),
+            None => "Job failed.".to_string(),
+        },
+        JobStatus::Cancelled => "Job cancelled.".to_string(),
+        _ => "Job finished.".to_string(),
     };
 
     match final_status {
         JobStatus::Completed => {
-            println!("{}", style(message).green().bold());
+            println!("{}", style(&message).green().bold());
         }
         JobStatus::Failed => {
-            println!("{}", style(message).red().bold());
+            println!("{}", style(&message).red().bold());
         }
         JobStatus::Cancelled => {
-            println!("{}", style(message).yellow().bold());
+            println!("{}", style(&message).yellow().bold());
         }
         _ => {}
     }
 
-    send_notification(message);
+    send_notification(&message);
 
-    Ok(final_status)
+    Ok((final_status, exit_code))
 }
 
 /// Waits for a remote direct job to complete and sends a notification.
@@ -1214,10 +1228,10 @@ async fn wait_and_notify_direct(
     let ssh = ctx.ssh(remote_host);
 
     loop {
-        let status = get_remote_direct_job_status(&ssh, job_dir).await?;
+        let (status, exit_code) = get_remote_direct_job_status(&ssh, job_dir).await?;
 
         if let Ok(registry) = Registry::open() {
-            let _ = registry.update_status(job_id, status);
+            let _ = registry.update_status(job_id, status, exit_code);
         }
 
         match status {

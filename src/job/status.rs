@@ -43,11 +43,11 @@ pub struct StatusOptions<'a> {
     pub archived: ArchivedFilter,
 }
 
-/// Queries the live status of a job from its execution environment.
+/// Queries the live status and exit code of a job from its execution environment.
 ///
 /// Dispatches to the appropriate backend (local process, Slurm, or remote exec)
 /// based on the job record. Does not update the registry — callers handle that.
-async fn query_live_status(job: &JobRecord, ctx: &RuntimeCtx) -> Result<JobStatus> {
+async fn query_live_status(job: &JobRecord, ctx: &RuntimeCtx) -> Result<(JobStatus, Option<i32>)> {
     if job.remote_host == "local" {
         let project_path = PathBuf::from(&job.project_path);
         return local::get_local_job_status(&project_path, &job.id);
@@ -91,15 +91,15 @@ pub async fn show_status(
 async fn show_job_detail(registry: &Registry, id: &str, ctx: &RuntimeCtx) -> Result<()> {
     let job = registry.get_job(id)?;
 
-    let current_status = match query_live_status(&job, ctx).await {
-        Ok(status) => {
-            registry.update_status(&job.id, status)?;
-            status
+    let (current_status, exit_code) = match query_live_status(&job, ctx).await {
+        Ok((status, exit_code)) => {
+            registry.update_status(&job.id, status, exit_code)?;
+            (status, exit_code)
         }
-        Err(_) => job.status,
+        Err(_) => (job.status, job.exit_code),
     };
 
-    print_job_details(&job, current_status);
+    print_job_details(&job, current_status, exit_code);
     Ok(())
 }
 
@@ -251,9 +251,9 @@ pub async fn refresh_active_job_statuses(registry: &Registry, ctx: &RuntimeCtx) 
     let active_jobs = registry.list_active_jobs()?;
 
     for job in active_jobs {
-        if let Ok(status) = query_live_status(&job, ctx).await {
+        if let Ok((status, exit_code)) = query_live_status(&job, ctx).await {
             if status != job.status {
-                registry.update_status(&job.id, status)?;
+                registry.update_status(&job.id, status, exit_code)?;
             }
         }
     }

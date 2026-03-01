@@ -210,11 +210,28 @@ fn parse_sacct_state(state: &str) -> JobStatus {
     }
 }
 
+/// Parses the `ExitCode` field from sacct output (`"exitcode:signal"` format).
+///
+/// Returns the effective exit code:
+/// - If signal is non-zero, returns `128 + signal` (standard Unix convention)
+/// - Otherwise returns the exit code as-is
+/// - Returns `None` if the format is invalid
+pub fn parse_sacct_exit_code(raw: &str) -> Option<i32> {
+    let (code_str, signal_str) = raw.split_once(':')?;
+    let code: i32 = code_str.parse().ok()?;
+    let signal: i32 = signal_str.parse().ok()?;
+    if signal != 0 {
+        Some(128 + signal)
+    } else {
+        Some(code)
+    }
+}
+
 /// Queries the status of a Slurm job.
 ///
 /// First checks `squeue` to see if the job is still in the queue (pending or running).
-/// If not found in the queue, falls back to `sacct` to get the final state.
-pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus> {
+/// If not found in the queue, falls back to `sacct` to get the final state and exit code.
+pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<(JobStatus, Option<i32>)> {
     let escaped_id = shell_escape(slurm_id);
 
     // First try squeue to see if job is still in queue
@@ -223,18 +240,21 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<JobStatus
         .await?;
 
     if success && !stdout.trim().is_empty() {
-        return Ok(parse_squeue_state(stdout.trim()));
+        return Ok((parse_squeue_state(stdout.trim()), None));
     }
 
-    // Job not in queue, check sacct for final state
+    // Job not in queue, check sacct for final state and exit code
     let (success, stdout, _) = ssh
         .exec_allow_failure(&format!(
-            "sacct -j {escaped_id} -n -o State --parsable2 | head -1"
+            "sacct -j {escaped_id} -n -o State,ExitCode --parsable2 | head -1"
         ))
         .await?;
 
     if success && !stdout.trim().is_empty() {
-        return Ok(parse_sacct_state(stdout.trim()));
+        let fields: Vec<&str> = stdout.trim().split('|').collect();
+        let status = parse_sacct_state(fields.first().unwrap_or(&""));
+        let exit_code = fields.get(1).and_then(|s| parse_sacct_exit_code(s));
+        return Ok((status, exit_code));
     }
 
     Err(FlecheError::SlurmQueryFailed(slurm_id.to_string()))
@@ -538,5 +558,33 @@ mod tests {
         let name = "a".repeat(MAX_JOB_NAME_LENGTH + 50);
         let truncated = truncate_job_name(&name);
         assert_eq!(truncated.len(), MAX_JOB_NAME_LENGTH);
+    }
+
+    #[test]
+    fn test_parse_sacct_exit_code_success() {
+        assert_eq!(parse_sacct_exit_code("0:0"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_sacct_exit_code_failure() {
+        assert_eq!(parse_sacct_exit_code("1:0"), Some(1));
+        assert_eq!(parse_sacct_exit_code("2:0"), Some(2));
+        assert_eq!(parse_sacct_exit_code("127:0"), Some(127));
+    }
+
+    #[test]
+    fn test_parse_sacct_exit_code_signal() {
+        // Signal 9 (SIGKILL) → 128 + 9 = 137
+        assert_eq!(parse_sacct_exit_code("0:9"), Some(137));
+        // Signal 15 (SIGTERM) → 128 + 15 = 143
+        assert_eq!(parse_sacct_exit_code("0:15"), Some(143));
+    }
+
+    #[test]
+    fn test_parse_sacct_exit_code_invalid() {
+        assert_eq!(parse_sacct_exit_code(""), None);
+        assert_eq!(parse_sacct_exit_code("abc"), None);
+        assert_eq!(parse_sacct_exit_code("1"), None);
+        assert_eq!(parse_sacct_exit_code("a:b"), None);
     }
 }

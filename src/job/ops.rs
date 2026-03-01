@@ -34,10 +34,10 @@ pub async fn wait_for_job(
         let project_path = PathBuf::from(&job.project_path);
 
         loop {
-            let status = local::get_local_job_status(&project_path, &job.id)?;
-            registry.update_status(&job.id, status)?;
+            let (status, exit_code) = local::get_local_job_status(&project_path, &job.id)?;
+            registry.update_status(&job.id, status, exit_code)?;
 
-            if let Some(msg) = format_terminal_status(&job.id, status) {
+            if let Some(msg) = format_terminal_status(&job.id, status, exit_code) {
                 if ctx.should_notify(notify) {
                     send_notification(&msg);
                 }
@@ -52,7 +52,7 @@ pub async fn wait_for_job(
     let ssh = ctx.ssh(&job.remote_host);
 
     loop {
-        let status = if let Some(ref slurm_id) = job.slurm_id {
+        let (status, exit_code) = if let Some(ref slurm_id) = job.slurm_id {
             get_job_status(&ssh, slurm_id).await?
         } else {
             // Remote direct (exec) job - check via PID/exit_code files
@@ -60,9 +60,9 @@ pub async fn wait_for_job(
             get_remote_direct_job_status(&ssh, &job_dir).await?
         };
 
-        registry.update_status(&job.id, status)?;
+        registry.update_status(&job.id, status, exit_code)?;
 
-        if let Some(msg) = format_terminal_status(&job.id, status) {
+        if let Some(msg) = format_terminal_status(&job.id, status, exit_code) {
             if ctx.should_notify(notify) {
                 send_notification(&msg);
             }
@@ -74,7 +74,11 @@ pub async fn wait_for_job(
 }
 
 /// Formats a message for terminal job states, returning None for non-terminal states.
-fn format_terminal_status(job_id: &str, status: JobStatus) -> Option<String> {
+fn format_terminal_status(
+    job_id: &str,
+    status: JobStatus,
+    exit_code: Option<i32>,
+) -> Option<String> {
     match status {
         JobStatus::Completed => {
             let msg = format!("Job {job_id} completed successfully.");
@@ -82,7 +86,10 @@ fn format_terminal_status(job_id: &str, status: JobStatus) -> Option<String> {
             Some(msg)
         }
         JobStatus::Failed => {
-            let msg = format!("Job {job_id} failed.");
+            let msg = match exit_code {
+                Some(code) => format!("Job {job_id} failed (exit code: {code})."),
+                None => format!("Job {job_id} failed."),
+            };
             println!("{}", style(&msg).red().bold());
             Some(msg)
         }

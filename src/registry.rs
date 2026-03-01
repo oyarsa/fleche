@@ -17,7 +17,7 @@ use std::path::PathBuf;
 const JOB_SELECT_COLUMNS: &str = r"
     id, slurm_id, job_name, project_name, project_path,
     remote_host, remote_path, command, status, config_json,
-    created_at, updated_at, outputs_synced, note, archived";
+    created_at, updated_at, outputs_synced, note, archived, exit_code";
 
 /// A record of a submitted job stored in the local registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +54,8 @@ pub struct JobRecord {
     pub note: Option<String>,
     /// Whether this job is archived (hidden from normal listings).
     pub archived: bool,
+    /// Process exit code (0 = success, non-zero = failure).
+    pub exit_code: Option<i32>,
 }
 
 impl JobRecord {
@@ -85,6 +87,7 @@ impl JobRecord {
             tags: HashMap::new(),
             note: row.get(13)?,
             archived: row.get::<_, Option<i32>>(14)?.unwrap_or(0) == 1,
+            exit_code: row.get(15)?,
         })
     }
 }
@@ -215,6 +218,11 @@ impl Registry {
             [],
         );
 
+        // Migration: add exit_code column if it doesn't exist (for existing databases)
+        let _ = self
+            .conn
+            .execute("ALTER TABLE jobs ADD COLUMN exit_code INTEGER", []);
+
         Ok(())
     }
 
@@ -279,12 +287,12 @@ impl Registry {
         Ok(())
     }
 
-    /// Updates the status of a job.
-    pub fn update_status(&self, id: &str, status: JobStatus) -> Result<()> {
+    /// Updates the status and optional exit code of a job.
+    pub fn update_status(&self, id: &str, status: JobStatus, exit_code: Option<i32>) -> Result<()> {
         let now = Utc::now();
         self.conn.execute(
-            "UPDATE jobs SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            params![status.to_string(), now.to_rfc3339(), id],
+            "UPDATE jobs SET status = ?1, updated_at = ?2, exit_code = ?3 WHERE id = ?4",
+            params![status.to_string(), now.to_rfc3339(), exit_code, id],
         )?;
         Ok(())
     }
@@ -445,7 +453,8 @@ impl Registry {
             r"
             SELECT DISTINCT j.id, j.slurm_id, j.job_name, j.project_name, j.project_path,
                    j.remote_host, j.remote_path, j.command, j.status, j.config_json,
-                   j.created_at, j.updated_at, j.outputs_synced, j.note, j.archived
+                   j.created_at, j.updated_at, j.outputs_synced, j.note, j.archived,
+                   j.exit_code
             FROM jobs j
             ",
         );
