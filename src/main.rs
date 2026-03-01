@@ -100,50 +100,36 @@ async fn run() -> Result<()> {
     let runtime_ctx = RuntimeCtx::from_optional_settings(cli.debug, optional_settings.as_ref());
 
     match cli.command {
-        Commands::Run {
-            job_or_command,
-            command,
-            bg,
-            notify,
-            env_vars,
-            tags,
-            partition,
-            time,
-            gpus,
-            cpus,
-            memory,
-            constraint,
-            nodes,
-            exclude,
-            after,
-            dry_run,
-            host,
-            exec,
-            retry,
-            note,
-        } => {
+        Commands::Run(args) => {
             let config = Config::find_and_load()?;
             let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
             let slurm_overrides = slurm_config_from_cli(
-                partition, time, gpus, cpus, memory, constraint, nodes, exclude,
+                args.partition,
+                args.time,
+                args.gpus,
+                args.cpus,
+                args.memory,
+                args.constraint,
+                args.nodes,
+                args.exclude,
             );
 
             job::run_job(
                 &config,
-                job_or_command.as_deref(),
-                command.as_deref(),
-                &env_vars,
-                &tags,
+                args.job_or_command.as_deref(),
+                args.command.as_deref(),
+                &args.env_vars,
+                &args.tags,
                 slurm_overrides,
-                host.as_deref(),
+                args.host.as_deref(),
                 job::RunJobOptions {
-                    background: bg,
-                    notify,
-                    dry_run,
-                    after,
-                    retry,
-                    note,
-                    exec,
+                    background: args.bg,
+                    notify: args.notify,
+                    dry_run: args.dry_run,
+                    after: args.after,
+                    retry: args.retry,
+                    note: args.note,
+                    exec: args.exec,
                 },
                 runtime_ctx,
             )
@@ -160,31 +146,22 @@ async fn run() -> Result<()> {
             job::exec_command(&config, &command, &env_vars, host.as_deref(), runtime_ctx).await?;
         }
 
-        Commands::Status {
-            job_id,
-            filter,
-            name,
-            tags,
-            last,
-            archived,
-            all_jobs,
-        } => {
-            // Determine archived filter based on flags
-            let archived_filter = if archived {
+        Commands::Status(args) => {
+            let archived_filter = if args.archived {
                 ArchivedFilter::OnlyArchived
-            } else if all_jobs {
+            } else if args.all_jobs {
                 ArchivedFilter::IncludeAll
             } else {
                 ArchivedFilter::ExcludeArchived
             };
 
             job::show_status(
-                job_id.as_deref(),
+                args.job_id.as_deref(),
                 StatusOptions {
-                    filters: &filter,
-                    name: name.as_deref(),
-                    tags: &tags,
-                    last,
+                    filters: &args.filter,
+                    name: args.name.as_deref(),
+                    tags: &args.tags,
+                    last: args.last,
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
                 },
@@ -193,81 +170,58 @@ async fn run() -> Result<()> {
             .await?;
         }
 
-        Commands::Logs {
-            job_id,
-            follow,
-            stdout,
-            stderr,
-            tail,
-            raw,
-            tags,
-            note,
-        } => {
+        Commands::Logs(args) => {
             job::show_logs(
-                job_id.as_deref(),
-                &tags,
-                note.as_deref(),
+                args.job_id.as_deref(),
+                &args.tags,
+                args.note.as_deref(),
                 job::ShowLogsOptions {
-                    follow,
-                    only_stdout: stdout,
-                    only_stderr: stderr,
-                    tail,
-                    raw,
+                    follow: args.follow,
+                    only_stdout: args.stdout,
+                    only_stderr: args.stderr,
+                    tail: args.tail,
+                    raw: args.raw,
                     ctx: runtime_ctx,
                 },
             )
             .await?;
         }
 
-        Commands::Download {
-            job_id,
-            partial,
-            path,
-            filter,
-            tags,
-            dry_run,
-        } => {
+        Commands::Download(args) => {
             job::download_outputs(
-                job_id.as_deref(),
-                partial,
-                path.as_deref(),
-                &filter,
-                &tags,
-                dry_run,
+                args.job_id.as_deref(),
+                args.partial,
+                args.path.as_deref(),
+                &args.filter,
+                &args.tags,
+                args.dry_run,
                 runtime_ctx,
             )
             .await?;
         }
 
-        Commands::Cancel {
-            job_id,
-            all,
-            yes,
-            tags,
-        } => {
-            job::cancel_jobs(job_id.as_deref(), all, yes, &tags, runtime_ctx).await?;
+        Commands::Cancel(args) => {
+            job::cancel_jobs(
+                args.job_id.as_deref(),
+                args.all,
+                args.yes,
+                &args.tags,
+                runtime_ctx,
+            )
+            .await?;
         }
 
-        Commands::Clean {
-            job_id,
-            all,
-            older_than,
-            workspace,
-            archive,
-            unarchive,
-            yes,
-            tags,
-        } => {
+        Commands::Clean(args) => {
             job::clean_jobs(
-                job_id.as_deref(),
-                older_than.as_deref(),
-                &tags,
+                args.job_id.as_deref(),
+                args.older_than.as_deref(),
+                &args.tags,
                 job::CleanJobsOptions {
-                    all,
-                    clean_workspace: workspace,
-                    archive,
-                    unarchive,
-                    skip_confirm: yes,
+                    all: args.all,
+                    clean_workspace: args.workspace,
+                    archive: args.archive,
+                    unarchive: args.unarchive,
+                    skip_confirm: args.yes,
                     ctx: runtime_ctx,
                 },
             )

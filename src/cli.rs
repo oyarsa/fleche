@@ -47,90 +47,7 @@ pub enum Commands {
     ///
     /// Syncs your project, submits to Slurm, and streams output.
     /// Use --bg to run in background without streaming.
-    Run {
-        /// Job name from config, or command to run (in quotes)
-        #[arg(value_name = "JOB_OR_COMMAND")]
-        job_or_command: Option<String>,
-
-        /// Override or provide command (if job name given)
-        #[arg(long)]
-        command: Option<String>,
-
-        /// Run in background (don't stream output)
-        #[arg(long)]
-        bg: bool,
-
-        /// Send terminal notification when job completes (useful with --bg)
-        #[arg(long)]
-        notify: bool,
-
-        /// Set environment variable (repeatable)
-        #[arg(long = "env", value_parser = parse_key_value)]
-        env_vars: Vec<(String, String)>,
-
-        /// Add tag for filtering/organization (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
-
-        /// Override Slurm partition
-        #[arg(long)]
-        partition: Option<String>,
-
-        /// Override wall time
-        #[arg(long)]
-        time: Option<String>,
-
-        /// Override GPU count
-        #[arg(long)]
-        gpus: Option<u32>,
-
-        /// Override CPU count
-        #[arg(long)]
-        cpus: Option<u32>,
-
-        /// Override memory
-        #[arg(long)]
-        memory: Option<String>,
-
-        /// Override constraint
-        #[arg(long)]
-        constraint: Option<String>,
-
-        /// Override nodes
-        #[arg(long)]
-        nodes: Option<u32>,
-
-        /// Override exclude
-        #[arg(long)]
-        exclude: Option<String>,
-
-        /// Run after another job completes successfully
-        ///
-        /// Takes a job ID (or suffix). The new job will only start after
-        /// the dependency job completes with exit code 0.
-        #[arg(long)]
-        after: Option<String>,
-
-        /// Print generated sbatch script without submitting
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Run on specific host ("local" for local execution)
-        #[arg(long)]
-        host: Option<String>,
-
-        /// Run directly via SSH instead of submitting to Slurm
-        #[arg(long)]
-        exec: bool,
-
-        /// Retry failed jobs with exponential backoff (e.g., --retry 3)
-        #[arg(long)]
-        retry: Option<u32>,
-
-        /// Add a note/annotation to the job
-        #[arg(long)]
-        note: Option<String>,
-    },
+    Run(RunArgs),
 
     /// Execute a command directly via SSH (no Slurm)
     ///
@@ -153,156 +70,29 @@ pub enum Commands {
     ///
     /// Without arguments, lists recent jobs.
     /// With a job ID, shows detailed status.
-    Status {
-        /// Job ID to check (default: list recent jobs)
-        job_id: Option<String>,
-
-        /// Filter by status (pending, running, completed, failed, cancelled) - repeatable
-        #[arg(long)]
-        filter: Vec<String>,
-
-        /// Filter by job name regex (e.g., "123" matches "train-123-xy", "^train" matches "train-foo")
-        #[arg(long)]
-        name: Option<String>,
-
-        /// Filter by tag (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
-
-        /// Number of jobs to show (default: 20)
-        #[arg(short = 'n', long)]
-        last: Option<usize>,
-
-        /// Show only archived jobs
-        #[arg(long)]
-        archived: bool,
-
-        /// Show all jobs including archived
-        #[arg(long = "all-jobs", conflicts_with = "archived")]
-        all_jobs: bool,
-    },
+    Status(StatusArgs),
 
     /// Fetch and display job logs
     ///
     /// Without a job ID, shows logs of the most recent job.
-    Logs {
-        /// Job ID (default: most recent job)
-        job_id: Option<String>,
-
-        /// Stream logs in real-time (Ctrl+C to disconnect)
-        #[arg(long, short)]
-        follow: bool,
-
-        /// Show only stdout (default shows both stdout and stderr)
-        #[arg(long)]
-        stdout: bool,
-
-        /// Show only stderr (default shows both stdout and stderr)
-        #[arg(long)]
-        stderr: bool,
-
-        /// Show only the last N lines
-        #[arg(short = 'n', long)]
-        tail: Option<usize>,
-
-        /// Strip ANSI escape codes from output (auto-detected when piped)
-        #[arg(long)]
-        raw: bool,
-
-        /// Filter by tag when using default job (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
-
-        /// Filter by note content (regex pattern, case-insensitive)
-        #[arg(long)]
-        note: Option<String>,
-    },
+    Logs(LogsArgs),
 
     /// Download output files from remote to local
     ///
     /// Without a job ID, downloads outputs from the most recent job.
-    Download {
-        /// Job ID (default: most recent job)
-        job_id: Option<String>,
-
-        /// Download even if job is still running
-        #[arg(long)]
-        partial: bool,
-
-        /// Specific path to download (default: all configured outputs)
-        #[arg(long)]
-        path: Option<String>,
-
-        /// Filter outputs by glob pattern (repeatable). Prefix with ! to exclude.
-        #[arg(long)]
-        filter: Vec<String>,
-
-        /// Filter by tag when using default job (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
-
-        /// Show what would be downloaded without actually downloading
-        #[arg(long)]
-        dry_run: bool,
-    },
+    Download(DownloadArgs),
 
     /// Cancel a running or pending job
     ///
     /// Without arguments, cancels the most recent running job.
-    Cancel {
-        /// Job ID (default: most recent running job)
-        job_id: Option<String>,
-
-        /// Cancel all running/pending jobs
-        #[arg(long)]
-        all: bool,
-
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-
-        /// Filter by tag (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
-    },
+    Cancel(CancelArgs),
 
     /// Remove job from registry and delete remote job files
     ///
     /// This removes job logs and metadata, but NOT the workspace.
     /// Use --workspace to also clear the shared workspace.
     /// Use --archive to hide jobs without deleting them.
-    Clean {
-        /// Job ID (optional with --all or --older-than)
-        job_id: Option<String>,
-
-        /// Clean all completed/failed jobs
-        #[arg(long)]
-        all: bool,
-
-        /// Clean jobs older than duration (e.g., 7d, 24h)
-        #[arg(long)]
-        older_than: Option<String>,
-
-        /// Also delete the shared workspace
-        #[arg(long)]
-        workspace: bool,
-
-        /// Archive job instead of deleting (hides from listings)
-        #[arg(long)]
-        archive: bool,
-
-        /// Restore archived job to normal listings
-        #[arg(long, conflicts_with_all = ["archive", "workspace"])]
-        unarchive: bool,
-
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
-
-        /// Filter by tag (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
-    },
+    Clean(CleanArgs),
 
     /// List available jobs from configuration
     ///
@@ -445,6 +235,234 @@ pub enum Commands {
         #[arg(long)]
         host: Option<String>,
     },
+}
+
+#[derive(clap::Args)]
+pub struct RunArgs {
+    /// Job name from config, or command to run (in quotes)
+    #[arg(value_name = "JOB_OR_COMMAND")]
+    pub job_or_command: Option<String>,
+
+    /// Override or provide command (if job name given)
+    #[arg(long)]
+    pub command: Option<String>,
+
+    /// Run in background (don't stream output)
+    #[arg(long)]
+    pub bg: bool,
+
+    /// Send terminal notification when job completes (useful with --bg)
+    #[arg(long)]
+    pub notify: bool,
+
+    /// Set environment variable (repeatable)
+    #[arg(long = "env", value_parser = parse_key_value)]
+    pub env_vars: Vec<(String, String)>,
+
+    /// Add tag for filtering/organization (repeatable)
+    #[arg(long = "tag", value_parser = parse_key_value)]
+    pub tags: Vec<(String, String)>,
+
+    /// Override Slurm partition
+    #[arg(long)]
+    pub partition: Option<String>,
+
+    /// Override wall time
+    #[arg(long)]
+    pub time: Option<String>,
+
+    /// Override GPU count
+    #[arg(long)]
+    pub gpus: Option<u32>,
+
+    /// Override CPU count
+    #[arg(long)]
+    pub cpus: Option<u32>,
+
+    /// Override memory
+    #[arg(long)]
+    pub memory: Option<String>,
+
+    /// Override constraint
+    #[arg(long)]
+    pub constraint: Option<String>,
+
+    /// Override nodes
+    #[arg(long)]
+    pub nodes: Option<u32>,
+
+    /// Override exclude
+    #[arg(long)]
+    pub exclude: Option<String>,
+
+    /// Run after another job completes successfully
+    ///
+    /// Takes a job ID (or suffix). The new job will only start after
+    /// the dependency job completes with exit code 0.
+    #[arg(long)]
+    pub after: Option<String>,
+
+    /// Print generated sbatch script without submitting
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Run on specific host ("local" for local execution)
+    #[arg(long)]
+    pub host: Option<String>,
+
+    /// Run directly via SSH instead of submitting to Slurm
+    #[arg(long)]
+    pub exec: bool,
+
+    /// Retry failed jobs with exponential backoff (e.g., --retry 3)
+    #[arg(long)]
+    pub retry: Option<u32>,
+
+    /// Add a note/annotation to the job
+    #[arg(long)]
+    pub note: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct StatusArgs {
+    /// Job ID to check (default: list recent jobs)
+    pub job_id: Option<String>,
+
+    /// Filter by status (pending, running, completed, failed, cancelled) - repeatable
+    #[arg(long)]
+    pub filter: Vec<String>,
+
+    /// Filter by job name regex (e.g., "123" matches "train-123-xy", "^train" matches "train-foo")
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Filter by tag (repeatable)
+    #[arg(long = "tag", value_parser = parse_key_value)]
+    pub tags: Vec<(String, String)>,
+
+    /// Number of jobs to show (default: 20)
+    #[arg(short = 'n', long)]
+    pub last: Option<usize>,
+
+    /// Show only archived jobs
+    #[arg(long)]
+    pub archived: bool,
+
+    /// Show all jobs including archived
+    #[arg(long = "all-jobs", conflicts_with = "archived")]
+    pub all_jobs: bool,
+}
+
+#[derive(clap::Args)]
+pub struct LogsArgs {
+    /// Job ID (default: most recent job)
+    pub job_id: Option<String>,
+
+    /// Stream logs in real-time (Ctrl+C to disconnect)
+    #[arg(long, short)]
+    pub follow: bool,
+
+    /// Show only stdout (default shows both stdout and stderr)
+    #[arg(long)]
+    pub stdout: bool,
+
+    /// Show only stderr (default shows both stdout and stderr)
+    #[arg(long)]
+    pub stderr: bool,
+
+    /// Show only the last N lines
+    #[arg(short = 'n', long)]
+    pub tail: Option<usize>,
+
+    /// Strip ANSI escape codes from output (auto-detected when piped)
+    #[arg(long)]
+    pub raw: bool,
+
+    /// Filter by tag when using default job (repeatable)
+    #[arg(long = "tag", value_parser = parse_key_value)]
+    pub tags: Vec<(String, String)>,
+
+    /// Filter by note content (regex pattern, case-insensitive)
+    #[arg(long)]
+    pub note: Option<String>,
+}
+
+#[derive(clap::Args)]
+pub struct DownloadArgs {
+    /// Job ID (default: most recent job)
+    pub job_id: Option<String>,
+
+    /// Download even if job is still running
+    #[arg(long)]
+    pub partial: bool,
+
+    /// Specific path to download (default: all configured outputs)
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// Filter outputs by glob pattern (repeatable). Prefix with ! to exclude.
+    #[arg(long)]
+    pub filter: Vec<String>,
+
+    /// Filter by tag when using default job (repeatable)
+    #[arg(long = "tag", value_parser = parse_key_value)]
+    pub tags: Vec<(String, String)>,
+
+    /// Show what would be downloaded without actually downloading
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(clap::Args)]
+pub struct CancelArgs {
+    /// Job ID (default: most recent running job)
+    pub job_id: Option<String>,
+
+    /// Cancel all running/pending jobs
+    #[arg(long)]
+    pub all: bool,
+
+    /// Skip confirmation prompt
+    #[arg(short, long)]
+    pub yes: bool,
+
+    /// Filter by tag (repeatable)
+    #[arg(long = "tag", value_parser = parse_key_value)]
+    pub tags: Vec<(String, String)>,
+}
+
+#[derive(clap::Args)]
+pub struct CleanArgs {
+    /// Job ID (optional with --all or --older-than)
+    pub job_id: Option<String>,
+
+    /// Clean all completed/failed jobs
+    #[arg(long)]
+    pub all: bool,
+
+    /// Clean jobs older than duration (e.g., 7d, 24h)
+    #[arg(long)]
+    pub older_than: Option<String>,
+
+    /// Also delete the shared workspace
+    #[arg(long)]
+    pub workspace: bool,
+
+    /// Archive job instead of deleting (hides from listings)
+    #[arg(long)]
+    pub archive: bool,
+
+    /// Restore archived job to normal listings
+    #[arg(long, conflicts_with_all = ["archive", "workspace"])]
+    pub unarchive: bool,
+
+    /// Skip confirmation prompt
+    #[arg(short, long)]
+    pub yes: bool,
+
+    /// Filter by tag (repeatable)
+    #[arg(long = "tag", value_parser = parse_key_value)]
+    pub tags: Vec<(String, String)>,
 }
 
 /// Parses a KEY=VALUE string into a tuple.
