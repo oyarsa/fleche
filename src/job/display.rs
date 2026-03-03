@@ -116,20 +116,30 @@ pub fn print_job_table(jobs: &[JobRecord]) {
     }
 }
 
-/// Prints the optional subtitle line (job name and/or tags) below a job row.
+/// Prints the optional subtitle line (job name, tags, and/or note) below a job row.
 fn print_job_subtitle(job: &JobRecord, indent: &str) {
     let id_prefix = job.id.split('-').next().unwrap_or("");
-    if job.job_name != id_prefix {
-        print!("{indent}{}", style(&job.job_name).dim());
-        if !job.tags.is_empty() {
-            let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            print!("  {}", style(tags.join(" ")).dim());
-        }
-        println!();
-    } else if !job.tags.is_empty() {
-        let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
-        println!("{indent}{}", style(tags.join(" ")).dim());
+    let show_name = job.job_name != id_prefix;
+    let has_tags = !job.tags.is_empty();
+    let has_note = job.note.is_some();
+
+    if !show_name && !has_tags && !has_note {
+        return;
     }
+
+    let mut parts: Vec<String> = Vec::new();
+    if show_name {
+        parts.push(job.job_name.clone());
+    }
+    if has_tags {
+        let tags: Vec<String> = job.tags.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        parts.push(tags.join(" "));
+    }
+    if let Some(ref note) = job.note {
+        parts.push(format!("\"{}\"", truncate(note, 40)));
+    }
+
+    println!("{indent}{}", style(parts.join("  ")).dim());
 }
 
 /// Formats a job status with appropriate colors and fixed width.
