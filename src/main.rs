@@ -173,6 +173,7 @@ async fn run() -> Result<()> {
                     last: args.last,
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
+                    compact: args.compact,
                 },
                 runtime_ctx,
             )

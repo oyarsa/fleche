@@ -43,6 +43,8 @@ pub struct StatusOptions<'a> {
     /// [`ExcludeArchived`](ArchivedFilter::ExcludeArchived) variant displays
     /// numeric indices; other variants omit them.
     pub archived: ArchivedFilter,
+    /// Hide the subtitle line (job name, tags, note) below each row.
+    pub compact: bool,
 }
 
 /// Queries the live status of a job from its execution environment.
@@ -121,7 +123,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
         // match get_job_by_index().
         let (indices, jobs) = list_indexed_jobs(registry, opts, &status_filters, limit)?;
         if !jobs.is_empty() {
-            print_indexed_job_table(&jobs, &indices);
+            print_indexed_job_table(&jobs, &indices, !opts.compact);
         }
         jobs
     } else {
@@ -137,7 +139,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
             limit,
         )?;
         if !jobs.is_empty() {
-            print_job_table(&jobs);
+            print_job_table(&jobs, !opts.compact);
         }
         jobs
     };

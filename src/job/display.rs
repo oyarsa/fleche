@@ -68,7 +68,7 @@ pub fn print_job_details(job: &JobRecord) {
 /// The indices correspond to positions in the unfiltered global job list,
 /// matching what `get_job_by_index` resolves. Filtered views show gaps
 /// (e.g., `#3, #7, #10`) so numeric lookup always works correctly.
-pub fn print_indexed_job_table(jobs: &[JobRecord], global_indices: &[usize]) {
+pub fn print_indexed_job_table(jobs: &[JobRecord], global_indices: &[usize], subtitle: bool) {
     println!(
         "{:>3}  {:<45} {:<12} {:<12} {:<20}",
         style("#").bold().underlined(),
@@ -87,7 +87,9 @@ pub fn print_indexed_job_table(jobs: &[JobRecord], global_indices: &[usize]) {
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
         );
-        print_job_subtitle(job, "      ");
+        if subtitle {
+            print_job_subtitle(job, "      ");
+        }
     }
 }
 
@@ -95,7 +97,7 @@ pub fn print_indexed_job_table(jobs: &[JobRecord], global_indices: &[usize]) {
 ///
 /// Used for views (e.g., archived) where numeric indices would not resolve
 /// correctly via `get_job_by_index`.
-pub fn print_job_table(jobs: &[JobRecord]) {
+pub fn print_job_table(jobs: &[JobRecord], subtitle: bool) {
     println!(
         "{:<45} {:<12} {:<12} {:<20}",
         style("ID").bold().underlined(),
@@ -112,7 +114,9 @@ pub fn print_job_table(jobs: &[JobRecord]) {
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
         );
-        print_job_subtitle(job, "    ");
+        if subtitle {
+            print_job_subtitle(job, "    ");
+        }
     }
 }
 

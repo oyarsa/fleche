@@ -355,6 +355,10 @@ pub struct StatusArgs {
     /// Show all jobs including archived
     #[arg(long = "all-jobs", conflicts_with = "archived")]
     pub all_jobs: bool,
+
+    /// Hide the subtitle line (job name, tags, note) below each row
+    #[arg(long)]
+    pub compact: bool,
 }
 
 #[derive(clap::Args)]
