@@ -57,3 +57,8 @@ too_many_lines = "allow"
 too_many_arguments = "allow"
 format_push_string = "allow"
 struct_excessive_bools = "allow"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
