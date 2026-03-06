@@ -679,6 +679,7 @@ but the numbers always resolve to the same job.
 - Ctrl+C during streaming disconnects but doesn't cancel the job
 - Exit codes are tracked and shown in `fleche status <job-id>` and failure messages
 - Raw Slurm state (e.g., TIMEOUT, OUT_OF_MEMORY, PREEMPTED) is shown in `fleche status <job-id>` for Slurm jobs
+- Slurm resources at submission (partition, memory, time, GPUs, etc.) are shown in `fleche status <job-id>` — useful after Slurm purges the job record
 - Use `fleche exec` for quick ad-hoc tests without Slurm queue wait
 - Use `exec = true` in config for jobs that should always bypass Slurm
 - Jobs share workspace, so chained jobs can read each other's outputs

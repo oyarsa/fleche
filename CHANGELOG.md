@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.14.0] - 2026-03-06
+
+### Added
+- Slurm resources at submission time shown in `fleche status <job-id>`
+  - Displays partition, memory, time, GPUs, CPUs, nodes, constraint, and
+    exclude — only the fields that were actually set
+  - Snapshot is taken from the fully resolved config (global → job → CLI
+    overrides) at submission time, so it remains accurate after Slurm purges
+    the job record or after `fleche.toml` has been updated
+  - Omitted for local and exec (direct SSH) jobs
+
 ## [6.13.0] - 2026-03-01
 
 ### Added
