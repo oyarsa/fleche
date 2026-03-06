@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.14.1] - 2026-03-06
+
+### Changed
+- GitHub Releases now include the relevant CHANGELOG section as release notes
+- Release workflow builds Linux x86_64, Linux arm64, and macOS arm64 binaries
+  and publishes to crates.io automatically on tag push
+- `cargo binstall fleche` and `cargo install fleche` now work
+
 ## [6.14.0] - 2026-03-06
 
 ### Added
