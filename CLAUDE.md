@@ -18,8 +18,7 @@ When releasing:
 4. `jj commit -m "v3.1.0: Release summary"`
 5. `jj bookmark set master -r @-`
 6. `jj git push`
-7. `git tag v3.1.0 && git push --tags` (jj doesn't handle tags yet)
-8. `gh workflow run release.yml -f tag=v3.1.0` (builds binaries and creates GitHub Release)
+7. `git tag v3.1.0 && git push --tags` (jj doesn't handle tags yet — pushing the tag triggers the release workflow automatically)
 
 ## Version Control
 
