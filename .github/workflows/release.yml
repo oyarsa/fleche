@@ -2,6 +2,11 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g. v6.14.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -27,6 +32,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -40,7 +47,8 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ inputs.tag }}"
+          VERSION="${VERSION#v}"
           ARCHIVE="fleche-${VERSION}-${{ matrix.target }}.tar.gz"
           cp target/release/fleche fleche
           tar -czf "${ARCHIVE}" fleche
@@ -69,7 +77,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
+          gh release create "${{ inputs.tag }}" \
+            --title "${{ inputs.tag }}" \
             --generate-notes \
             dist/*.tar.gz
