@@ -4,6 +4,8 @@ version = "6.14.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Remote job runner for Slurm clusters"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/oyarsa/fleche"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
