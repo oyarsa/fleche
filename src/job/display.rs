@@ -1,5 +1,6 @@
 //! Display helpers for formatting job information.
 
+use crate::config::ResolvedJob;
 use crate::registry::{JobRecord, JobStatus};
 use console::style;
 
@@ -56,11 +57,57 @@ pub fn print_job_details(job: &JobRecord) {
         }
     }
 
+    if let Some(slurm_resources) = slurm_resources_section(job) {
+        println!();
+        println!("  {}", style("Slurm resources:").bold());
+        for line in slurm_resources {
+            println!("    {line}");
+        }
+    }
+
     println!();
     println!("  {}", style("Command:").bold());
     for line in job.command.lines() {
         println!("    {line}");
     }
+}
+
+/// Returns Slurm resource lines for a job, or `None` if not applicable.
+///
+/// Returns `None` for local jobs, exec (direct SSH) jobs, jobs with no Slurm
+/// fields set, and jobs whose `config_json` can't be parsed (old records).
+fn slurm_resources_section(job: &JobRecord) -> Option<Vec<String>> {
+    #[allow(clippy::ref_option)]
+    fn fmt_field<T: std::fmt::Display>(opt: &Option<T>, label: &str) -> Option<String> {
+        opt.as_ref().map(|v| format!("{label}{v}"))
+    }
+
+    if job.remote_host == "local" {
+        return None;
+    }
+
+    let resolved: ResolvedJob = serde_json::from_str(&job.config_json).ok()?;
+    if resolved.exec {
+        return None;
+    }
+    let s = &resolved.slurm;
+
+    #[rustfmt::skip]
+    let lines: Vec<_> = [
+        fmt_field(&s.partition,   "Partition:    "),
+        fmt_field(&s.memory,      "Memory:       "),
+        fmt_field(&s.time,        "Time:         "),
+        fmt_field(&s.gpus,        "GPUs:         "),
+        fmt_field(&s.cpus,        "CPUs:         "),
+        fmt_field(&s.nodes,       "Nodes:        "),
+        fmt_field(&s.constraint,  "Constraint:   "),
+        fmt_field(&s.exclude,     "Exclude:      "),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    if lines.is_empty() { None } else { Some(lines) }
 }
 
 /// Prints a table of jobs with a `#` column showing global index positions.
