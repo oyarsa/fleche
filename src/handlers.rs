@@ -1,6 +1,6 @@
 //! Command handlers for CLI commands with non-trivial logic.
 //!
-//! Most commands delegate directly to the [`job`] module. This module contains
+//! Most commands delegate directly to the [`crate::job`] module. This module contains
 //! handlers for commands that have additional logic beyond simple delegation.
 
 use crate::config::{Config, ResolvedJob, generate_init_config};
