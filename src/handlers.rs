@@ -4,6 +4,7 @@
 //! handlers for commands that have additional logic beyond simple delegation.
 
 use crate::config::{Config, ResolvedJob, generate_init_config};
+use crate::output::OutputFormat;
 use crate::registry::Registry;
 use anyhow::{Context, Result};
 use console::style;
@@ -80,46 +81,43 @@ struct JobDefinition {
     command: Option<String>,
 }
 
-/// Handles the `jobs` command - lists available jobs from config.
-pub fn list_jobs(config: &Config, json: bool) {
-    let job_names = config.job_names();
-
-    if json {
-        let jobs: Vec<_> = job_names
-            .iter()
-            .filter_map(|name| {
-                config.jobs.get(name).map(|def| JobDefinition {
-                    name: name.clone(),
-                    command: def.command.clone(),
-                })
+/// Converts config job definitions into structured entries for JSON output.
+fn to_job_definitions(config: &Config) -> Vec<JobDefinition> {
+    config
+        .job_names()
+        .iter()
+        .filter_map(|name| {
+            config.jobs.get(name).map(|def| JobDefinition {
+                name: name.clone(),
+                command: def.command.clone(),
             })
-            .collect();
-        // unwrap is safe: we're serializing simple structs
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&jobs).expect("JSON serialization failed")
-        );
-        return;
-    }
+        })
+        .collect()
+}
 
-    if job_names.is_empty() {
-        println!(
-            "{}",
-            style("No jobs defined. Add jobs to fleche.toml or create fleche/*.toml files.")
-                .yellow()
-        );
-        return;
-    }
+/// Handles the `jobs` command - lists available jobs from config.
+pub fn list_jobs(config: &Config, format: OutputFormat) -> Result<()> {
+    let jobs = to_job_definitions(config);
 
-    for name in &job_names {
-        if let Some(job_def) = config.jobs.get(name) {
-            if let Some(ref cmd) = job_def.command {
-                println!("{} {}", style(name).bold(), style(cmd).dim());
+    format.print(&jobs, || {
+        if jobs.is_empty() {
+            println!(
+                "{}",
+                style("No jobs defined. Add jobs to fleche.toml or create fleche/*.toml files.")
+                    .yellow()
+            );
+            return Ok(());
+        }
+
+        for job in &jobs {
+            if let Some(ref cmd) = job.command {
+                println!("{} {}", style(&job.name).bold(), style(cmd).dim());
             } else {
-                println!("{}", style(name).bold());
+                println!("{}", style(&job.name).bold());
             }
         }
-    }
+        Ok(())
+    })
 }
 
 /// Handles the `compare` command - shows differences between two jobs.

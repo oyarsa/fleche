@@ -2,6 +2,7 @@
 
 use crate::error::{FlecheError, Result};
 use crate::local;
+use crate::output::OutputFormat;
 use crate::registry::{JobRecord, JobStatus, LiveStatus, Registry, parse_duration};
 use crate::runtime::RuntimeCtx;
 use crate::slurm::cancel_job;
@@ -28,8 +29,8 @@ pub struct CleanJobsOptions {
     pub dry_run: bool,
     /// Skip confirmation prompt.
     pub skip_confirm: bool,
-    /// Output results as JSON.
-    pub json: bool,
+    /// Output format (human-readable or JSON).
+    pub format: OutputFormat,
     /// Shared runtime settings.
     pub ctx: RuntimeCtx,
 }
@@ -43,8 +44,8 @@ pub struct CancelJobsOptions {
     pub skip_confirm: bool,
     /// Show what would be cancelled without actually cancelling.
     pub dry_run: bool,
-    /// Output results as JSON.
-    pub json: bool,
+    /// Output format (human-readable or JSON).
+    pub format: OutputFormat,
     /// Shared runtime settings.
     pub ctx: RuntimeCtx,
 }
@@ -92,12 +93,11 @@ pub async fn cancel_jobs(
                 .collect()
         };
         if active.is_empty() {
-            if opts.json {
-                println!("[]");
-            } else {
+            let empty: Vec<JobRecord> = Vec::new();
+            return opts.format.print(&empty, || {
                 println!("No active jobs to cancel.");
-            }
-            return Ok(());
+                Ok(())
+            });
         }
         let mut active = active;
         active.truncate(1);
@@ -105,19 +105,16 @@ pub async fn cancel_jobs(
     };
 
     if jobs_to_cancel.is_empty() {
-        if opts.json {
-            println!("[]");
-        } else {
+        let empty: Vec<JobRecord> = Vec::new();
+        return opts.format.print(&empty, || {
             println!("No active jobs to cancel.");
-        }
-        return Ok(());
+            Ok(())
+        });
     }
 
     // Dry run: show what would be cancelled and exit
     if opts.dry_run {
-        if opts.json {
-            println!("{}", serde_json::to_string_pretty(&jobs_to_cancel)?);
-        } else {
+        return opts.format.print(&jobs_to_cancel, || {
             println!("Would cancel {} job(s):", jobs_to_cancel.len());
             for job in &jobs_to_cancel {
                 println!(
@@ -127,12 +124,12 @@ pub async fn cancel_jobs(
                     job.job_name
                 );
             }
-        }
-        return Ok(());
+            Ok(())
+        });
     }
 
     // Show jobs and confirm if multiple
-    if !opts.json && (jobs_to_cancel.len() > 1 || opts.all) {
+    if !opts.format.is_json() && (jobs_to_cancel.len() > 1 || opts.all) {
         println!("Jobs to cancel:");
         for job in &jobs_to_cancel {
             println!(
@@ -164,7 +161,7 @@ pub async fn cancel_jobs(
                             slurm_state: None,
                         },
                     )?;
-                    if !opts.json {
+                    if !opts.format.is_json() {
                         println!("{} Job {} cancelled", style("✓").green(), job.id);
                     }
                 }
@@ -190,7 +187,7 @@ pub async fn cancel_jobs(
                     slurm_state: None,
                 },
             )?;
-            if !opts.json {
+            if !opts.format.is_json() {
                 println!("{} Job {} cancelled", style("✓").green(), job.id);
             }
         } else {
@@ -207,7 +204,7 @@ pub async fn cancel_jobs(
                             slurm_state: None,
                         },
                     )?;
-                    if !opts.json {
+                    if !opts.format.is_json() {
                         println!("{} Job {} cancelled", style("✓").green(), job.id);
                     }
                 }
@@ -221,11 +218,7 @@ pub async fn cancel_jobs(
         }
     }
 
-    if opts.json {
-        println!("{}", serde_json::to_string_pretty(&jobs_to_cancel)?);
-    }
-
-    Ok(())
+    opts.format.print_json_only(&jobs_to_cancel)
 }
 
 /// Cleans up jobs by removing them from the registry and deleting remote job files.
@@ -255,18 +248,15 @@ pub async fn clean_jobs(
         };
 
         if jobs_to_unarchive.is_empty() {
-            if opts.json {
-                println!("[]");
-            } else {
+            let empty: Vec<JobRecord> = Vec::new();
+            return opts.format.print(&empty, || {
                 println!("No archived jobs to restore.");
-            }
-            return Ok(());
+                Ok(())
+            });
         }
 
         if opts.dry_run {
-            if opts.json {
-                println!("{}", serde_json::to_string_pretty(&jobs_to_unarchive)?);
-            } else {
+            return opts.format.print(&jobs_to_unarchive, || {
                 println!(
                     "Would restore {} job(s) from archive:",
                     jobs_to_unarchive.len()
@@ -274,13 +264,13 @@ pub async fn clean_jobs(
                 for job in &jobs_to_unarchive {
                     println!("  {} - {}", job.id, job.job_name);
                 }
-            }
-            return Ok(());
+                Ok(())
+            });
         }
 
         for job in &jobs_to_unarchive {
             registry.unarchive_job(&job.id)?;
-            if !opts.json {
+            if !opts.format.is_json() {
                 println!(
                     "{} Restored job {} from archive",
                     style("✓").green(),
@@ -289,11 +279,7 @@ pub async fn clean_jobs(
             }
         }
 
-        if opts.json {
-            println!("{}", serde_json::to_string_pretty(&jobs_to_unarchive)?);
-        }
-
-        return Ok(());
+        return opts.format.print_json_only(&jobs_to_unarchive);
     }
 
     // For archive/clean: get jobs to process
@@ -333,22 +319,19 @@ pub async fn clean_jobs(
     };
 
     if jobs_to_clean.is_empty() && !opts.clean_workspace {
-        if opts.json {
-            println!("[]");
-        } else {
+        let empty: Vec<JobRecord> = Vec::new();
+        return opts.format.print(&empty, || {
             println!(
                 "No jobs to {}.",
                 if opts.archive { "archive" } else { "clean" }
             );
-        }
-        return Ok(());
+            Ok(())
+        });
     }
 
     // Dry run: show what would be affected and exit
     if opts.dry_run {
-        if opts.json {
-            println!("{}", serde_json::to_string_pretty(&jobs_to_clean)?);
-        } else {
+        return opts.format.print(&jobs_to_clean, || {
             let action = if opts.archive { "archive" } else { "clean" };
             println!("Would {} {} job(s):", action, jobs_to_clean.len());
             for job in &jobs_to_clean {
@@ -359,13 +342,13 @@ pub async fn clean_jobs(
                     job.job_name
                 );
             }
-        }
-        return Ok(());
+            Ok(())
+        });
     }
 
     // Handle --archive mode: archive jobs instead of deleting
     if opts.archive {
-        if !opts.json
+        if !opts.format.is_json()
             && !jobs_to_clean.is_empty()
             && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
         {
@@ -381,28 +364,24 @@ pub async fn clean_jobs(
             println!();
         }
 
-        if !opts.json && !opts.skip_confirm && !confirm("Archive these jobs?")? {
+        if !opts.format.is_json() && !opts.skip_confirm && !confirm("Archive these jobs?")? {
             println!("Cancelled.");
             return Ok(());
         }
 
         for job in &jobs_to_clean {
             registry.archive_job(&job.id)?;
-            if !opts.json {
+            if !opts.format.is_json() {
                 println!("{} Archived job {}", style("✓").green(), job.id);
             }
         }
 
-        if opts.json {
-            println!("{}", serde_json::to_string_pretty(&jobs_to_clean)?);
-        }
-
-        return Ok(());
+        return opts.format.print_json_only(&jobs_to_clean);
     }
 
     // Normal clean mode: delete jobs
     // Show jobs and confirm
-    if !opts.json
+    if !opts.format.is_json()
         && !jobs_to_clean.is_empty()
         && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
     {
@@ -418,7 +397,7 @@ pub async fn clean_jobs(
         println!();
     }
 
-    if !opts.json && opts.clean_workspace {
+    if !opts.format.is_json() && opts.clean_workspace {
         println!(
             "{}",
             style("WARNING: This will also delete the shared workspace!")
@@ -427,7 +406,7 @@ pub async fn clean_jobs(
         );
     }
 
-    if !opts.json && !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
+    if !opts.format.is_json() && !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
         println!("Cancelled.");
         return Ok(());
     }
@@ -442,7 +421,7 @@ pub async fn clean_jobs(
 
     // Clean job directories
     for job in &jobs_to_clean {
-        if !opts.json {
+        if !opts.format.is_json() {
             print!("Cleaning {}... ", job.id);
         }
 
@@ -462,7 +441,7 @@ pub async fn clean_jobs(
         }
 
         registry.delete_job(&job.id)?;
-        if !opts.json {
+        if !opts.format.is_json() {
             println!("{}", style("done").green());
         }
     }
@@ -518,17 +497,16 @@ pub async fn clean_jobs(
         }
     }
 
-    if opts.json {
-        println!("{}", serde_json::to_string_pretty(&jobs_to_clean)?);
-    } else if !jobs_to_clean.is_empty() {
-        println!(
-            "\n{} Cleaned {} job(s)",
-            style("✓").green(),
-            jobs_to_clean.len()
-        );
-    }
-
-    Ok(())
+    opts.format.print(&jobs_to_clean, || {
+        if !jobs_to_clean.is_empty() {
+            println!(
+                "\n{} Cleaned {} job(s)",
+                style("✓").green(),
+                jobs_to_clean.len()
+            );
+        }
+        Ok(())
+    })
 }
 
 /// Prompts the user for confirmation.

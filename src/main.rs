@@ -23,6 +23,7 @@ mod error;
 mod handlers;
 mod job;
 mod local;
+mod output;
 mod proxy;
 mod registry;
 mod runtime;
@@ -36,6 +37,7 @@ use cli::{Cli, Commands};
 use config::Config;
 use console::style;
 use job::StatusOptions;
+use output::OutputFormat;
 use registry::ArchivedFilter;
 use runtime::RuntimeCtx;
 use slurm::slurm_config_from_cli;
@@ -96,6 +98,11 @@ async fn run() -> Result<()> {
     // Optional settings are used by commands that can run without a project config.
     let optional_settings = Config::find_and_load().ok().map(|c| c.settings);
     let runtime_ctx = RuntimeCtx::from_optional_settings(cli.debug, optional_settings.as_ref());
+    let format = if cli.json {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Human
+    };
 
     match cli.command {
         Commands::Run(args) => {
@@ -172,7 +179,7 @@ async fn run() -> Result<()> {
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
                     compact: args.compact,
-                    json: cli.json,
+                    format,
                 },
                 runtime_ctx,
             )
@@ -217,7 +224,7 @@ async fn run() -> Result<()> {
                     all: args.all,
                     skip_confirm: args.yes,
                     dry_run: args.dry_run,
-                    json: cli.json,
+                    format,
                     ctx: runtime_ctx,
                 },
             )
@@ -236,7 +243,7 @@ async fn run() -> Result<()> {
                     unarchive: args.unarchive,
                     dry_run: args.dry_run,
                     skip_confirm: args.yes,
-                    json: cli.json,
+                    format,
                     ctx: runtime_ctx,
                 },
             )
@@ -245,11 +252,11 @@ async fn run() -> Result<()> {
 
         Commands::Jobs => {
             let config = Config::find_and_load()?;
-            handlers::list_jobs(&config, cli.json);
+            handlers::list_jobs(&config, format)?;
         }
 
         Commands::Tags => {
-            job::list_tags(cli.json)?;
+            job::list_tags(format)?;
         }
 
         Commands::Rerun { job_id, bg, tags } => {
@@ -288,7 +295,7 @@ async fn run() -> Result<()> {
             notify,
             tags,
         } => {
-            job::wait_for_job(job_id.as_deref(), notify, &tags, cli.json, runtime_ctx).await?;
+            job::wait_for_job(job_id.as_deref(), notify, &tags, format, runtime_ctx).await?;
         }
 
         Commands::Completions { shell } => {
@@ -296,7 +303,7 @@ async fn run() -> Result<()> {
         }
 
         Commands::Stats { job_id, last, tags } => {
-            job::show_stats(job_id.as_deref(), last, &tags, cli.json, runtime_ctx).await?;
+            job::show_stats(job_id.as_deref(), last, &tags, format, runtime_ctx).await?;
         }
 
         Commands::Note { job_id, note } => {

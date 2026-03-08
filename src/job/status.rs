@@ -2,6 +2,7 @@
 
 use crate::error::{FlecheError, Result};
 use crate::local;
+use crate::output::OutputFormat;
 use crate::registry::{
     ArchivedFilter, JobRecord, JobStatus, LiveStatus, Registry, build_job_filter_pattern,
 };
@@ -46,8 +47,8 @@ pub struct StatusOptions<'a> {
     pub archived: ArchivedFilter,
     /// Hide the subtitle line (job name, tags, note) below each row.
     pub compact: bool,
-    /// Output results as JSON.
-    pub json: bool,
+    /// Output format (human-readable or JSON).
+    pub format: OutputFormat,
 }
 
 /// Queries the live status of a job from its execution environment.
@@ -85,7 +86,7 @@ pub async fn show_status(
     let registry = Registry::open()?;
 
     if let Some(id) = job_id {
-        show_job_detail(&registry, id, &ctx, opts.json).await?;
+        show_job_detail(&registry, id, &ctx, opts.format).await?;
     } else {
         refresh_active_job_statuses(&registry, &ctx).await?;
         list_recent_jobs(&registry, &opts)?;
@@ -99,7 +100,7 @@ async fn show_job_detail(
     registry: &Registry,
     id: &str,
     ctx: &RuntimeCtx,
-    json: bool,
+    format: OutputFormat,
 ) -> Result<()> {
     let mut job = registry.get_job(id)?;
 
@@ -110,12 +111,10 @@ async fn show_job_detail(
         job.slurm_state = live.slurm_state;
     }
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&job)?);
-    } else {
+    format.print(&job, || {
         print_job_details(&job);
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Lists recent jobs with optional filtering.
@@ -134,7 +133,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
         // Default view: filter in Rust to preserve global indices that
         // match get_job_by_index().
         let (indices, jobs) = list_indexed_jobs(registry, opts, &status_filters, limit)?;
-        if !opts.json && !jobs.is_empty() {
+        if !opts.format.is_json() && !jobs.is_empty() {
             print_indexed_job_table(&jobs, &indices, !opts.compact);
         }
         jobs
@@ -150,19 +149,18 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
             opts.archived,
             limit,
         )?;
-        if !opts.json && !jobs.is_empty() {
+        if !opts.format.is_json() && !jobs.is_empty() {
             print_job_table(&jobs, !opts.compact);
         }
         jobs
     };
 
-    if opts.json {
-        println!("{}", serde_json::to_string_pretty(&jobs)?);
-    } else if jobs.is_empty() {
-        println!("No jobs found. Run `fleche run` to submit a job.");
-    }
-
-    Ok(())
+    opts.format.print(&jobs, || {
+        if jobs.is_empty() {
+            println!("No jobs found. Run `fleche run` to submit a job.");
+        }
+        Ok(())
+    })
 }
 
 /// Fetches and filters non-archived jobs, returning 1-based global indices
@@ -244,39 +242,40 @@ struct TagEntry {
     value: String,
 }
 
+/// Converts raw tag tuples into structured entries for JSON output.
+fn to_tag_entries(tags: Vec<(String, String)>) -> Vec<TagEntry> {
+    tags.into_iter()
+        .map(|(key, value)| TagEntry { key, value })
+        .collect()
+}
+
 /// Lists all unique tags across jobs.
-pub fn list_tags(json: bool) -> Result<()> {
+pub fn list_tags(format: OutputFormat) -> Result<()> {
     let registry = Registry::open()?;
     let tags = registry.list_unique_tags()?;
+    let entries = to_tag_entries(tags);
 
-    if json {
-        let entries: Vec<_> = tags
-            .into_iter()
-            .map(|(key, value)| TagEntry { key, value })
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&entries)?);
-        return Ok(());
-    }
-
-    if tags.is_empty() {
-        println!("No tags found. Use --tag when running jobs to add tags.");
-        return Ok(());
-    }
-
-    // Group by key
-    let mut current_key = String::new();
-    for (key, value) in &tags {
-        if key != &current_key {
-            if !current_key.is_empty() {
-                println!();
-            }
-            println!("{}", style(key).bold());
-            current_key.clone_from(key);
+    format.print(&entries, || {
+        if entries.is_empty() {
+            println!("No tags found. Use --tag when running jobs to add tags.");
+            return Ok(());
         }
-        println!("  {value}");
-    }
 
-    Ok(())
+        // Group by key
+        let mut current_key = "";
+        for entry in &entries {
+            if entry.key != current_key {
+                if !current_key.is_empty() {
+                    println!();
+                }
+                println!("{}", style(&entry.key).bold());
+                current_key = &entry.key;
+            }
+            println!("  {}", entry.value);
+        }
+
+        Ok(())
+    })
 }
 
 /// Refreshes the status of all pending/running jobs from Slurm or local process status.
