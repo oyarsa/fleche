@@ -7,6 +7,7 @@ use crate::config::{ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::registry::{JobStatus, LiveStatus};
 use crate::ssh::{SshClient, shell_escape};
+use serde::Serialize;
 
 /// Generates an sbatch script for a job.
 ///
@@ -277,7 +278,7 @@ pub async fn cancel_job(ssh: &SshClient, slurm_id: &str) -> Result<()> {
 }
 
 /// Resource usage statistics from a completed Slurm job.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct JobResourceUsage {
     /// Wall clock time (e.g., "01:23:45")
     pub elapsed: String,

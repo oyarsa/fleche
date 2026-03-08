@@ -19,7 +19,7 @@ mod status;
 use crate::config::Config;
 
 // Re-export public API
-pub use cleanup::{CleanJobsOptions, cancel_jobs, clean_jobs};
+pub use cleanup::{CancelJobsOptions, CleanJobsOptions, cancel_jobs, clean_jobs};
 pub use download::download_outputs;
 pub use logs::{ShowLogsOptions, show_logs};
 pub use ops::{ping_cluster, show_stats, wait_for_job};

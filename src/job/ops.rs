@@ -22,12 +22,15 @@ pub async fn wait_for_job(
     job_id: Option<&str>,
     notify: bool,
     tags: &[(String, String)],
+    json: bool,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
     let job = resolve_job(&registry, job_id, tags, None)?;
 
-    println!("Waiting for job {}...", style(&job.id).bold());
+    if !json {
+        println!("Waiting for job {}...", style(&job.id).bold());
+    }
 
     // Local job handling
     if job.remote_host == "local" {
@@ -37,11 +40,14 @@ pub async fn wait_for_job(
             let live = local::get_local_job_status(&project_path, &job.id)?;
             registry.update_status(&job.id, &live)?;
 
-            if let Some(msg) = format_terminal_status(&job.id, &live) {
-                if ctx.should_notify(notify) {
-                    send_notification(&msg);
+            if is_terminal(live.status) {
+                if !json {
+                    format_terminal_status(&job.id, &live);
                 }
-                return Ok(());
+                if ctx.should_notify(notify) {
+                    send_notification(&format_terminal_message(&job.id, &live));
+                }
+                return print_wait_result(&registry, &job.id, json);
             }
 
             tokio::time::sleep(Duration::from_secs(ctx.poll_interval_local_secs)).await;
@@ -62,25 +68,43 @@ pub async fn wait_for_job(
 
         registry.update_status(&job.id, &live)?;
 
-        if let Some(msg) = format_terminal_status(&job.id, &live) {
-            if ctx.should_notify(notify) {
-                send_notification(&msg);
+        if is_terminal(live.status) {
+            if !json {
+                format_terminal_status(&job.id, &live);
             }
-            return Ok(());
+            if ctx.should_notify(notify) {
+                send_notification(&format_terminal_message(&job.id, &live));
+            }
+            return print_wait_result(&registry, &job.id, json);
         }
 
         tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
     }
 }
 
-/// Formats a message for terminal job states, returning None for non-terminal states.
-fn format_terminal_status(job_id: &str, live: &LiveStatus) -> Option<String> {
+/// Returns whether a job status is terminal.
+fn is_terminal(status: JobStatus) -> bool {
+    matches!(
+        status,
+        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+    )
+}
+
+/// Prints a styled message for terminal job states.
+fn format_terminal_status(job_id: &str, live: &LiveStatus) {
+    let msg = format_terminal_message(job_id, live);
     match live.status {
-        JobStatus::Completed => {
-            let msg = format!("Job {job_id} completed successfully.");
-            println!("{}", style(&msg).green().bold());
-            Some(msg)
-        }
+        JobStatus::Completed => println!("{}", style(&msg).green().bold()),
+        JobStatus::Failed => println!("{}", style(&msg).red().bold()),
+        JobStatus::Cancelled => println!("{}", style(&msg).yellow().bold()),
+        _ => {}
+    }
+}
+
+/// Builds the terminal status message string (for notifications).
+fn format_terminal_message(job_id: &str, live: &LiveStatus) -> String {
+    match live.status {
+        JobStatus::Completed => format!("Job {job_id} completed successfully."),
         JobStatus::Failed => {
             let detail = match (&live.slurm_state, live.exit_code) {
                 (Some(state), Some(code)) => format!(" ({state}, exit code: {code})"),
@@ -88,17 +112,20 @@ fn format_terminal_status(job_id: &str, live: &LiveStatus) -> Option<String> {
                 (None, Some(code)) => format!(" (exit code: {code})"),
                 (None, None) => String::new(),
             };
-            let msg = format!("Job {job_id} failed{detail}.");
-            println!("{}", style(&msg).red().bold());
-            Some(msg)
+            format!("Job {job_id} failed{detail}.")
         }
-        JobStatus::Cancelled => {
-            let msg = format!("Job {job_id} was cancelled.");
-            println!("{}", style(&msg).yellow().bold());
-            Some(msg)
-        }
-        _ => None,
+        JobStatus::Cancelled => format!("Job {job_id} was cancelled."),
+        _ => String::new(),
     }
+}
+
+/// Prints the final wait result (JSON or nothing for human output).
+fn print_wait_result(registry: &Registry, job_id: &str, json: bool) -> Result<()> {
+    if json {
+        let job = registry.get_job(job_id)?;
+        println!("{}", serde_json::to_string_pretty(&job)?);
+    }
+    Ok(())
 }
 
 /// Pings the Slurm controller to check cluster health.
@@ -163,6 +190,7 @@ pub async fn show_stats(
     job_id: Option<&str>,
     last: usize,
     tags: &[(String, String)],
+    json: bool,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -175,7 +203,11 @@ pub async fn show_stats(
     };
 
     if jobs.is_empty() {
-        println!("No jobs found.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No jobs found.");
+        }
         return Ok(());
     }
 
@@ -186,21 +218,28 @@ pub async fn show_stats(
         .collect();
 
     if remote_jobs.is_empty() {
-        println!("No remote Slurm jobs found. Stats are only available for Slurm jobs.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No remote Slurm jobs found. Stats are only available for Slurm jobs.");
+        }
         return Ok(());
     }
 
-    // Print header
-    println!(
-        "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
-        style("JOB ID").bold(),
-        style("STATUS").bold(),
-        style("ELAPSED").bold(),
-        style("CPU TIME").bold(),
-        style("MAX MEM").bold(),
-        style("RESOURCES").bold()
-    );
-    println!("{}", "-".repeat(80));
+    let mut json_results: Vec<serde_json::Value> = Vec::new();
+
+    if !json {
+        println!(
+            "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
+            style("JOB ID").bold(),
+            style("STATUS").bold(),
+            style("ELAPSED").bold(),
+            style("CPU TIME").bold(),
+            style("MAX MEM").bold(),
+            style("RESOURCES").bold()
+        );
+        println!("{}", "-".repeat(80));
+    }
 
     for job in remote_jobs {
         let slurm_id = job
@@ -211,48 +250,72 @@ pub async fn show_stats(
 
         match get_job_resource_usage(&ssh, slurm_id).await {
             Ok(usage) => {
-                let status_styled = match job.status {
-                    JobStatus::Completed => style(job.status.to_string()).green(),
-                    JobStatus::Failed => style(job.status.to_string()).red(),
-                    JobStatus::Cancelled => style(job.status.to_string()).yellow(),
-                    JobStatus::Running => style(job.status.to_string()).cyan(),
-                    JobStatus::Pending => style(job.status.to_string()).dim(),
-                };
+                if json {
+                    json_results.push(serde_json::json!({
+                        "id": job.id,
+                        "slurm_id": slurm_id,
+                        "status": job.status,
+                        "elapsed": usage.elapsed,
+                        "total_cpu": usage.total_cpu,
+                        "max_rss": usage.max_rss,
+                        "alloc_tres": usage.alloc_tres,
+                    }));
+                } else {
+                    let status_styled = match job.status {
+                        JobStatus::Completed => style(job.status.to_string()).green(),
+                        JobStatus::Failed => style(job.status.to_string()).red(),
+                        JobStatus::Cancelled => style(job.status.to_string()).yellow(),
+                        JobStatus::Running => style(job.status.to_string()).cyan(),
+                        JobStatus::Pending => style(job.status.to_string()).dim(),
+                    };
 
-                // Parse allocated resources for cleaner display
-                let resources = parse_alloc_tres(&usage.alloc_tres);
+                    let resources = parse_alloc_tres(&usage.alloc_tres);
 
-                println!(
-                    "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
-                    truncate_id(&job.id),
-                    status_styled,
-                    if usage.elapsed.is_empty() {
-                        "-".to_string()
-                    } else {
-                        usage.elapsed
-                    },
-                    if usage.total_cpu.is_empty() {
-                        "-".to_string()
-                    } else {
-                        usage.total_cpu
-                    },
-                    if usage.max_rss.is_empty() {
-                        "-".to_string()
-                    } else {
-                        usage.max_rss
-                    },
-                    resources
-                );
+                    println!(
+                        "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
+                        truncate_id(&job.id),
+                        status_styled,
+                        if usage.elapsed.is_empty() {
+                            "-".to_string()
+                        } else {
+                            usage.elapsed
+                        },
+                        if usage.total_cpu.is_empty() {
+                            "-".to_string()
+                        } else {
+                            usage.total_cpu
+                        },
+                        if usage.max_rss.is_empty() {
+                            "-".to_string()
+                        } else {
+                            usage.max_rss
+                        },
+                        resources
+                    );
+                }
             }
             Err(e) => {
-                eprintln!(
-                    "{:<12} {} ({})",
-                    truncate_id(&job.id),
-                    style("error").red(),
-                    e
-                );
+                if json {
+                    json_results.push(serde_json::json!({
+                        "id": job.id,
+                        "slurm_id": slurm_id,
+                        "status": job.status,
+                        "error": e.to_string(),
+                    }));
+                } else {
+                    eprintln!(
+                        "{:<12} {} ({})",
+                        truncate_id(&job.id),
+                        style("error").red(),
+                        e
+                    );
+                }
             }
         }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&json_results)?);
     }
 
     Ok(())

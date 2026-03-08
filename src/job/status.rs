@@ -45,6 +45,8 @@ pub struct StatusOptions<'a> {
     pub archived: ArchivedFilter,
     /// Hide the subtitle line (job name, tags, note) below each row.
     pub compact: bool,
+    /// Output results as JSON.
+    pub json: bool,
 }
 
 /// Queries the live status of a job from its execution environment.
@@ -82,7 +84,7 @@ pub async fn show_status(
     let registry = Registry::open()?;
 
     if let Some(id) = job_id {
-        show_job_detail(&registry, id, &ctx).await?;
+        show_job_detail(&registry, id, &ctx, opts.json).await?;
     } else {
         refresh_active_job_statuses(&registry, &ctx).await?;
         list_recent_jobs(&registry, &opts)?;
@@ -92,7 +94,12 @@ pub async fn show_status(
 }
 
 /// Shows detailed status for a single job, refreshing its live status first.
-async fn show_job_detail(registry: &Registry, id: &str, ctx: &RuntimeCtx) -> Result<()> {
+async fn show_job_detail(
+    registry: &Registry,
+    id: &str,
+    ctx: &RuntimeCtx,
+    json: bool,
+) -> Result<()> {
     let mut job = registry.get_job(id)?;
 
     if let Ok(live) = query_live_status(&job, ctx).await {
@@ -102,7 +109,11 @@ async fn show_job_detail(registry: &Registry, id: &str, ctx: &RuntimeCtx) -> Res
         job.slurm_state = live.slurm_state;
     }
 
-    print_job_details(&job);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&job)?);
+    } else {
+        print_job_details(&job);
+    }
     Ok(())
 }
 
@@ -122,7 +133,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
         // Default view: filter in Rust to preserve global indices that
         // match get_job_by_index().
         let (indices, jobs) = list_indexed_jobs(registry, opts, &status_filters, limit)?;
-        if !jobs.is_empty() {
+        if !opts.json && !jobs.is_empty() {
             print_indexed_job_table(&jobs, &indices, !opts.compact);
         }
         jobs
@@ -138,13 +149,15 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
             opts.archived,
             limit,
         )?;
-        if !jobs.is_empty() {
+        if !opts.json && !jobs.is_empty() {
             print_job_table(&jobs, !opts.compact);
         }
         jobs
     };
 
-    if jobs.is_empty() {
+    if opts.json {
+        println!("{}", serde_json::to_string_pretty(&jobs)?);
+    } else if jobs.is_empty() {
         println!("No jobs found. Run `fleche run` to submit a job.");
     }
 
@@ -224,9 +237,18 @@ pub fn note_job(job_id: &str, note: Option<&str>) -> Result<()> {
 }
 
 /// Lists all unique tags across jobs.
-pub fn list_tags() -> Result<()> {
+pub fn list_tags(json: bool) -> Result<()> {
     let registry = Registry::open()?;
     let tags = registry.list_unique_tags()?;
+
+    if json {
+        let json_tags: Vec<_> = tags
+            .iter()
+            .map(|(k, v)| serde_json::json!({"key": k, "value": v}))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&json_tags)?);
+        return Ok(());
+    }
 
     if tags.is_empty() {
         println!("No tags found. Use --tag when running jobs to add tags.");

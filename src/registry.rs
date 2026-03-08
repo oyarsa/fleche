@@ -42,6 +42,7 @@ pub struct JobRecord {
     /// Current status of the job.
     pub status: JobStatus,
     /// JSON-serialized job configuration for reference.
+    #[serde(skip_serializing)]
     pub config_json: String,
     /// When the job was created.
     pub created_at: DateTime<Utc>,

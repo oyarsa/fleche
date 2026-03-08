@@ -73,8 +73,28 @@ fn print_available_jobs(config: &Config) {
 }
 
 /// Handles the `jobs` command - lists available jobs from config.
-pub fn list_jobs(config: &Config) {
+pub fn list_jobs(config: &Config, json: bool) {
     let job_names = config.job_names();
+
+    if json {
+        let jobs: Vec<_> = job_names
+            .iter()
+            .filter_map(|name| {
+                config.jobs.get(name).map(|def| {
+                    serde_json::json!({
+                        "name": name,
+                        "command": def.command,
+                    })
+                })
+            })
+            .collect();
+        // unwrap is safe: we're serializing simple JSON values
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&jobs).expect("JSON serialization failed")
+        );
+        return;
+    }
 
     if job_names.is_empty() {
         println!(

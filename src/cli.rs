@@ -34,6 +34,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub debug: bool,
 
+    /// Output results as JSON (for scripting and AI agents)
+    #[arg(long, global = true)]
+    pub json: bool,
+
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: Commands,
@@ -430,6 +434,10 @@ pub struct CancelArgs {
     #[arg(long)]
     pub all: bool,
 
+    /// Show what would be cancelled without actually cancelling
+    #[arg(long)]
+    pub dry_run: bool,
+
     /// Skip confirmation prompt
     #[arg(short, long)]
     pub yes: bool,
@@ -463,6 +471,10 @@ pub struct CleanArgs {
     /// Restore archived job to normal listings
     #[arg(long, conflicts_with_all = ["archive", "workspace"])]
     pub unarchive: bool,
+
+    /// Show what would be done without actually doing it
+    #[arg(long)]
+    pub dry_run: bool,
 
     /// Skip confirmation prompt
     #[arg(short, long)]

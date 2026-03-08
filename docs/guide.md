@@ -489,9 +489,11 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 | `fleche download --tag <k=v>` | Download from most recent job with tag |
 | `fleche cancel [job-id]` | Cancel a job (defaults to most recent active) |
 | `fleche cancel --all [--tag <k=v>]` | Cancel all (or tagged) active jobs |
+| `fleche cancel --dry-run` | Show what would be cancelled without cancelling |
 | `fleche clean [job-id]` | Remove job and remote files |
 | `fleche clean --all [--tag <k=v>]` | Clean all (or tagged) finished jobs |
 | `fleche clean --older-than <dur>` | Clean jobs older than duration |
+| `fleche clean --dry-run` | Show what would be cleaned without cleaning |
 | `fleche clean --workspace` | Also delete shared workspace |
 | `fleche clean --archive [job-id]` | Archive job (hide without deleting) |
 | `fleche clean --unarchive [job-id]` | Restore archived job |
@@ -652,6 +654,60 @@ fleche status 1         # Detailed status for job #1
 Indices are stable within a session — they correspond to position in the
 unfiltered global list. Filtered views may show gaps (e.g., `#1, #4, #7`)
 but the numbers always resolve to the same job.
+
+## JSON Output
+
+Use the global `--json` flag to get machine-readable output from any supported
+command. This is useful for scripting, piping to `jq`, or when fleche is driven
+by an AI agent.
+
+```bash
+# List jobs as JSON
+fleche status --json
+
+# Detailed status as JSON
+fleche status --json <job-id>
+
+# Available job definitions
+fleche jobs --json
+
+# All tags
+fleche tags --json
+
+# Resource stats
+fleche stats --json
+
+# Wait for completion, get final status as JSON
+fleche wait --json
+
+# Preview what would be cancelled
+fleche cancel --dry-run --json
+
+# Preview what would be cleaned
+fleche clean --all --dry-run --json
+```
+
+The `--json` flag is supported by: `status`, `jobs`, `tags`, `stats`, `wait`,
+`cancel`, and `clean`.
+
+## Dry Run
+
+Use `--dry-run` to preview what a command would do without side effects:
+
+```bash
+# Preview sbatch script
+fleche run train --dry-run
+
+# Preview downloads
+fleche download --dry-run
+
+# Preview cancellation
+fleche cancel --all --dry-run
+
+# Preview cleanup
+fleche clean --older-than 7d --dry-run
+fleche clean --archive --all --dry-run
+```
 
 ## Tips
 

@@ -172,6 +172,7 @@ async fn run() -> Result<()> {
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
                     compact: args.compact,
+                    json: cli.json,
                 },
                 runtime_ctx,
             )
@@ -211,10 +212,14 @@ async fn run() -> Result<()> {
         Commands::Cancel(args) => {
             job::cancel_jobs(
                 args.job_id.as_deref(),
-                args.all,
-                args.yes,
                 &args.tags,
-                runtime_ctx,
+                job::CancelJobsOptions {
+                    all: args.all,
+                    skip_confirm: args.yes,
+                    dry_run: args.dry_run,
+                    json: cli.json,
+                    ctx: runtime_ctx,
+                },
             )
             .await?;
         }
@@ -229,7 +234,9 @@ async fn run() -> Result<()> {
                     clean_workspace: args.workspace,
                     archive: args.archive,
                     unarchive: args.unarchive,
+                    dry_run: args.dry_run,
                     skip_confirm: args.yes,
+                    json: cli.json,
                     ctx: runtime_ctx,
                 },
             )
@@ -238,11 +245,11 @@ async fn run() -> Result<()> {
 
         Commands::Jobs => {
             let config = Config::find_and_load()?;
-            handlers::list_jobs(&config);
+            handlers::list_jobs(&config, cli.json);
         }
 
         Commands::Tags => {
-            job::list_tags()?;
+            job::list_tags(cli.json)?;
         }
 
         Commands::Rerun { job_id, bg, tags } => {
@@ -281,7 +288,7 @@ async fn run() -> Result<()> {
             notify,
             tags,
         } => {
-            job::wait_for_job(job_id.as_deref(), notify, &tags, runtime_ctx).await?;
+            job::wait_for_job(job_id.as_deref(), notify, &tags, cli.json, runtime_ctx).await?;
         }
 
         Commands::Completions { shell } => {
@@ -289,7 +296,7 @@ async fn run() -> Result<()> {
         }
 
         Commands::Stats { job_id, last, tags } => {
-            job::show_stats(job_id.as_deref(), last, &tags, runtime_ctx).await?;
+            job::show_stats(job_id.as_deref(), last, &tags, cli.json, runtime_ctx).await?;
         }
 
         Commands::Note { job_id, note } => {

@@ -24,8 +24,27 @@ pub struct CleanJobsOptions {
     pub archive: bool,
     /// Restore archived jobs.
     pub unarchive: bool,
+    /// Show what would be done without actually doing it.
+    pub dry_run: bool,
     /// Skip confirmation prompt.
     pub skip_confirm: bool,
+    /// Output results as JSON.
+    pub json: bool,
+    /// Shared runtime settings.
+    pub ctx: RuntimeCtx,
+}
+
+/// Options for cancelling jobs.
+#[derive(Debug, Default)]
+pub struct CancelJobsOptions {
+    /// Cancel all active jobs.
+    pub all: bool,
+    /// Skip confirmation prompt.
+    pub skip_confirm: bool,
+    /// Show what would be cancelled without actually cancelling.
+    pub dry_run: bool,
+    /// Output results as JSON.
+    pub json: bool,
     /// Shared runtime settings.
     pub ctx: RuntimeCtx,
 }
@@ -33,10 +52,8 @@ pub struct CleanJobsOptions {
 /// Cancels running or pending Slurm jobs.
 pub async fn cancel_jobs(
     job_id: Option<&str>,
-    all: bool,
-    skip_confirm: bool,
     tags: &[(String, String)],
-    ctx: RuntimeCtx,
+    opts: CancelJobsOptions,
 ) -> Result<()> {
     let registry = Registry::open()?;
 
@@ -52,7 +69,7 @@ pub async fn cancel_jobs(
             ));
         }
         vec![job]
-    } else if all {
+    } else if opts.all {
         // Get active jobs, optionally filtered by tags
         if tags.is_empty() {
             registry.list_active_jobs()?
@@ -75,7 +92,11 @@ pub async fn cancel_jobs(
                 .collect()
         };
         if active.is_empty() {
-            println!("No active jobs to cancel.");
+            if opts.json {
+                println!("[]");
+            } else {
+                println!("No active jobs to cancel.");
+            }
             return Ok(());
         }
         let mut active = active;
@@ -84,12 +105,34 @@ pub async fn cancel_jobs(
     };
 
     if jobs_to_cancel.is_empty() {
-        println!("No active jobs to cancel.");
+        if opts.json {
+            println!("[]");
+        } else {
+            println!("No active jobs to cancel.");
+        }
+        return Ok(());
+    }
+
+    // Dry run: show what would be cancelled and exit
+    if opts.dry_run {
+        if opts.json {
+            println!("{}", serde_json::to_string_pretty(&jobs_to_cancel)?);
+        } else {
+            println!("Would cancel {} job(s):", jobs_to_cancel.len());
+            for job in &jobs_to_cancel {
+                println!(
+                    "  {} ({}) - {}",
+                    job.id,
+                    style(&job.status).yellow(),
+                    job.job_name
+                );
+            }
+        }
         return Ok(());
     }
 
     // Show jobs and confirm if multiple
-    if jobs_to_cancel.len() > 1 || all {
+    if !opts.json && (jobs_to_cancel.len() > 1 || opts.all) {
         println!("Jobs to cancel:");
         for job in &jobs_to_cancel {
             println!(
@@ -101,7 +144,7 @@ pub async fn cancel_jobs(
         }
         println!();
 
-        if !skip_confirm && !confirm("Cancel these jobs?")? {
+        if !opts.skip_confirm && !confirm("Cancel these jobs?")? {
             println!("Cancelled.");
             return Ok(());
         }
@@ -121,7 +164,9 @@ pub async fn cancel_jobs(
                             slurm_state: None,
                         },
                     )?;
-                    println!("{} Job {} cancelled", style("✓").green(), job.id);
+                    if !opts.json {
+                        println!("{} Job {} cancelled", style("✓").green(), job.id);
+                    }
                 }
                 Ok(false) => {
                     eprintln!("  Warning: Could not cancel {} (process not found)", job.id);
@@ -132,7 +177,7 @@ pub async fn cancel_jobs(
             }
         } else if let Some(ref slurm_id) = job.slurm_id {
             // Cancel remote Slurm job
-            let ssh = ctx.ssh(&job.remote_host);
+            let ssh = opts.ctx.ssh(&job.remote_host);
             if let Err(e) = cancel_job(&ssh, slurm_id).await {
                 eprintln!("  Warning: Could not cancel {}: {e}", job.id);
                 continue;
@@ -145,10 +190,12 @@ pub async fn cancel_jobs(
                     slurm_state: None,
                 },
             )?;
-            println!("{} Job {} cancelled", style("✓").green(), job.id);
+            if !opts.json {
+                println!("{} Job {} cancelled", style("✓").green(), job.id);
+            }
         } else {
             // Cancel remote direct (exec) job
-            let ssh = ctx.ssh(&job.remote_host);
+            let ssh = opts.ctx.ssh(&job.remote_host);
             let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
             match cancel_remote_direct_job(&ssh, &job_dir).await {
                 Ok(true) => {
@@ -160,7 +207,9 @@ pub async fn cancel_jobs(
                             slurm_state: None,
                         },
                     )?;
-                    println!("{} Job {} cancelled", style("✓").green(), job.id);
+                    if !opts.json {
+                        println!("{} Job {} cancelled", style("✓").green(), job.id);
+                    }
                 }
                 Ok(false) => {
                     eprintln!("  Warning: Could not cancel {} (process not found)", job.id);
@@ -170,6 +219,10 @@ pub async fn cancel_jobs(
                 }
             }
         }
+    }
+
+    if opts.json {
+        println!("{}", serde_json::to_string_pretty(&jobs_to_cancel)?);
     }
 
     Ok(())
@@ -202,17 +255,42 @@ pub async fn clean_jobs(
         };
 
         if jobs_to_unarchive.is_empty() {
-            println!("No archived jobs to restore.");
+            if opts.json {
+                println!("[]");
+            } else {
+                println!("No archived jobs to restore.");
+            }
+            return Ok(());
+        }
+
+        if opts.dry_run {
+            if opts.json {
+                println!("{}", serde_json::to_string_pretty(&jobs_to_unarchive)?);
+            } else {
+                println!(
+                    "Would restore {} job(s) from archive:",
+                    jobs_to_unarchive.len()
+                );
+                for job in &jobs_to_unarchive {
+                    println!("  {} - {}", job.id, job.job_name);
+                }
+            }
             return Ok(());
         }
 
         for job in &jobs_to_unarchive {
             registry.unarchive_job(&job.id)?;
-            println!(
-                "{} Restored job {} from archive",
-                style("✓").green(),
-                job.id
-            );
+            if !opts.json {
+                println!(
+                    "{} Restored job {} from archive",
+                    style("✓").green(),
+                    job.id
+                );
+            }
+        }
+
+        if opts.json {
+            println!("{}", serde_json::to_string_pretty(&jobs_to_unarchive)?);
         }
 
         return Ok(());
@@ -255,16 +333,40 @@ pub async fn clean_jobs(
     };
 
     if jobs_to_clean.is_empty() && !opts.clean_workspace {
-        println!(
-            "No jobs to {}.",
-            if opts.archive { "archive" } else { "clean" }
-        );
+        if opts.json {
+            println!("[]");
+        } else {
+            println!(
+                "No jobs to {}.",
+                if opts.archive { "archive" } else { "clean" }
+            );
+        }
+        return Ok(());
+    }
+
+    // Dry run: show what would be affected and exit
+    if opts.dry_run {
+        if opts.json {
+            println!("{}", serde_json::to_string_pretty(&jobs_to_clean)?);
+        } else {
+            let action = if opts.archive { "archive" } else { "clean" };
+            println!("Would {} {} job(s):", action, jobs_to_clean.len());
+            for job in &jobs_to_clean {
+                println!(
+                    "  {} ({}) - {}",
+                    job.id,
+                    style(&job.status).cyan(),
+                    job.job_name
+                );
+            }
+        }
         return Ok(());
     }
 
     // Handle --archive mode: archive jobs instead of deleting
     if opts.archive {
-        if !jobs_to_clean.is_empty()
+        if !opts.json
+            && !jobs_to_clean.is_empty()
             && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
         {
             println!("Jobs to archive:");
@@ -279,14 +381,20 @@ pub async fn clean_jobs(
             println!();
         }
 
-        if !opts.skip_confirm && !confirm("Archive these jobs?")? {
+        if !opts.json && !opts.skip_confirm && !confirm("Archive these jobs?")? {
             println!("Cancelled.");
             return Ok(());
         }
 
         for job in &jobs_to_clean {
             registry.archive_job(&job.id)?;
-            println!("{} Archived job {}", style("✓").green(), job.id);
+            if !opts.json {
+                println!("{} Archived job {}", style("✓").green(), job.id);
+            }
+        }
+
+        if opts.json {
+            println!("{}", serde_json::to_string_pretty(&jobs_to_clean)?);
         }
 
         return Ok(());
@@ -294,7 +402,10 @@ pub async fn clean_jobs(
 
     // Normal clean mode: delete jobs
     // Show jobs and confirm
-    if !jobs_to_clean.is_empty() && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some()) {
+    if !opts.json
+        && !jobs_to_clean.is_empty()
+        && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
+    {
         println!("Jobs to clean:");
         for job in &jobs_to_clean {
             println!(
@@ -307,7 +418,7 @@ pub async fn clean_jobs(
         println!();
     }
 
-    if opts.clean_workspace {
+    if !opts.json && opts.clean_workspace {
         println!(
             "{}",
             style("WARNING: This will also delete the shared workspace!")
@@ -316,7 +427,7 @@ pub async fn clean_jobs(
         );
     }
 
-    if !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
+    if !opts.json && !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
         println!("Cancelled.");
         return Ok(());
     }
@@ -331,7 +442,9 @@ pub async fn clean_jobs(
 
     // Clean job directories
     for job in &jobs_to_clean {
-        print!("Cleaning {}... ", job.id);
+        if !opts.json {
+            print!("Cleaning {}... ", job.id);
+        }
 
         if job.remote_host == "local" {
             // Clean local job directory
@@ -349,7 +462,9 @@ pub async fn clean_jobs(
         }
 
         registry.delete_job(&job.id)?;
-        println!("{}", style("done").green());
+        if !opts.json {
+            println!("{}", style("done").green());
+        }
     }
 
     // Clean workspaces if requested (only for remote jobs)
@@ -403,7 +518,9 @@ pub async fn clean_jobs(
         }
     }
 
-    if !jobs_to_clean.is_empty() {
+    if opts.json {
+        println!("{}", serde_json::to_string_pretty(&jobs_to_clean)?);
+    } else if !jobs_to_clean.is_empty() {
         println!(
             "\n{} Cleaned {} job(s)",
             style("✓").green(),
