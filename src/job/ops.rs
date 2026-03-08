@@ -5,8 +5,9 @@ use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::registry::{JobStatus, LiveStatus, Registry};
 use crate::runtime::{RuntimeCtx, send_notification};
-use crate::slurm::{get_job_resource_usage, get_job_status};
+use crate::slurm::{JobResourceUsage, get_job_resource_usage, get_job_status};
 use console::style;
+use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -182,6 +183,18 @@ pub async fn ping_cluster(config: &Config, ctx: RuntimeCtx) -> Result<()> {
     Ok(())
 }
 
+/// Resource usage statistics for a single job, for JSON output.
+#[derive(Serialize)]
+struct JobStatsEntry {
+    id: String,
+    slurm_id: String,
+    status: JobStatus,
+    #[serde(flatten)]
+    usage: Option<JobResourceUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
 /// Shows resource usage statistics for completed jobs.
 ///
 /// Queries Slurm's sacct to display elapsed time, CPU time, memory usage,
@@ -226,7 +239,7 @@ pub async fn show_stats(
         return Ok(());
     }
 
-    let mut json_results: Vec<serde_json::Value> = Vec::new();
+    let mut json_results: Vec<JobStatsEntry> = Vec::new();
 
     if !json {
         println!(
@@ -251,15 +264,13 @@ pub async fn show_stats(
         match get_job_resource_usage(&ssh, slurm_id).await {
             Ok(usage) => {
                 if json {
-                    json_results.push(serde_json::json!({
-                        "id": job.id,
-                        "slurm_id": slurm_id,
-                        "status": job.status,
-                        "elapsed": usage.elapsed,
-                        "total_cpu": usage.total_cpu,
-                        "max_rss": usage.max_rss,
-                        "alloc_tres": usage.alloc_tres,
-                    }));
+                    json_results.push(JobStatsEntry {
+                        id: job.id.clone(),
+                        slurm_id: slurm_id.clone(),
+                        status: job.status,
+                        usage: Some(usage),
+                        error: None,
+                    });
                 } else {
                     let status_styled = match job.status {
                         JobStatus::Completed => style(job.status.to_string()).green(),
@@ -296,12 +307,13 @@ pub async fn show_stats(
             }
             Err(e) => {
                 if json {
-                    json_results.push(serde_json::json!({
-                        "id": job.id,
-                        "slurm_id": slurm_id,
-                        "status": job.status,
-                        "error": e.to_string(),
-                    }));
+                    json_results.push(JobStatsEntry {
+                        id: job.id.clone(),
+                        slurm_id: slurm_id.clone(),
+                        status: job.status,
+                        usage: None,
+                        error: Some(e.to_string()),
+                    });
                 } else {
                     eprintln!(
                         "{:<12} {} ({})",

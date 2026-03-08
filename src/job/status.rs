@@ -9,6 +9,7 @@ use crate::runtime::RuntimeCtx;
 use crate::slurm::get_job_status;
 use console::style;
 use regex::Regex;
+use serde::Serialize;
 use std::path::PathBuf;
 
 use super::display::{print_indexed_job_table, print_job_details, print_job_table};
@@ -236,17 +237,24 @@ pub fn note_job(job_id: &str, note: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// A unique tag key-value pair for JSON output.
+#[derive(Serialize)]
+struct TagEntry {
+    key: String,
+    value: String,
+}
+
 /// Lists all unique tags across jobs.
 pub fn list_tags(json: bool) -> Result<()> {
     let registry = Registry::open()?;
     let tags = registry.list_unique_tags()?;
 
     if json {
-        let json_tags: Vec<_> = tags
-            .iter()
-            .map(|(k, v)| serde_json::json!({"key": k, "value": v}))
+        let entries: Vec<_> = tags
+            .into_iter()
+            .map(|(key, value)| TagEntry { key, value })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&json_tags)?);
+        println!("{}", serde_json::to_string_pretty(&entries)?);
         return Ok(());
     }
 

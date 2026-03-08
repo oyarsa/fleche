@@ -9,7 +9,7 @@ use crate::error::{FlecheError, Result};
 use chrono::{DateTime, Duration, Utc};
 use regex::{Regex, RegexBuilder};
 use rusqlite::{Connection, params};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -42,7 +42,7 @@ pub struct JobRecord {
     /// Current status of the job.
     pub status: JobStatus,
     /// JSON-serialized job configuration for reference.
-    #[serde(skip_serializing)]
+    #[serde(rename = "config", serialize_with = "serialize_config")]
     pub config_json: String,
     /// When the job was created.
     pub created_at: DateTime<Utc>,
@@ -60,6 +60,17 @@ pub struct JobRecord {
     pub exit_code: Option<i32>,
     /// Raw Slurm job state from sacct (e.g., "TIMEOUT", "`OUT_OF_MEMORY`", "COMPLETED").
     pub slurm_state: Option<String>,
+}
+
+/// Serializes the raw `config_json` string as a structured [`ResolvedJob`] object.
+///
+/// Falls back to `null` if the stored JSON can't be parsed (e.g., old records
+/// from before a schema change).
+fn serialize_config<S: Serializer>(config: &str, s: S) -> std::result::Result<S::Ok, S::Error> {
+    match serde_json::from_str::<ResolvedJob>(config) {
+        Ok(resolved) => resolved.serialize(s),
+        Err(_) => s.serialize_none(),
+    }
 }
 
 impl JobRecord {

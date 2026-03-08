@@ -7,6 +7,7 @@ use crate::config::{Config, ResolvedJob, generate_init_config};
 use crate::registry::Registry;
 use anyhow::{Context, Result};
 use console::style;
+use serde::Serialize;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -72,6 +73,13 @@ fn print_available_jobs(config: &Config) {
     }
 }
 
+/// A job definition from configuration, for JSON output.
+#[derive(Serialize)]
+struct JobDefinition {
+    name: String,
+    command: Option<String>,
+}
+
 /// Handles the `jobs` command - lists available jobs from config.
 pub fn list_jobs(config: &Config, json: bool) {
     let job_names = config.job_names();
@@ -80,15 +88,13 @@ pub fn list_jobs(config: &Config, json: bool) {
         let jobs: Vec<_> = job_names
             .iter()
             .filter_map(|name| {
-                config.jobs.get(name).map(|def| {
-                    serde_json::json!({
-                        "name": name,
-                        "command": def.command,
-                    })
+                config.jobs.get(name).map(|def| JobDefinition {
+                    name: name.clone(),
+                    command: def.command.clone(),
                 })
             })
             .collect();
-        // unwrap is safe: we're serializing simple JSON values
+        // unwrap is safe: we're serializing simple structs
         println!(
             "{}",
             serde_json::to_string_pretty(&jobs).expect("JSON serialization failed")
