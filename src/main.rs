@@ -263,7 +263,7 @@ async fn run() -> Result<()> {
         }
 
         Commands::Guide => {
-            print!("{}", include_str!("guide.md"));
+            print!("{}", include_str!("../docs/guide.md"));
         }
 
         Commands::Doctor => {
