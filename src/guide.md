@@ -1,19 +1,4 @@
-//! Built-in usage guide for fleche.
-//!
-//! This module contains a comprehensive usage guide that is displayed when the
-//! user runs `fleche guide`. The guide covers configuration, common workflows,
-//! and command reference.
-
-/// The full text of the fleche usage guide.
-///
-/// This is a comprehensive guide covering:
-/// - Quick start examples
-/// - Configuration file format
-/// - Common workflows and patterns
-/// - Command reference
-/// - Slurm options
-/// - File sync behavior
-pub const GUIDE_TEXT: &str = r#"# fleche - Remote Job Runner
+# fleche - Remote Job Runner
 
 fleche submits and manages jobs on remote Slurm clusters via SSH.
 
@@ -651,10 +636,10 @@ Use these numbers anywhere a job ID is accepted:
 
 ```bash
 fleche status
-#    ID                                            STATUS       SLURM ID     CREATED
-  1  train-20260301-120000-abc1                    running      12345        2026-03-01 12:00
-  2  eval-20260228-090000-def2                     completed    12340        2026-02-28 09:00
-  3  train-20260227-150000-ghi3                    failed       12335        2026-02-27 15:00
+#  ID                                            STATUS       SLURM ID     CREATED
+1  train-20260301-120000-abc1                    running      12345        2026-03-01 12:00
+2  eval-20260228-090000-def2                     completed    12340        2026-02-28 09:00
+3  train-20260227-150000-ghi3                    failed       12335        2026-02-27 15:00
 
 # Use index instead of job ID
 fleche logs 1           # Logs for most recent job
@@ -689,4 +674,3 @@ but the numbers always resolve to the same job.
 - Use `fleche jobs` to see what jobs are available in the project
 - Use `fleche proxy` to route traffic through the cluster's network
 - Enable shell completions: `fleche completions bash >> ~/.bashrc`
-"#;

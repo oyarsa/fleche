@@ -10,7 +10,6 @@
 //! - [`cli`]: Command-line argument parsing using clap
 //! - [`config`]: Configuration file parsing and job resolution
 //! - [`error`]: Error types and result aliases
-//! - [`guide`]: Built-in usage guide text
 //! - [`job`]: High-level job operations (run, status, logs, sync, etc.)
 //! - [`registry`]: Local `SQLite` database for tracking submitted jobs
 //! - [`slurm`]: Slurm-specific operations (sbatch generation, status queries)
@@ -21,7 +20,6 @@ mod cli;
 mod config;
 mod diagnostics;
 mod error;
-mod guide;
 mod handlers;
 mod job;
 mod local;
@@ -265,7 +263,7 @@ async fn run() -> Result<()> {
         }
 
         Commands::Guide => {
-            println!("{}", guide::GUIDE_TEXT);
+            print!("{}", include_str!("guide.md"));
         }
 
         Commands::Doctor => {
