@@ -342,60 +342,62 @@ async fn run_job_locally(
 
         // Run in background
         #[cfg(unix)]
-        let pid = local::run_background(&config.project_path, &job_id, &job.command, &job.env)?;
-        println!("{} {}", style("PID:").green().bold(), pid);
-        println!(
-            "{}",
-            style("Job running in background. Use 'fleche logs' to view output.").dim()
-        );
+        {
+            let pid = local::run_background(&config.project_path, &job_id, &job.command, &job.env)?;
+            println!("{} {}", style("PID:").green().bold(), pid);
+            println!(
+                "{}",
+                style("Job running in background. Use 'fleche logs' to view output.").dim()
+            );
 
-        // Update status to running
-        registry.update_status(
-            &job_id,
-            &LiveStatus {
-                status: JobStatus::Running,
-                exit_code: None,
-                slurm_state: None,
-            },
-        )?;
+            // Update status to running
+            registry.update_status(
+                &job_id,
+                &LiveStatus {
+                    status: JobStatus::Running,
+                    exit_code: None,
+                    slurm_state: None,
+                },
+            )?;
 
-        if ctx.should_notify(opts.notify) {
-            // Spawn a background task to wait and notify
-            let project_path = config.project_path.clone();
-            let job_id_clone = job_id.clone();
-            let poll_interval = ctx.poll_interval_local_secs;
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(poll_interval)).await;
-                    match local::get_local_job_status(&project_path, &job_id_clone) {
-                        Ok(live) => {
-                            if let Ok(registry) = Registry::open() {
-                                let _ = registry.update_status(&job_id_clone, &live);
+            if ctx.should_notify(opts.notify) {
+                // Spawn a background task to wait and notify
+                let project_path = config.project_path.clone();
+                let job_id_clone = job_id.clone();
+                let poll_interval = ctx.poll_interval_local_secs;
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(poll_interval)).await;
+                        match local::get_local_job_status(&project_path, &job_id_clone) {
+                            Ok(live) => {
+                                if let Ok(registry) = Registry::open() {
+                                    let _ = registry.update_status(&job_id_clone, &live);
+                                }
+                                match live.status {
+                                    JobStatus::Completed => {
+                                        send_notification(&format!(
+                                            "Job {job_id_clone} completed successfully."
+                                        ));
+                                        break;
+                                    }
+                                    JobStatus::Failed => {
+                                        send_notification(&format!("Job {job_id_clone} failed."));
+                                        break;
+                                    }
+                                    JobStatus::Cancelled => {
+                                        send_notification(&format!(
+                                            "Job {job_id_clone} was cancelled."
+                                        ));
+                                        break;
+                                    }
+                                    _ => {}
+                                }
                             }
-                            match live.status {
-                                JobStatus::Completed => {
-                                    send_notification(&format!(
-                                        "Job {job_id_clone} completed successfully."
-                                    ));
-                                    break;
-                                }
-                                JobStatus::Failed => {
-                                    send_notification(&format!("Job {job_id_clone} failed."));
-                                    break;
-                                }
-                                JobStatus::Cancelled => {
-                                    send_notification(&format!(
-                                        "Job {job_id_clone} was cancelled."
-                                    ));
-                                    break;
-                                }
-                                _ => {}
-                            }
+                            Err(_) => break,
                         }
-                        Err(_) => break,
                     }
-                }
-            });
+                });
+            }
         }
     } else {
         // Run in foreground with retry support
