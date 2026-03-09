@@ -351,14 +351,7 @@ async fn run_job_locally(
             );
 
             // Update status to running
-            registry.update_status(
-                &job_id,
-                &LiveStatus {
-                    status: JobStatus::Running,
-                    exit_code: None,
-                    slurm_state: None,
-                },
-            )?;
+            registry.update_status(&job_id, &LiveStatus::new(JobStatus::Running))?;
 
             if ctx.should_notify(opts.notify) {
                 // Spawn a background task to wait and notify
@@ -444,14 +437,7 @@ async fn run_job_locally(
 
             // Update status to running
             let registry = Registry::open()?;
-            registry.update_status(
-                &job_id,
-                &LiveStatus {
-                    status: JobStatus::Running,
-                    exit_code: None,
-                    slurm_state: None,
-                },
-            )?;
+            registry.update_status(&job_id, &LiveStatus::new(JobStatus::Running))?;
 
             let exit_code =
                 local::run_foreground(&config.project_path, &job_id, &job.command, &job.env)?;
@@ -463,11 +449,7 @@ async fn run_job_locally(
             };
             registry.update_status(
                 &job_id,
-                &LiveStatus {
-                    status: final_status,
-                    exit_code: Some(exit_code),
-                    slurm_state: None,
-                },
+                &LiveStatus::with_exit_code(final_status, exit_code),
             )?;
 
             println!();
@@ -845,11 +827,7 @@ async fn follow_job_logs(
         _ = child.wait() => {
             // Tail exited on its own - check final status
             let ssh = ctx.ssh(&host);
-            get_job_status(&ssh, &slurm_id).await.unwrap_or(LiveStatus {
-                status: JobStatus::Failed,
-                exit_code: None,
-                slurm_state: None,
-            })
+            get_job_status(&ssh, &slurm_id).await.unwrap_or_else(|_| LiveStatus::new(JobStatus::Failed))
         }
         result = status_check => {
             // Job finished, kill tail and print status
@@ -1032,14 +1010,7 @@ async fn run_job_direct_remote(
         )?;
 
         // Update status to running
-        registry.update_status(
-            &job_id,
-            &LiveStatus {
-                status: JobStatus::Running,
-                exit_code: None,
-                slurm_state: None,
-            },
-        )?;
+        registry.update_status(&job_id, &LiveStatus::new(JobStatus::Running))?;
 
         println!();
         if attempt > 1 {
@@ -1140,11 +1111,7 @@ pub async fn get_remote_direct_job_status(ssh: &SshClient, job_dir: &str) -> Res
         } else {
             JobStatus::Failed
         };
-        return Ok(LiveStatus {
-            status,
-            exit_code: Some(code),
-            slurm_state: None,
-        });
+        return Ok(LiveStatus::with_exit_code(status, code));
     }
 
     // Check if PID exists and process is running
@@ -1160,27 +1127,15 @@ pub async fn get_remote_direct_job_status(ssh: &SshClient, job_dir: &str) -> Res
             .await?;
 
         if is_running {
-            return Ok(LiveStatus {
-                status: JobStatus::Running,
-                exit_code: None,
-                slurm_state: None,
-            });
+            return Ok(LiveStatus::new(JobStatus::Running));
         }
 
         // PID exists but process is gone - job failed without writing exit code
-        return Ok(LiveStatus {
-            status: JobStatus::Failed,
-            exit_code: None,
-            slurm_state: None,
-        });
+        return Ok(LiveStatus::new(JobStatus::Failed));
     }
 
     // No PID file - job hasn't started yet
-    Ok(LiveStatus {
-        status: JobStatus::Pending,
-        exit_code: None,
-        slurm_state: None,
-    })
+    Ok(LiveStatus::new(JobStatus::Pending))
 }
 
 /// Follows logs of a remote direct job and polls for completion.
@@ -1222,11 +1177,7 @@ async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> R
             let ssh = ctx.ssh(host);
             get_remote_direct_job_status(&ssh, job_dir)
                 .await
-                .unwrap_or(LiveStatus {
-                    status: JobStatus::Failed,
-                    exit_code: None,
-                    slurm_state: None,
-                })
+                .unwrap_or_else(|_| LiveStatus::new(JobStatus::Failed))
         }
         result = status_check => {
             // Job finished, kill tail

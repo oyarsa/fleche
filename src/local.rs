@@ -203,11 +203,7 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<LiveSta
         } else {
             JobStatus::Failed
         };
-        return Ok(LiveStatus {
-            status,
-            exit_code: Some(exit_code),
-            slurm_state: None,
-        });
+        return Ok(LiveStatus::with_exit_code(status, exit_code));
     }
 
     // Check if PID exists and process is still running
@@ -219,27 +215,15 @@ pub fn get_local_job_status(project_path: &Path, job_id: &str) -> Result<LiveSta
             .unwrap_or(0);
 
         if pid > 0 && is_process_running(pid) {
-            return Ok(LiveStatus {
-                status: JobStatus::Running,
-                exit_code: None,
-                slurm_state: None,
-            });
+            return Ok(LiveStatus::new(JobStatus::Running));
         }
 
         // PID exists but process is not running - job failed without writing exit code
-        return Ok(LiveStatus {
-            status: JobStatus::Failed,
-            exit_code: None,
-            slurm_state: None,
-        });
+        return Ok(LiveStatus::new(JobStatus::Failed));
     }
 
     // No PID file - job hasn't started or something went wrong
-    Ok(LiveStatus {
-        status: JobStatus::Pending,
-        exit_code: None,
-        slurm_state: None,
-    })
+    Ok(LiveStatus::new(JobStatus::Pending))
 }
 
 /// Cancels a local job by sending SIGTERM to the process.

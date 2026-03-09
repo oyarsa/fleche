@@ -155,11 +155,7 @@ pub async fn cancel_jobs(
                 Ok(true) => {
                     registry.update_status(
                         &job.id,
-                        &LiveStatus {
-                            status: JobStatus::Cancelled,
-                            exit_code: Some(143),
-                            slurm_state: None,
-                        },
+                        &LiveStatus::with_exit_code(JobStatus::Cancelled, 143),
                     )?;
                     if opts.format.is_human() {
                         println!("{} Job {} cancelled", style("✓").green(), job.id);
@@ -179,14 +175,7 @@ pub async fn cancel_jobs(
                 eprintln!("  Warning: Could not cancel {}: {e}", job.id);
                 continue;
             }
-            registry.update_status(
-                &job.id,
-                &LiveStatus {
-                    status: JobStatus::Cancelled,
-                    exit_code: None,
-                    slurm_state: None,
-                },
-            )?;
+            registry.update_status(&job.id, &LiveStatus::new(JobStatus::Cancelled))?;
             if opts.format.is_human() {
                 println!("{} Job {} cancelled", style("✓").green(), job.id);
             }
@@ -198,11 +187,7 @@ pub async fn cancel_jobs(
                 Ok(true) => {
                     registry.update_status(
                         &job.id,
-                        &LiveStatus {
-                            status: JobStatus::Cancelled,
-                            exit_code: Some(143),
-                            slurm_state: None,
-                        },
+                        &LiveStatus::with_exit_code(JobStatus::Cancelled, 143),
                     )?;
                     if opts.format.is_human() {
                         println!("{} Job {} cancelled", style("✓").green(), job.id);

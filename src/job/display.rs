@@ -21,7 +21,14 @@ pub fn print_job_details(job: &JobRecord) {
         style("Status:").bold(),
         format_status(job.status)
     );
-    if let Some(code) = job.exit_code {
+    if let Some(ref raw) = job.sacct_exit_code {
+        let styled = if raw == "0:0" {
+            style(raw.clone()).green()
+        } else {
+            style(raw.clone()).red()
+        };
+        println!("  {:<14} {}", style("Exit Code:").bold(), styled);
+    } else if let Some(code) = job.exit_code {
         let styled_code = if code == 0 {
             style(code.to_string()).green()
         } else {

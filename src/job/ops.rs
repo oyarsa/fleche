@@ -90,7 +90,12 @@ fn format_terminal_message(job_id: &str, live: &LiveStatus) -> String {
     match live.status {
         JobStatus::Completed => format!("Job {job_id} completed successfully."),
         JobStatus::Failed => {
-            let detail = match (&live.slurm_state, live.exit_code) {
+            let exit_str = live
+                .sacct_exit_code
+                .as_deref()
+                .map(String::from)
+                .or_else(|| live.exit_code.map(|c| c.to_string()));
+            let detail = match (&live.slurm_state, &exit_str) {
                 (Some(state), Some(code)) => format!(" ({state}, exit code: {code})"),
                 (Some(state), None) => format!(" ({state})"),
                 (None, Some(code)) => format!(" (exit code: {code})"),

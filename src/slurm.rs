@@ -241,11 +241,7 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<LiveStatu
         .await?;
 
     if success && !stdout.trim().is_empty() {
-        return Ok(LiveStatus {
-            status: parse_squeue_state(stdout.trim()),
-            exit_code: None,
-            slurm_state: None,
-        });
+        return Ok(LiveStatus::new(parse_squeue_state(stdout.trim())));
     }
 
     // Job not in queue, check sacct for final state and exit code
@@ -259,11 +255,13 @@ pub async fn get_job_status(ssh: &SshClient, slurm_id: &str) -> Result<LiveStatu
         let fields: Vec<&str> = stdout.trim().split('|').collect();
         let raw_state = fields.first().unwrap_or(&"").to_string();
         let status = parse_sacct_state(&raw_state);
+        let raw_exit = fields.get(1).map(|s| (*s).to_string());
         let exit_code = fields.get(1).and_then(|s| parse_sacct_exit_code(s));
         return Ok(LiveStatus {
             status,
             exit_code,
             slurm_state: Some(raw_state),
+            sacct_exit_code: raw_exit,
         });
     }
 

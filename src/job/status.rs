@@ -109,6 +109,7 @@ async fn show_job_detail(
         job.status = live.status;
         job.exit_code = live.exit_code;
         job.slurm_state = live.slurm_state;
+        job.sacct_exit_code = live.sacct_exit_code;
     }
 
     format.print(&job, || {
