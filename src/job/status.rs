@@ -133,7 +133,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
         // Default view: filter in Rust to preserve global indices that
         // match get_job_by_index().
         let (indices, jobs) = list_indexed_jobs(registry, opts, &status_filters, limit)?;
-        if !opts.format.is_json() && !jobs.is_empty() {
+        if opts.format.is_human() && !jobs.is_empty() {
             print_indexed_job_table(&jobs, &indices, !opts.compact);
         }
         jobs
@@ -149,7 +149,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
             opts.archived,
             limit,
         )?;
-        if !opts.format.is_json() && !jobs.is_empty() {
+        if opts.format.is_human() && !jobs.is_empty() {
             print_job_table(&jobs, !opts.compact);
         }
         jobs

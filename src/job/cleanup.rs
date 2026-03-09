@@ -129,7 +129,7 @@ pub async fn cancel_jobs(
     }
 
     // Show jobs and confirm if multiple
-    if !opts.format.is_json() && (jobs_to_cancel.len() > 1 || opts.all) {
+    if opts.format.is_human() && (jobs_to_cancel.len() > 1 || opts.all) {
         println!("Jobs to cancel:");
         for job in &jobs_to_cancel {
             println!(
@@ -161,7 +161,7 @@ pub async fn cancel_jobs(
                             slurm_state: None,
                         },
                     )?;
-                    if !opts.format.is_json() {
+                    if opts.format.is_human() {
                         println!("{} Job {} cancelled", style("✓").green(), job.id);
                     }
                 }
@@ -187,7 +187,7 @@ pub async fn cancel_jobs(
                     slurm_state: None,
                 },
             )?;
-            if !opts.format.is_json() {
+            if opts.format.is_human() {
                 println!("{} Job {} cancelled", style("✓").green(), job.id);
             }
         } else {
@@ -204,7 +204,7 @@ pub async fn cancel_jobs(
                             slurm_state: None,
                         },
                     )?;
-                    if !opts.format.is_json() {
+                    if opts.format.is_human() {
                         println!("{} Job {} cancelled", style("✓").green(), job.id);
                     }
                 }
@@ -270,7 +270,7 @@ pub async fn clean_jobs(
 
         for job in &jobs_to_unarchive {
             registry.unarchive_job(&job.id)?;
-            if !opts.format.is_json() {
+            if opts.format.is_human() {
                 println!(
                     "{} Restored job {} from archive",
                     style("✓").green(),
@@ -348,7 +348,7 @@ pub async fn clean_jobs(
 
     // Handle --archive mode: archive jobs instead of deleting
     if opts.archive {
-        if !opts.format.is_json()
+        if opts.format.is_human()
             && !jobs_to_clean.is_empty()
             && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
         {
@@ -364,14 +364,14 @@ pub async fn clean_jobs(
             println!();
         }
 
-        if !opts.format.is_json() && !opts.skip_confirm && !confirm("Archive these jobs?")? {
+        if opts.format.is_human() && !opts.skip_confirm && !confirm("Archive these jobs?")? {
             println!("Cancelled.");
             return Ok(());
         }
 
         for job in &jobs_to_clean {
             registry.archive_job(&job.id)?;
-            if !opts.format.is_json() {
+            if opts.format.is_human() {
                 println!("{} Archived job {}", style("✓").green(), job.id);
             }
         }
@@ -381,7 +381,7 @@ pub async fn clean_jobs(
 
     // Normal clean mode: delete jobs
     // Show jobs and confirm
-    if !opts.format.is_json()
+    if opts.format.is_human()
         && !jobs_to_clean.is_empty()
         && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
     {
@@ -397,7 +397,7 @@ pub async fn clean_jobs(
         println!();
     }
 
-    if !opts.format.is_json() && opts.clean_workspace {
+    if opts.format.is_human() && opts.clean_workspace {
         println!(
             "{}",
             style("WARNING: This will also delete the shared workspace!")
@@ -406,7 +406,7 @@ pub async fn clean_jobs(
         );
     }
 
-    if !opts.format.is_json() && !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
+    if opts.format.is_human() && !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
         println!("Cancelled.");
         return Ok(());
     }
@@ -421,7 +421,7 @@ pub async fn clean_jobs(
 
     // Clean job directories
     for job in &jobs_to_clean {
-        if !opts.format.is_json() {
+        if opts.format.is_human() {
             print!("Cleaning {}... ", job.id);
         }
 
@@ -441,7 +441,7 @@ pub async fn clean_jobs(
         }
 
         registry.delete_job(&job.id)?;
-        if !opts.format.is_json() {
+        if opts.format.is_human() {
             println!("{}", style("done").green());
         }
     }

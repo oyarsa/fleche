@@ -30,7 +30,7 @@ pub async fn wait_for_job(
     let registry = Registry::open()?;
     let job = resolve_job(&registry, job_id, tags, None)?;
 
-    if !format.is_json() {
+    if format.is_human() {
         println!("Waiting for job {}...", style(&job.id).bold());
     }
 

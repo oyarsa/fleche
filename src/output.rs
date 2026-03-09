@@ -16,9 +16,9 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    /// Returns `true` when JSON output is active.
-    pub fn is_json(self) -> bool {
-        matches!(self, Self::Json)
+    /// Returns `true` when human-readable output is active.
+    pub fn is_human(self) -> bool {
+        matches!(self, Self::Human)
     }
 
     /// Prints `data` as pretty JSON, or calls `human` to print styled output.
