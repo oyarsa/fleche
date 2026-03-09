@@ -48,6 +48,13 @@ use slurm::slurm_config_from_cli;
 /// with a non-zero status code.
 #[tokio::main]
 async fn main() {
+    // Reset SIGPIPE to default behaviour so piping through `head`, `tail`, etc.
+    // terminates silently instead of panicking with "Broken pipe".
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     if let Err(e) = run().await {
         eprintln!("{} {}", style("Error:").red().bold(), e);
         std::process::exit(1);
