@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.14.2] - 2026-03-09
+
+### Fixed
+- Fixed compilation on non-unix platforms by gating background job code
+  (`run_background`, `shell_escape`) with `#[cfg(unix)]`
+
 ## [6.14.1] - 2026-03-06
 
 ### Changed
