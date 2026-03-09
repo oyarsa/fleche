@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.14.3] - 2026-03-09
+
+### Fixed
+- Fixed panic ("Broken pipe") when piping output through `head`, `tail`, etc.
+  by resetting the SIGPIPE handler to its default at program start
+
 ## [6.14.2] - 2026-03-09
 
 ### Fixed
