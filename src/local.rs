@@ -114,6 +114,7 @@ pub fn run_foreground(
     Ok(exit_code)
 }
 
+#[cfg(unix)]
 /// Runs a command in background mode (daemonized).
 ///
 /// Creates a wrapper script that runs the command and writes the exit code on completion.
@@ -331,6 +332,7 @@ fn is_process_running(pid: u32) -> bool {
     sys.process(Pid::from_u32(pid)).is_some()
 }
 
+#[cfg(unix)]
 /// Shell-escapes a string for safe use in shell commands.
 fn shell_escape(s: &str) -> String {
     if s.chars()
