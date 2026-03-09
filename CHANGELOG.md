@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.15.0] - 2026-03-09
+
+### Changed
+- Exit codes from sacct are now stored and displayed in their raw
+  `exit:signal` format (e.g. `1:0`, `0:9`) instead of just the numeric
+  exit code, preserving the signal component reported by Slurm
+
 ## [6.14.3] - 2026-03-09
 
 ### Fixed
