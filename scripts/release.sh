@@ -153,8 +153,8 @@ fi
 # Step 5: Commit, bookmark, push, tag
 # ---------------------------------------------------------------------------
 
-# Build a short summary from the changelog entry
-SUMMARY=$(grep -A1 "## \[${NEW_VERSION}\]" CHANGELOG.md | tail -1 | sed 's/^### //' | head -c 50)
+# Build a short summary from the first bullet point under the version heading
+SUMMARY=$(sed -n "/^## \[${NEW_VERSION}\]/,/^## \[/{ /^- /{ s/^- //; p; q; }; }" CHANGELOG.md | head -c 50)
 COMMIT_MSG="v${NEW_VERSION}: ${SUMMARY}"
 
 # Enforce 70-char limit
