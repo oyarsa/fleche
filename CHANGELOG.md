@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.16.0] - 2026-03-15
+
+### Added
+- Push notifications via ntfy.sh with `--ntfy <topic>` flag
+  - Sends HTTP POST to `ntfy.sh/<topic>` on job state changes
+  - Notifications for all transitions: submitted, running, completed,
+    failed, cancelled — with appropriate priority and tags
+  - Available on `fleche run`, `fleche wait`, and `fleche rerun`
+  - Job notes (from `--note`) are included in notification body
+  - Fire-and-forget: notification failures are logged but never block
+    the main workflow
+
 ## [6.15.0] - 2026-03-09
 
 ### Changed
