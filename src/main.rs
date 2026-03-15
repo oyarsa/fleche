@@ -23,6 +23,7 @@ mod error;
 mod handlers;
 mod job;
 mod local;
+mod ntfy;
 mod output;
 mod proxy;
 mod registry;
@@ -137,6 +138,7 @@ async fn run() -> Result<()> {
                 job::RunJobOptions {
                     background: args.bg,
                     notify: args.notify,
+                    ntfy_topic: args.ntfy,
                     dry_run: args.dry_run,
                     after: args.after,
                     retry: args.retry,
@@ -266,10 +268,15 @@ async fn run() -> Result<()> {
             job::list_tags(format)?;
         }
 
-        Commands::Rerun { job_id, bg, tags } => {
+        Commands::Rerun {
+            job_id,
+            bg,
+            ntfy,
+            tags,
+        } => {
             let config = Config::find_and_load()?;
             let runtime_ctx = RuntimeCtx::from_settings(cli.debug, &config.settings);
-            job::rerun_job(&config, &job_id, &tags, bg, runtime_ctx).await?;
+            job::rerun_job(&config, &job_id, &tags, bg, ntfy.as_deref(), runtime_ctx).await?;
         }
 
         Commands::Init => handlers::init()?,
@@ -300,9 +307,18 @@ async fn run() -> Result<()> {
         Commands::Wait {
             job_id,
             notify,
+            ntfy,
             tags,
         } => {
-            job::wait_for_job(job_id.as_deref(), notify, &tags, format, runtime_ctx).await?;
+            job::wait_for_job(
+                job_id.as_deref(),
+                notify,
+                ntfy.as_deref(),
+                &tags,
+                format,
+                runtime_ctx,
+            )
+            .await?;
         }
 
         Commands::Completions { shell } => {

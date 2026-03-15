@@ -120,6 +120,10 @@ pub enum Commands {
         #[arg(long)]
         bg: bool,
 
+        /// Send push notifications via ntfy.sh on state changes
+        #[arg(long, value_name = "TOPIC")]
+        ntfy: Option<String>,
+
         /// Add tag for filtering/organization (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
         tags: Vec<(String, String)>,
@@ -165,6 +169,10 @@ pub enum Commands {
         /// Send terminal notification when job completes
         #[arg(long)]
         notify: bool,
+
+        /// Send push notifications via ntfy.sh on state changes
+        #[arg(long, value_name = "TOPIC")]
+        ntfy: Option<String>,
 
         /// Filter by tag when using default job (repeatable)
         #[arg(long = "tag", value_parser = parse_key_value)]
@@ -262,6 +270,10 @@ pub struct RunArgs {
     /// Send terminal notification when job completes (useful with --bg)
     #[arg(long)]
     pub notify: bool,
+
+    /// Send push notifications via ntfy.sh on state changes
+    #[arg(long, value_name = "TOPIC")]
+    pub ntfy: Option<String>,
 
     /// Set environment variable (repeatable)
     #[arg(long = "env", value_parser = parse_key_value)]

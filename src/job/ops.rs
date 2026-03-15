@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::error::{FlecheError, Result};
 use crate::local;
+use crate::ntfy;
 use crate::output::OutputFormat;
 use crate::registry::{JobStatus, LiveStatus, Registry};
 use crate::runtime::{RuntimeCtx, send_notification};
@@ -23,6 +24,7 @@ use super::status::resolve_job;
 pub async fn wait_for_job(
     job_id: Option<&str>,
     notify: bool,
+    ntfy_topic: Option<&str>,
     tags: &[(String, String)],
     format: OutputFormat,
     ctx: RuntimeCtx,
@@ -37,10 +39,22 @@ pub async fn wait_for_job(
     // Local job handling
     if job.remote_host == "local" {
         let project_path = PathBuf::from(&job.project_path);
+        let mut prev_status: Option<JobStatus> = None;
 
         loop {
             let live = local::get_local_job_status(&project_path, &job.id)?;
             registry.update_status(&job.id, &live)?;
+
+            if let Some(topic) = ntfy_topic {
+                ntfy::notify_state_change(
+                    topic,
+                    &job.id,
+                    prev_status,
+                    live.status,
+                    job.note.as_deref(),
+                );
+                prev_status = Some(live.status);
+            }
 
             if is_terminal(live.status) {
                 if ctx.should_notify(notify) {
@@ -55,6 +69,7 @@ pub async fn wait_for_job(
 
     // Remote job handling
     let ssh = ctx.ssh(&job.remote_host);
+    let mut prev_status: Option<JobStatus> = None;
 
     loop {
         let live = if let Some(ref slurm_id) = job.slurm_id {
@@ -65,6 +80,17 @@ pub async fn wait_for_job(
         };
 
         registry.update_status(&job.id, &live)?;
+
+        if let Some(topic) = ntfy_topic {
+            ntfy::notify_state_change(
+                topic,
+                &job.id,
+                prev_status,
+                live.status,
+                job.note.as_deref(),
+            );
+            prev_status = Some(live.status);
+        }
 
         if is_terminal(live.status) {
             if ctx.should_notify(notify) {

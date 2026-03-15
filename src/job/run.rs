@@ -3,6 +3,7 @@
 use crate::config::{Config, ResolvedJob, SlurmConfig};
 use crate::error::{FlecheError, Result};
 use crate::local;
+use crate::ntfy;
 use crate::registry::{JobStatus, LiveStatus, Registry};
 use crate::runtime::{RuntimeCtx, send_notification};
 use crate::slurm::{generate_sbatch_script, get_job_status, submit_job};
@@ -43,6 +44,8 @@ pub struct RunJobOptions {
     pub background: bool,
     /// Send terminal notification when job completes.
     pub notify: bool,
+    /// Send push notifications via ntfy.sh on state changes.
+    pub ntfy_topic: Option<String>,
     /// Print generated sbatch script without submitting.
     pub dry_run: bool,
     /// Job ID to wait for before starting.
@@ -195,6 +198,17 @@ pub async fn run_job(
             job_note,
         )?;
 
+        // Send ntfy pending notification
+        if let Some(ref topic) = opts.ntfy_topic {
+            ntfy::notify_state_change(
+                topic,
+                &job_id,
+                None,
+                JobStatus::Pending,
+                opts.note.as_deref(),
+            );
+        }
+
         println!();
         if attempt > 1 {
             println!(
@@ -210,9 +224,9 @@ pub async fn run_job(
         println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
 
         if opts.background {
-            if ctx.should_notify(opts.notify) {
+            if ctx.should_notify(opts.notify) || opts.ntfy_topic.is_some() {
                 // Wait for job completion in background and notify
-                wait_and_notify(&job_id, &host, ctx).await?;
+                wait_and_notify(&job_id, &host, opts.ntfy_topic.as_deref(), ctx).await?;
             }
             // Background mode doesn't support retry (we don't wait for completion)
             break;
@@ -220,7 +234,15 @@ pub async fn run_job(
 
         // Foreground mode: follow logs and check result
         println!();
-        let live = follow_job_logs(&host, &slurm_id, &job_dir, ctx).await?;
+        let live = follow_job_logs(
+            &host,
+            &slurm_id,
+            &job_dir,
+            opts.ntfy_topic.as_deref(),
+            &job_id,
+            ctx,
+        )
+        .await?;
 
         // Update registry with final status
         registry.update_status(&job_id, &live)?;
@@ -353,12 +375,16 @@ async fn run_job_locally(
             // Update status to running
             registry.update_status(&job_id, &LiveStatus::new(JobStatus::Running))?;
 
-            if ctx.should_notify(opts.notify) {
+            if ctx.should_notify(opts.notify) || opts.ntfy_topic.is_some() {
                 // Spawn a background task to wait and notify
                 let project_path = config.project_path.clone();
                 let job_id_clone = job_id.clone();
                 let poll_interval = ctx.poll_interval_local_secs;
+                let ntfy_topic = opts.ntfy_topic.clone();
+                let note = opts.note.clone();
+                let should_term_notify = ctx.should_notify(opts.notify);
                 tokio::spawn(async move {
+                    let mut prev_status: Option<JobStatus> = Some(JobStatus::Running);
                     loop {
                         tokio::time::sleep(Duration::from_secs(poll_interval)).await;
                         match local::get_local_job_status(&project_path, &job_id_clone) {
@@ -366,21 +392,39 @@ async fn run_job_locally(
                                 if let Ok(registry) = Registry::open() {
                                     let _ = registry.update_status(&job_id_clone, &live);
                                 }
+                                if let Some(ref topic) = ntfy_topic {
+                                    ntfy::notify_state_change(
+                                        topic,
+                                        &job_id_clone,
+                                        prev_status,
+                                        live.status,
+                                        note.as_deref(),
+                                    );
+                                    prev_status = Some(live.status);
+                                }
                                 match live.status {
                                     JobStatus::Completed => {
-                                        send_notification(&format!(
-                                            "Job {job_id_clone} completed successfully."
-                                        ));
+                                        if should_term_notify {
+                                            send_notification(&format!(
+                                                "Job {job_id_clone} completed successfully."
+                                            ));
+                                        }
                                         break;
                                     }
                                     JobStatus::Failed => {
-                                        send_notification(&format!("Job {job_id_clone} failed."));
+                                        if should_term_notify {
+                                            send_notification(&format!(
+                                                "Job {job_id_clone} failed."
+                                            ));
+                                        }
                                         break;
                                     }
                                     JobStatus::Cancelled => {
-                                        send_notification(&format!(
-                                            "Job {job_id_clone} was cancelled."
-                                        ));
+                                        if should_term_notify {
+                                            send_notification(&format!(
+                                                "Job {job_id_clone} was cancelled."
+                                            ));
+                                        }
                                         break;
                                     }
                                     _ => {}
@@ -536,6 +580,7 @@ pub async fn rerun_job(
     job_id: &str,
     tags: &[(String, String)],
     background: bool,
+    ntfy_topic: Option<&str>,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -559,7 +604,7 @@ pub async fn rerun_job(
     }
 
     // Run with the old job's resolved configuration
-    run_job_with_resolved(config, &resolved, &merged_tags, background, ctx).await
+    run_job_with_resolved(config, &resolved, &merged_tags, background, ntfy_topic, ctx).await
 }
 
 /// Runs a job with an already-resolved configuration.
@@ -568,12 +613,14 @@ async fn run_job_with_resolved(
     job: &ResolvedJob,
     tags: &[(String, String)],
     background: bool,
+    ntfy_topic: Option<&str>,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     if job.host == "local" {
         let opts = RunJobOptions {
             background,
             notify: false,
+            ntfy_topic: ntfy_topic.map(String::from),
             dry_run: false,
             after: None,
             retry: None,
@@ -588,6 +635,7 @@ async fn run_job_with_resolved(
         let opts = RunJobOptions {
             background,
             notify: false,
+            ntfy_topic: ntfy_topic.map(String::from),
             dry_run: false,
             after: None,
             retry: None,
@@ -629,13 +677,18 @@ async fn run_job_with_resolved(
         None, // Reruns don't get a note
     )?;
 
+    // Send ntfy pending notification
+    if let Some(topic) = ntfy_topic {
+        ntfy::notify_state_change(topic, &job_id, None, JobStatus::Pending, None);
+    }
+
     println!();
     println!("{} {}", style("Job ID:").green().bold(), job_id);
     println!("{} {}", style("Slurm ID:").green().bold(), slurm_id);
 
     if !background {
         println!();
-        follow_job_logs(&host, &slurm_id, &job_dir, ctx).await?;
+        follow_job_logs(&host, &slurm_id, &job_dir, ntfy_topic, &job_id, ctx).await?;
     }
 
     Ok(())
@@ -790,6 +843,8 @@ async fn follow_job_logs(
     host: &str,
     slurm_id: &str,
     job_dir: &str,
+    ntfy_topic: Option<&str>,
+    job_id: &str,
     ctx: RuntimeCtx,
 ) -> Result<LiveStatus> {
     println!(
@@ -807,11 +862,18 @@ async fn follow_job_logs(
     let host = host.to_string();
     let slurm_id_for_check = slurm_id.clone();
     let host_for_check = host.clone();
+    let ntfy_topic_owned = ntfy_topic.map(String::from);
+    let job_id_owned = job_id.to_string();
     let status_check = async move {
+        let mut prev_status: Option<JobStatus> = None;
         loop {
             tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
             let ssh = ctx.ssh(&host_for_check);
             if let Ok(live) = get_job_status(&ssh, &slurm_id_for_check).await {
+                if let Some(ref topic) = ntfy_topic_owned {
+                    ntfy::notify_state_change(topic, &job_id_owned, prev_status, live.status, None);
+                    prev_status = Some(live.status);
+                }
                 match live.status {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
                         return live;
@@ -872,7 +934,12 @@ async fn follow_job_logs(
 /// Waits for a job to complete and sends a terminal notification.
 ///
 /// Polls the job status every few seconds until it reaches a terminal state.
-async fn wait_and_notify(job_id: &str, remote_host: &str, ctx: RuntimeCtx) -> Result<()> {
+async fn wait_and_notify(
+    job_id: &str,
+    remote_host: &str,
+    ntfy_topic: Option<&str>,
+    ctx: RuntimeCtx,
+) -> Result<()> {
     println!(
         "{}",
         style("Waiting for job to complete (will notify when done)...").dim()
@@ -880,12 +947,18 @@ async fn wait_and_notify(job_id: &str, remote_host: &str, ctx: RuntimeCtx) -> Re
 
     let registry = Registry::open()?;
     let ssh = ctx.ssh(remote_host);
+    let mut prev_status: Option<JobStatus> = None;
 
     loop {
         let job = registry.get_job(job_id)?;
         if let Some(ref slurm_id) = job.slurm_id {
             let live = get_job_status(&ssh, slurm_id).await?;
             registry.update_status(job_id, &live)?;
+
+            if let Some(topic) = ntfy_topic {
+                ntfy::notify_state_change(topic, job_id, prev_status, live.status, None);
+                prev_status = Some(live.status);
+            }
 
             match live.status {
                 JobStatus::Completed => {
@@ -1012,6 +1085,17 @@ async fn run_job_direct_remote(
         // Update status to running
         registry.update_status(&job_id, &LiveStatus::new(JobStatus::Running))?;
 
+        // Send ntfy running notification (exec jobs go straight to running)
+        if let Some(ref topic) = opts.ntfy_topic {
+            ntfy::notify_state_change(
+                topic,
+                &job_id,
+                None,
+                JobStatus::Running,
+                opts.note.as_deref(),
+            );
+        }
+
         println!();
         if attempt > 1 {
             println!(
@@ -1031,8 +1115,9 @@ async fn run_job_direct_remote(
                 style("Job running in background. Use 'fleche logs' to view output.").dim()
             );
 
-            if ctx.should_notify(opts.notify) {
-                wait_and_notify_direct(&job_id, host, &job_dir, ctx).await?;
+            if ctx.should_notify(opts.notify) || opts.ntfy_topic.is_some() {
+                wait_and_notify_direct(&job_id, host, &job_dir, opts.ntfy_topic.as_deref(), ctx)
+                    .await?;
             }
             // Background mode doesn't support retry
             break;
@@ -1040,7 +1125,8 @@ async fn run_job_direct_remote(
 
         // Foreground mode: follow logs and check result
         println!();
-        let live = follow_direct_job_logs(host, &job_dir, ctx).await?;
+        let live = follow_direct_job_logs(host, &job_dir, opts.ntfy_topic.as_deref(), &job_id, ctx)
+            .await?;
 
         // Update registry with final status
         registry.update_status(&job_id, &live)?;
@@ -1141,7 +1227,13 @@ pub async fn get_remote_direct_job_status(ssh: &SshClient, job_dir: &str) -> Res
 /// Follows logs of a remote direct job and polls for completion.
 ///
 /// Returns the final live status when the job completes.
-async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> Result<LiveStatus> {
+async fn follow_direct_job_logs(
+    host: &str,
+    job_dir: &str,
+    ntfy_topic: Option<&str>,
+    job_id: &str,
+    ctx: RuntimeCtx,
+) -> Result<LiveStatus> {
     println!(
         "{}",
         style("Streaming output (Ctrl+C to disconnect, job keeps running)...").yellow()
@@ -1155,11 +1247,18 @@ async fn follow_direct_job_logs(host: &str, job_dir: &str, ctx: RuntimeCtx) -> R
     // Poll job status until it reaches a terminal state
     let job_dir_owned = job_dir.to_string();
     let host_owned = host.to_string();
+    let ntfy_topic_owned = ntfy_topic.map(String::from);
+    let job_id_owned = job_id.to_string();
     let status_check = async move {
+        let mut prev_status: Option<JobStatus> = None;
         loop {
             tokio::time::sleep(Duration::from_secs(ctx.poll_interval_remote_secs)).await;
             let ssh = ctx.ssh(&host_owned);
             if let Ok(live) = get_remote_direct_job_status(&ssh, &job_dir_owned).await {
+                if let Some(ref topic) = ntfy_topic_owned {
+                    ntfy::notify_state_change(topic, &job_id_owned, prev_status, live.status, None);
+                    prev_status = Some(live.status);
+                }
                 match live.status {
                     JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled => {
                         return live;
@@ -1221,6 +1320,7 @@ async fn wait_and_notify_direct(
     job_id: &str,
     remote_host: &str,
     job_dir: &str,
+    ntfy_topic: Option<&str>,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     println!(
@@ -1229,12 +1329,18 @@ async fn wait_and_notify_direct(
     );
 
     let ssh = ctx.ssh(remote_host);
+    let mut prev_status: Option<JobStatus> = None;
 
     loop {
         let live = get_remote_direct_job_status(&ssh, job_dir).await?;
 
         if let Ok(registry) = Registry::open() {
             let _ = registry.update_status(job_id, &live);
+        }
+
+        if let Some(topic) = ntfy_topic {
+            ntfy::notify_state_change(topic, job_id, prev_status, live.status, None);
+            prev_status = Some(live.status);
         }
 
         match live.status {
