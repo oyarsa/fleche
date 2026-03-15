@@ -23,6 +23,9 @@ fleche run <job-name> --bg
 # Submit in background but get notified when done
 fleche run <job-name> --bg --notify
 
+# Get push notifications on your phone via ntfy.sh
+fleche run <job-name> --ntfy my-topic
+
 # Wait for a job to complete
 fleche wait <job-id>
 
@@ -467,6 +470,37 @@ fleche stats <job-id>
 
 Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 
+### Push Notifications (ntfy.sh)
+
+Get push notifications on your phone or desktop when jobs change state:
+
+```bash
+# Notify on all state changes (submitted, running, completed/failed)
+fleche run train --ntfy my-topic
+
+# Works with background jobs
+fleche run train --bg --ntfy my-topic
+
+# Wait for an existing job with notifications
+fleche wait <job-id> --ntfy my-topic
+
+# Re-run with notifications
+fleche rerun <job-id> --ntfy my-topic
+```
+
+Subscribe to notifications at `https://ntfy.sh/my-topic` or install the
+[ntfy app](https://ntfy.sh) on your phone. Choose a unique topic name to
+avoid conflicts with other users.
+
+Notifications are sent for each state transition:
+- **Submitted** — job entered the Slurm queue (low priority)
+- **Running** — job started executing (default priority)
+- **Completed** — job finished successfully (high priority)
+- **Failed** — job failed (urgent priority)
+- **Cancelled** — job was cancelled (high priority)
+
+Job notes (from `--note`) are included in the notification body when present.
+
 ## Commands Reference
 
 | Command | Description |
@@ -501,7 +535,8 @@ Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
 | `fleche status --all-jobs` | Show all jobs including archived |
 | `fleche tags` | List all unique tags across jobs |
 | `fleche wait [job-id]` | Wait for job to complete |
-| `fleche wait --notify` | Wait and send notification when done |
+| `fleche wait --notify` | Wait and send terminal notification when done |
+| `fleche wait --ntfy <topic>` | Wait and send push notifications via ntfy.sh |
 | `fleche stats [job-id]` | Show resource usage (time, CPU, memory) |
 | `fleche stats -n 5` | Show stats for last N jobs |
 | `fleche note <job-id> [text]` | View or set job note |
@@ -729,4 +764,5 @@ fleche clean --archive --all --dry-run
 - Use `--archive` to hide old jobs without deleting them
 - Use `fleche jobs` to see what jobs are available in the project
 - Use `fleche proxy` to route traffic through the cluster's network
+- Use `--ntfy <topic>` to get push notifications on your phone via ntfy.sh
 - Enable shell completions: `fleche completions bash >> ~/.bashrc`

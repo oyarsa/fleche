@@ -17,6 +17,7 @@ A CLI tool for submitting and managing jobs on remote Slurm clusters via SSH. El
 - **Parameterized jobs** via environment variable overrides
 - **Job tagging** for organization and filtering
 - **Job notes** for annotating experiments (with search)
+- **Push notifications** via ntfy.sh on job state changes
 - **Job archiving** to hide completed jobs without deletion
 - **Resource statistics** via sacct integration
 - **SOCKS proxy** for routing traffic through the cluster
