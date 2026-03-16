@@ -574,7 +574,7 @@ async fn check_disk_for_doctor(ssh: &SshClient, base_path: &str, issues: &mut Ve
                     usage.available
                 );
                 issues.push(format!(
-                    "Disk space critically low ({}%) - run `fleche clean --older-than 7d`",
+                    "Disk space critically low ({}%) - run `fleche clean --delete --older-than 7d`",
                     usage.use_percent
                 ));
             } else if usage.use_percent >= 75 {

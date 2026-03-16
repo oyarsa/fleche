@@ -248,8 +248,9 @@ async fn run() -> Result<()> {
                 job::CleanJobsOptions {
                     all: args.all,
                     status_filters: args.filter,
+                    delete: args.delete,
                     clean_workspace: args.workspace,
-                    archive: args.archive,
+                    include_archived: args.archived,
                     unarchive: args.unarchive,
                     dry_run: args.dry_run,
                     skip_confirm: args.yes,

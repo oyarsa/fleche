@@ -721,6 +721,23 @@ impl Registry {
         self.load_tags_for_jobs(jobs)
     }
 
+    /// Lists archived jobs older than the given duration.
+    pub fn list_archived_jobs_older_than(&self, duration: Duration) -> Result<Vec<JobRecord>> {
+        let cutoff = Utc::now() - duration;
+        let sql = format!(
+            "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
+             WHERE created_at < ?1 AND archived = 1 \
+             ORDER BY created_at DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+
+        let jobs: Vec<_> = stmt
+            .query_map(params![cutoff.to_rfc3339()], JobRecord::from_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        self.load_tags_for_jobs(jobs)
+    }
+
     /// Lists all unique tag key-value pairs across all jobs.
     pub fn list_unique_tags(&self) -> Result<Vec<(String, String)>> {
         let mut stmt = self

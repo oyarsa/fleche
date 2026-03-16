@@ -95,11 +95,11 @@ pub enum Commands {
     /// Without arguments, cancels the most recent running job.
     Cancel(CancelArgs),
 
-    /// Remove job from registry and delete remote job files
+    /// Archive or delete finished jobs
     ///
-    /// This removes job logs and metadata, but NOT the workspace.
-    /// Use --workspace to also clear the shared workspace.
-    /// Use --archive to hide jobs without deleting them.
+    /// By default, jobs are archived (hidden from listings but preserved).
+    /// Use --delete to permanently remove jobs and their remote files.
+    /// Use --workspace with --delete to also clear the shared workspace.
     Clean(CleanArgs),
 
     /// List available jobs from configuration
@@ -476,16 +476,20 @@ pub struct CleanArgs {
     #[arg(long)]
     pub older_than: Option<String>,
 
-    /// Also delete the shared workspace
-    #[arg(long)]
+    /// Permanently delete jobs instead of archiving
+    #[arg(long, conflicts_with = "unarchive")]
+    pub delete: bool,
+
+    /// Also delete the shared workspace (requires --delete)
+    #[arg(long, requires = "delete")]
     pub workspace: bool,
 
-    /// Archive job instead of deleting (hides from listings)
-    #[arg(long)]
-    pub archive: bool,
+    /// Target archived jobs (for --delete or --unarchive)
+    #[arg(long, conflicts_with_all = ["filter"])]
+    pub archived: bool,
 
     /// Restore archived job to normal listings
-    #[arg(long, conflicts_with_all = ["archive", "workspace"])]
+    #[arg(long, conflicts_with = "delete")]
     pub unarchive: bool,
 
     /// Show what would be done without actually doing it

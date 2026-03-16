@@ -21,10 +21,12 @@ pub struct CleanJobsOptions {
     pub all: bool,
     /// Filter by status (e.g., failed, completed, cancelled).
     pub status_filters: Vec<String>,
+    /// Permanently delete instead of archiving.
+    pub delete: bool,
     /// Also delete the shared workspace.
     pub clean_workspace: bool,
-    /// Archive jobs instead of deleting.
-    pub archive: bool,
+    /// Target archived jobs.
+    pub include_archived: bool,
     /// Restore archived jobs.
     pub unarchive: bool,
     /// Show what would be done without actually doing it.
@@ -269,12 +271,14 @@ pub async fn clean_jobs(
         return opts.format.print_json_only(&jobs_to_unarchive);
     }
 
-    // For archive/clean: get jobs to process
+    // For archive/delete: get jobs to process
     let jobs_to_clean: Vec<JobRecord> = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
     } else if opts.all {
-        // Get finished jobs, optionally filtered by tags
-        if tags.is_empty() {
+        if opts.include_archived {
+            // Target archived jobs
+            registry.list_archived_jobs()?
+        } else if tags.is_empty() {
             registry.list_finished_jobs()?
         } else {
             registry
@@ -290,7 +294,11 @@ pub async fn clean_jobs(
         }
     } else if let Some(duration_str) = older_than {
         let duration = parse_duration(duration_str)?;
-        let older_jobs = registry.list_jobs_older_than(duration)?;
+        let older_jobs = if opts.include_archived {
+            registry.list_archived_jobs_older_than(duration)?
+        } else {
+            registry.list_jobs_older_than(duration)?
+        };
         // Filter by tags if provided
         if tags.is_empty() {
             older_jobs
@@ -320,13 +328,12 @@ pub async fn clean_jobs(
             .collect()
     };
 
+    let action = if opts.delete { "delete" } else { "archive" };
+
     if jobs_to_clean.is_empty() && !opts.clean_workspace {
         let empty: Vec<JobRecord> = Vec::new();
         return opts.format.print(&empty, || {
-            println!(
-                "No jobs to {}.",
-                if opts.archive { "archive" } else { "clean" }
-            );
+            println!("No jobs to {action}.");
             Ok(())
         });
     }
@@ -334,8 +341,7 @@ pub async fn clean_jobs(
     // Dry run: show what would be affected and exit
     if opts.dry_run {
         return opts.format.print(&jobs_to_clean, || {
-            let action = if opts.archive { "archive" } else { "clean" };
-            println!("Would {} {} job(s):", action, jobs_to_clean.len());
+            println!("Would {action} {} job(s):", jobs_to_clean.len());
             for job in &jobs_to_clean {
                 println!(
                     "  {} ({}) - {}",
@@ -348,25 +354,27 @@ pub async fn clean_jobs(
         });
     }
 
-    // Handle --archive mode: archive jobs instead of deleting
-    if opts.archive {
-        if opts.format.is_human()
-            && !jobs_to_clean.is_empty()
-            && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
-        {
-            println!("Jobs to archive:");
-            for job in &jobs_to_clean {
-                println!(
-                    "  {} ({}) - {}",
-                    job.id,
-                    style(&job.status).cyan(),
-                    job.job_name
-                );
-            }
-            println!();
+    // Show jobs and confirm if multiple
+    if opts.format.is_human()
+        && !jobs_to_clean.is_empty()
+        && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
+    {
+        println!("Jobs to {action}:");
+        for job in &jobs_to_clean {
+            println!(
+                "  {} ({}) - {}",
+                job.id,
+                style(&job.status).cyan(),
+                job.job_name
+            );
         }
+        println!();
+    }
 
-        if opts.format.is_human() && !opts.skip_confirm && !confirm("Archive these jobs?")? {
+    // Default mode: archive jobs
+    if !opts.delete {
+        let confirm_msg = format!("Archive {} job(s)?", jobs_to_clean.len());
+        if opts.format.is_human() && !opts.skip_confirm && !confirm(&confirm_msg)? {
             println!("Cancelled.");
             return Ok(());
         }
@@ -381,24 +389,7 @@ pub async fn clean_jobs(
         return opts.format.print_json_only(&jobs_to_clean);
     }
 
-    // Normal clean mode: delete jobs
-    // Show jobs and confirm
-    if opts.format.is_human()
-        && !jobs_to_clean.is_empty()
-        && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
-    {
-        println!("Jobs to clean:");
-        for job in &jobs_to_clean {
-            println!(
-                "  {} ({}) - {}",
-                job.id,
-                style(&job.status).cyan(),
-                job.job_name
-            );
-        }
-        println!();
-    }
-
+    // --delete mode: permanently remove jobs
     if opts.format.is_human() && opts.clean_workspace {
         println!(
             "{}",
@@ -408,7 +399,7 @@ pub async fn clean_jobs(
         );
     }
 
-    if opts.format.is_human() && !opts.skip_confirm && !confirm("Proceed with cleanup?")? {
+    if opts.format.is_human() && !opts.skip_confirm && !confirm("Permanently delete?")? {
         println!("Cancelled.");
         return Ok(());
     }
@@ -421,20 +412,18 @@ pub async fn clean_jobs(
         None
     };
 
-    // Clean job directories
+    // Delete job directories
     for job in &jobs_to_clean {
         if opts.format.is_human() {
-            print!("Cleaning {}... ", job.id);
+            print!("Deleting {}... ", job.id);
         }
 
         if job.remote_host == "local" {
-            // Clean local job directory
             let project_path = PathBuf::from(&job.project_path);
             if let Err(e) = local::clean_local_job(&project_path, &job.id) {
                 eprintln!("warning: could not delete job directory: {e}");
             }
         } else {
-            // Clean remote job directory (logs/metadata only, not workspace)
             let ssh = opts.ctx.ssh(&job.remote_host);
             let job_dir = job_path_from_workspace(&job.remote_path, &job.id);
             if let Err(e) = ssh.rm_rf(&job_dir).await {
@@ -482,7 +471,7 @@ pub async fn clean_jobs(
             }
 
             let ssh = opts.ctx.ssh(&key.0);
-            print!("Cleaning workspace on {}... ", key.0);
+            print!("Deleting workspace on {}... ", key.0);
             if let Err(e) = ssh.rm_rf(&key.1).await {
                 eprintln!("warning: could not delete workspace: {e}");
             } else {
@@ -502,7 +491,7 @@ pub async fn clean_jobs(
     opts.format.print(&jobs_to_clean, || {
         if !jobs_to_clean.is_empty() {
             println!(
-                "\n{} Cleaned {} job(s)",
+                "\n{} Deleted {} job(s)",
                 style("✓").green(),
                 jobs_to_clean.len()
             );

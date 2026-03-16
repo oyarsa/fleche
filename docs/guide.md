@@ -429,14 +429,17 @@ fleche logs --note "experiment.*baseline"
 
 ### Archiving Jobs
 
-Hide completed jobs from listings without deleting them:
+By default, `fleche clean` archives jobs (hides them from listings without deleting):
 
 ```bash
-# Archive a job (hides from normal listings)
-fleche clean --archive <job-id>
+# Archive a job (default behavior)
+fleche clean <job-id>
 
 # Archive all finished jobs
-fleche clean --archive --all
+fleche clean --all
+
+# Archive only failed jobs
+fleche clean --all --filter failed
 
 # View archived jobs
 fleche status --archived
@@ -449,6 +452,15 @@ fleche clean --unarchive <job-id>
 
 # Restore all archived jobs
 fleche clean --unarchive --all
+
+# Permanently delete jobs (removes files)
+fleche clean --delete <job-id>
+
+# Delete all archived jobs
+fleche clean --delete --archived --all
+
+# Delete archived jobs older than 30 days
+fleche clean --delete --archived --older-than 30d
 ```
 
 Archived jobs are hidden from `fleche status` by default but their data is preserved.
@@ -524,12 +536,14 @@ Job notes (from `--note`) are included in the notification body when present.
 | `fleche cancel [job-id]` | Cancel a job (defaults to most recent active) |
 | `fleche cancel --all [--tag <k=v>]` | Cancel all (or tagged) active jobs |
 | `fleche cancel --dry-run` | Show what would be cancelled without cancelling |
-| `fleche clean [job-id]` | Remove job and remote files |
-| `fleche clean --all [--tag <k=v>]` | Clean all (or tagged) finished jobs |
-| `fleche clean --older-than <dur>` | Clean jobs older than duration |
-| `fleche clean --dry-run` | Show what would be cleaned without cleaning |
-| `fleche clean --workspace` | Also delete shared workspace |
-| `fleche clean --archive [job-id]` | Archive job (hide without deleting) |
+| `fleche clean [job-id]` | Archive job (hide from listings) |
+| `fleche clean --all [--tag <k=v>]` | Archive all (or tagged) finished jobs |
+| `fleche clean --all --filter failed` | Archive only failed jobs |
+| `fleche clean --older-than <dur>` | Archive jobs older than duration |
+| `fleche clean --delete [job-id]` | Permanently delete job and remote files |
+| `fleche clean --delete --archived --all` | Delete all archived jobs |
+| `fleche clean --delete --workspace` | Also delete shared workspace |
+| `fleche clean --dry-run` | Show what would be done without doing it |
 | `fleche clean --unarchive [job-id]` | Restore archived job |
 | `fleche status --archived` | Show only archived jobs |
 | `fleche status --all-jobs` | Show all jobs including archived |
@@ -741,7 +755,7 @@ fleche cancel --all --dry-run
 
 # Preview cleanup
 fleche clean --older-than 7d --dry-run
-fleche clean --archive --all --dry-run
+fleche clean --all --dry-run
 ```
 
 ## Tips
