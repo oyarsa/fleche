@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.17.0] - 2026-03-16
+
+### Changed
+- `fleche clean` now archives jobs by default instead of deleting them.
+  Use `--delete` to permanently remove jobs and their remote files.
+  `--workspace` now requires `--delete`.
+
+### Added
+- `--filter` flag for `fleche clean` to filter by status (repeatable),
+  matching the existing `--filter` on `fleche status`
+  - `fleche clean --all --filter failed` archives only failed jobs
+  - `fleche clean --all --filter failed --filter cancelled` for multiple
+- `--delete` flag for `fleche clean` to permanently remove jobs
+- `--archived` flag for `fleche clean` to target archived jobs for
+  deletion or unarchiving (e.g., `fleche clean --delete --archived --all`)
+
 ## [6.16.0] - 2026-03-15
 
 ### Added
