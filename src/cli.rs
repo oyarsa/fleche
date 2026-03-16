@@ -468,6 +468,10 @@ pub struct CleanArgs {
     #[arg(long)]
     pub all: bool,
 
+    /// Filter by status (completed, failed, cancelled) - repeatable
+    #[arg(long)]
+    pub filter: Vec<String>,
+
     /// Clean jobs older than duration (e.g., 7d, 24h)
     #[arg(long)]
     pub older_than: Option<String>,

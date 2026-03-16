@@ -247,6 +247,7 @@ async fn run() -> Result<()> {
                 &args.tags,
                 job::CleanJobsOptions {
                     all: args.all,
+                    status_filters: args.filter,
                     clean_workspace: args.workspace,
                     archive: args.archive,
                     unarchive: args.unarchive,

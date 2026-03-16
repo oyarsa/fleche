@@ -19,6 +19,8 @@ use super::job_path_from_workspace;
 pub struct CleanJobsOptions {
     /// Clean all completed/failed jobs.
     pub all: bool,
+    /// Filter by status (e.g., failed, completed, cancelled).
+    pub status_filters: Vec<String>,
     /// Also delete the shared workspace.
     pub clean_workspace: bool,
     /// Archive jobs instead of deleting.
@@ -301,6 +303,21 @@ pub async fn clean_jobs(
     } else {
         println!("Specify a job ID, --all, or --older-than");
         return Ok(());
+    };
+
+    // Apply --filter status filters
+    let status_filters: Vec<JobStatus> = opts
+        .status_filters
+        .iter()
+        .map(|f| f.parse())
+        .collect::<Result<Vec<_>>>()?;
+    let jobs_to_clean: Vec<JobRecord> = if status_filters.is_empty() {
+        jobs_to_clean
+    } else {
+        jobs_to_clean
+            .into_iter()
+            .filter(|j| status_filters.contains(&j.status))
+            .collect()
     };
 
     if jobs_to_clean.is_empty() && !opts.clean_workspace {
