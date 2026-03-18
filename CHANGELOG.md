@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.18.0] - 2026-03-18
+
+### Added
+- `fleche status <job-id>` now shows a "Resource usage" section for finished
+  Slurm jobs: elapsed time, CPU time, max memory, node, and allocated resources
+  (fetched from sacct)
+- `fleche stats` table now includes a NODE column showing which node(s) ran
+  each job
+
 ## [6.17.0] - 2026-03-16
 
 ### Changed
