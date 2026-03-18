@@ -480,7 +480,20 @@ fleche stats -n 5
 fleche stats <job-id>
 ```
 
-Shows elapsed time, CPU time, max memory, and allocated resources from sacct.
+Shows elapsed time, CPU time, max memory, node, and allocated resources from sacct.
+
+Resource usage is also shown in `fleche status <job-id>` for finished Slurm jobs:
+
+```bash
+fleche status <job-id>
+# ...
+#   Resource usage:
+#     Node:         gpu-node01
+#     Elapsed:      01:23:45
+#     CPU time:     02:30:00
+#     Max memory:   4096K
+#     Resources:    4 CPU, 1 GPU, 16G mem
+```
 
 ### Push Notifications (ntfy.sh)
 
@@ -551,7 +564,7 @@ Job notes (from `--note`) are included in the notification body when present.
 | `fleche wait [job-id]` | Wait for job to complete |
 | `fleche wait --notify` | Wait and send terminal notification when done |
 | `fleche wait --ntfy <topic>` | Wait and send push notifications via ntfy.sh |
-| `fleche stats [job-id]` | Show resource usage (time, CPU, memory) |
+| `fleche stats [job-id]` | Show resource usage (time, CPU, memory, node) |
 | `fleche stats -n 5` | Show stats for last N jobs |
 | `fleche note <job-id> [text]` | View or set job note |
 | `fleche ping` | Check Slurm cluster health |
@@ -770,6 +783,7 @@ fleche clean --all --dry-run
 - Exit codes are tracked and shown in `fleche status <job-id>` and failure messages
 - Raw Slurm state (e.g., TIMEOUT, OUT_OF_MEMORY, PREEMPTED) is shown in `fleche status <job-id>` for Slurm jobs
 - Slurm resources at submission (partition, memory, time, GPUs, etc.) are shown in `fleche status <job-id>` — useful after Slurm purges the job record
+- Resource usage (elapsed time, CPU, memory, node) is shown in `fleche status <job-id>` for finished Slurm jobs
 - Use `fleche exec` for quick ad-hoc tests without Slurm queue wait
 - Use `exec = true` in config for jobs that should always bypass Slurm
 - Jobs share workspace, so chained jobs can read each other's outputs
