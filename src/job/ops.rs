@@ -301,15 +301,16 @@ pub async fn show_stats(
 /// Prints a human-readable stats table.
 fn print_stats_table(results: &[JobStatsEntry]) {
     println!(
-        "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
+        "{:<12} {:<10} {:<12} {:<12} {:<10} {:<16} {}",
         style("JOB ID").bold(),
         style("STATUS").bold(),
         style("ELAPSED").bold(),
         style("CPU TIME").bold(),
         style("MAX MEM").bold(),
+        style("NODE").bold(),
         style("RESOURCES").bold()
     );
-    println!("{}", "-".repeat(80));
+    println!("{}", "-".repeat(96));
 
     for entry in results {
         if let Some(ref usage) = entry.usage {
@@ -337,14 +338,20 @@ fn print_stats_table(results: &[JobStatsEntry]) {
             } else {
                 &usage.max_rss
             };
+            let node = if usage.node_list.is_empty() {
+                "-"
+            } else {
+                &usage.node_list
+            };
 
             println!(
-                "{:<12} {:<10} {:<12} {:<12} {:<10} {}",
+                "{:<12} {:<10} {:<12} {:<12} {:<10} {:<16} {}",
                 truncate_id(&entry.id),
                 status_styled,
                 elapsed,
                 total_cpu,
                 max_rss,
+                node,
                 resources
             );
         } else {
@@ -369,7 +376,7 @@ fn truncate_id(id: &str) -> &str {
 ///
 /// Input: "billing=8,cpu=4,gres/gpu=1,mem=16G,node=1"
 /// Output: "4 CPU, 1 GPU, 16G mem"
-fn parse_alloc_tres(tres: &str) -> String {
+pub fn parse_alloc_tres(tres: &str) -> String {
     if tres.is_empty() {
         return "-".to_string();
     }

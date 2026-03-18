@@ -7,7 +7,7 @@ use crate::registry::{
     ArchivedFilter, JobRecord, JobStatus, LiveStatus, Registry, build_job_filter_pattern,
 };
 use crate::runtime::RuntimeCtx;
-use crate::slurm::get_job_status;
+use crate::slurm::{get_job_resource_usage, get_job_status};
 use console::style;
 use regex::Regex;
 use serde::Serialize;
@@ -112,8 +112,25 @@ async fn show_job_detail(
         job.sacct_exit_code = live.sacct_exit_code;
     }
 
+    // Fetch resource usage for finished Slurm jobs
+    let usage = if let Some(ref slurm_id) = job.slurm_id {
+        if job.remote_host != "local"
+            && matches!(
+                job.status,
+                JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+            )
+        {
+            let ssh = ctx.ssh(&job.remote_host);
+            get_job_resource_usage(&ssh, slurm_id).await.ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     format.print(&job, || {
-        print_job_details(&job);
+        print_job_details(&job, usage.as_ref());
         Ok(())
     })
 }

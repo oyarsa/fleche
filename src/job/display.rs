@@ -2,10 +2,16 @@
 
 use crate::config::ResolvedJob;
 use crate::registry::{JobRecord, JobStatus};
+use crate::slurm::JobResourceUsage;
 use console::style;
 
+use super::ops::parse_alloc_tres;
+
 /// Prints detailed information about a single job.
-pub fn print_job_details(job: &JobRecord) {
+///
+/// If `usage` is provided, a "Resource usage" section is appended showing
+/// elapsed time, CPU time, memory, node, and allocated resources.
+pub fn print_job_details(job: &JobRecord, usage: Option<&JobResourceUsage>) {
     println!("{}", style("Job Details").bold().underlined());
     println!();
     println!("  {:<14} {}", style("ID:").bold(), job.id);
@@ -69,6 +75,29 @@ pub fn print_job_details(job: &JobRecord) {
         println!("  {}", style("Slurm resources:").bold());
         for line in slurm_resources {
             println!("    {line}");
+        }
+    }
+
+    if let Some(u) = usage {
+        println!();
+        println!("  {}", style("Resource usage:").bold());
+        if !u.node_list.is_empty() {
+            println!("    {:<14}{}", "Node:", u.node_list);
+        }
+        if !u.elapsed.is_empty() {
+            println!("    {:<14}{}", "Elapsed:", u.elapsed);
+        }
+        if !u.total_cpu.is_empty() {
+            println!("    {:<14}{}", "CPU time:", u.total_cpu);
+        }
+        if !u.max_rss.is_empty() {
+            println!("    {:<14}{}", "Max memory:", u.max_rss);
+        }
+        if !u.alloc_tres.is_empty() {
+            let resources = parse_alloc_tres(&u.alloc_tres);
+            if resources != "-" {
+                println!("    {:<14}{resources}", "Resources:");
+            }
         }
     }
 

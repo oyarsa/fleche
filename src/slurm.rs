@@ -286,6 +286,8 @@ pub struct JobResourceUsage {
     pub max_rss: String,
     /// Allocated resources (e.g., "billing=8,cpu=4,gres/gpu=1,mem=16G")
     pub alloc_tres: String,
+    /// Node(s) the job ran on (e.g., "gpu-node01" or "node[01-04]")
+    pub node_list: String,
 }
 
 /// Queries resource usage for a Slurm job using sacct.
@@ -298,8 +300,8 @@ pub async fn get_job_resource_usage(ssh: &SshClient, slurm_id: &str) -> Result<J
     // Query sacct for resource usage (use .batch suffix for actual job step stats)
     let output = ssh
         .exec(&format!(
-            "sacct -j {escaped_id}.batch -n -o Elapsed,TotalCPU,MaxRSS,AllocTRES --parsable2 2>/dev/null || \
-             sacct -j {escaped_id} -n -o Elapsed,TotalCPU,MaxRSS,AllocTRES --parsable2 | head -1"
+            "sacct -j {escaped_id}.batch -n -o Elapsed,TotalCPU,MaxRSS,AllocTRES,NodeList --parsable2 2>/dev/null || \
+             sacct -j {escaped_id} -n -o Elapsed,TotalCPU,MaxRSS,AllocTRES,NodeList --parsable2 | head -1"
         ))
         .await?;
 
@@ -311,6 +313,7 @@ pub async fn get_job_resource_usage(ssh: &SshClient, slurm_id: &str) -> Result<J
         total_cpu: fields.get(1).unwrap_or(&"").to_string(),
         max_rss: fields.get(2).unwrap_or(&"").to_string(),
         alloc_tres: fields.get(3).unwrap_or(&"").to_string(),
+        node_list: fields.get(4).unwrap_or(&"").to_string(),
     })
 }
 
