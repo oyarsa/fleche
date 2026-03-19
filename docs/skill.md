@@ -642,7 +642,7 @@ Job notes (from `--note`) are included in the notification body when present.
 | `fleche proxy -- <cmd>` | Run command through SOCKS proxy to remote host |
 | `fleche jobs` | List available jobs from configuration |
 | `fleche skill` | Print this skill reference |
-| `fleche skill --install` | Install skill for Claude Code and Codex |
+| `fleche skill --install <scope> --agent <agent>` | Install skill (`scope`: project/global, `agent`: claude/codex) |
 | `fleche completions <shell>` | Generate shell completions (bash/zsh/fish) |
 
 ## Slurm Options

@@ -292,9 +292,9 @@ async fn run() -> Result<()> {
             }
         }
 
-        Commands::Skill { install } => {
-            if install {
-                handlers::install_skill()?;
+        Commands::Skill { install, agent } => {
+            if let (Some(scope), Some(agent)) = (install, agent) {
+                handlers::install_skill(scope, agent)?;
             } else {
                 print!("{}", include_str!("../docs/skill.md"));
             }
