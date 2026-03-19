@@ -90,7 +90,7 @@ fn check_dependencies() -> Result<()> {
 ///
 /// This function is the main dispatcher for all fleche subcommands. Each command
 /// is handled by calling the corresponding function in the [`job`] module, except
-/// for `init`, `check`, and `guide` which are handled inline.
+/// for `init`, `check`, and `skill` which are handled inline.
 async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -292,8 +292,12 @@ async fn run() -> Result<()> {
             }
         }
 
-        Commands::Guide => {
-            print!("{}", include_str!("../docs/guide.md"));
+        Commands::Skill { install } => {
+            if install {
+                handlers::install_skill()?;
+            } else {
+                print!("{}", include_str!("../docs/skill.md"));
+            }
         }
 
         Commands::Doctor => {

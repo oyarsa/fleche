@@ -60,10 +60,11 @@ fleche download
 
 ## Documentation
 
-See the [full usage guide](docs/guide.md) for configuration, workflows, command reference, and tips. You can also view it from the CLI:
+View the built-in skill reference from the CLI, or install it locally for AI coding agents:
 
 ```bash
-fleche guide
+fleche skill              # Print skill reference to stdout
+fleche skill --install    # Install for Claude Code and Codex
 ```
 
 ## Requirements

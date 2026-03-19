@@ -1,42 +1,109 @@
-# fleche - Remote Job Runner
+---
+name: fleche
+description: Reference documentation for fleche CLI (remote Slurm job runner). Use when working with fleche.toml, submitting or monitoring jobs, downloading results, or troubleshooting fleche.
+---
 
-fleche submits and manages jobs on remote Slurm clusters via SSH.
+# Fleche (Remote Job Submission)
+
+`fleche` is a utility for running jobs on remote Slurm clusters via SSH.
+Configuration is in `fleche.toml`. Run `fleche skill --install` to install this reference for AI coding agents.
+
+## Key Concepts
+
+- **Check `fleche.toml` first** for available jobs (or run `fleche jobs`)
+- Most commands default to most recent job if no job-id given
+- Short ID suffix works (e.g., `x7k2` instead of full `train-20260115-153042-847-x7k2`)
+- Numeric index aliases from `fleche status` work anywhere a job ID is accepted (e.g., `fleche logs 1`)
+- Config supports `${VAR}` substitution from env vars, `.env` file, and `${PROJECT}` built-in
+- **`--filter` vs `--tag` vs `--name`**: `--filter` is for job STATUS, `--tag` is for your custom tags, `--name` is regex on job ID
+- Use `--json` flag on supported commands for machine-readable output
 
 ## Quick Start
 
 ```bash
-# Initialize config in current directory
-fleche init
+fleche init                          # Create starter fleche.toml
+fleche check                         # Validate config
+fleche run <job> --dry-run           # Preview sbatch script
+fleche run <job>                     # Submit and stream output
+fleche run <job> --bg                # Submit without streaming
+fleche run <job> --bg --notify       # Background + terminal notification
+fleche run <job> --ntfy my-topic     # Push notifications via ntfy.sh
+fleche wait <job-id>                 # Wait for completion
+fleche status                        # Check status
+fleche logs                          # View logs (most recent job)
+fleche download                      # Download results
+```
 
-# Check your config is valid
-fleche check
+## Running Jobs
 
-# Preview what would be submitted
-fleche run <job-name> --dry-run
+```bash
+fleche run <job>                              # Submit and stream output (Ctrl+C disconnects, job keeps running)
+fleche run <job> --bg                         # Run in background (--notify for alerts)
+fleche run <job> --env VAR=value --tag key=value  # Set env vars and tags
+fleche run <job> --note "description"         # Add note to document experiment
+fleche run <job> --command "nvidia-smi"       # Override command (keeps job's Slurm config)
+fleche run <job> --dry-run                    # Preview sbatch script without submitting
+fleche run <job> --host local                 # Run locally instead of on remote Slurm cluster
+fleche run <job> --after <job-id>             # Run after another job completes (dependency)
+fleche run <job> --retry 3                    # Auto-retry on failure with exponential backoff
+fleche run <job> --exec                       # Bypass Slurm, run directly via SSH for this run
+fleche run <job> --ntfy my-topic              # Push notifications via ntfy.sh on state changes
+fleche run "command" --gpus 1 --time 1:00:00  # Adhoc Slurm command (no job definition)
+fleche rerun <job-id>                         # Re-run previous job with same settings
+fleche exec <cmd>                             # Run directly via SSH, no Slurm (quick tests)
+fleche exec <cmd> --no-sync                   # Skip project sync (code already on remote)
+fleche exec <cmd> --host local                # Run command locally without SSH
+```
 
-# Submit a job (streams output by default)
-fleche run <job-name>
+## Monitoring
 
-# Submit without streaming (returns immediately)
-fleche run <job-name> --bg
+```bash
+fleche status -n 20                     # Show last 20 jobs
+  --filter running                      #   Filter by status (running/pending/completed/failed/cancelled)
+  --tag key=value                       #   Filter by tag
+  --name 'pattern'                      #   Filter by job ID regex (substring match, use ^/$ to anchor)
+  --archived                            #   Show only archived jobs
+  --all-jobs                            #   Show all jobs including archived
+fleche logs [job-id]                    # View logs (--raw to strip ANSI, --follow to stream)
+  -n 50                                 #   Show only last N lines
+  --stdout / --stderr                   #   Show only one stream
+  --note 'pattern'                      #   Filter by note content (case-insensitive regex)
+fleche wait [job-id]                    # Wait for completion (--notify for alerts, --ntfy for push)
+fleche stats [job-id]                   # Show resource usage (elapsed time, CPU time, max memory)
+fleche note <job-id> [text]             # View or set job note
+fleche ping                             # Check Slurm cluster health
+fleche check                            # Validate config after editing
+fleche check --remote                   # Validate config against remote server (SSH, Slurm, disk space)
+fleche doctor                           # Comprehensive troubleshooting diagnostics
+fleche compare <a> <b>                  # Compare two job configurations side-by-side
+fleche tags                             # List unique tags across all jobs
+fleche jobs                             # List available jobs from configuration
+fleche proxy -- <cmd>                   # Route traffic through SSH SOCKS tunnel to remote host
+```
 
-# Submit in background but get notified when done
-fleche run <job-name> --bg --notify
+## Results
 
-# Get push notifications on your phone via ntfy.sh
-fleche run <job-name> --ntfy my-topic
+```bash
+fleche download [job-id]                # Download output files (--partial while job running)
+  --filter "*.json"                     #   Download only specific file types (repeatable, recursive)
+  --filter "!checkpoints/**"            #   Exclude files/directories with ! prefix
+  --dry-run                             #   Preview what would be downloaded
+```
 
-# Wait for a job to complete
-fleche wait <job-id>
+## Cleanup
 
-# Check status
-fleche status
-
-# View logs (defaults to most recent job)
-fleche logs
-
-# Download results
-fleche download
+```bash
+fleche cancel [job-id]                  # Cancel job (--all for all active, --tag to filter)
+fleche cancel --dry-run                 # Preview what would be cancelled
+fleche clean [job-id]                   # Archive job (default: hides without deleting)
+fleche clean --all                      # Archive all finished jobs
+fleche clean --all --filter failed      # Archive only failed jobs
+fleche clean --older-than 2h -y         # Archive old jobs periodically
+fleche clean --delete [job-id]          # Permanently delete job and remote files
+fleche clean --delete --archived --all  # Delete all archived jobs
+fleche clean --delete --workspace       # Also delete shared workspace (use with caution)
+fleche clean --unarchive [job-id]       # Restore archived job
+fleche clean --dry-run                  # Preview what would be done
 ```
 
 ## Configuration
@@ -514,8 +581,7 @@ fleche rerun <job-id> --ntfy my-topic
 ```
 
 Subscribe to notifications at `https://ntfy.sh/my-topic` or install the
-[ntfy app](https://ntfy.sh) on your phone. Choose a unique topic name to
-avoid conflicts with other users.
+ntfy app on your phone. Choose a unique topic name to avoid conflicts.
 
 Notifications are sent for each state transition:
 - **Submitted** — job entered the Slurm queue (low priority)
@@ -575,6 +641,8 @@ Job notes (from `--note`) are included in the notification body when present.
 | `fleche compare <a> <b>` | Compare two job configurations side-by-side |
 | `fleche proxy -- <cmd>` | Run command through SOCKS proxy to remote host |
 | `fleche jobs` | List available jobs from configuration |
+| `fleche skill` | Print this skill reference |
+| `fleche skill --install` | Install skill for Claude Code and Codex |
 | `fleche completions <shell>` | Generate shell completions (bash/zsh/fish) |
 
 ## Slurm Options
@@ -618,16 +686,45 @@ All jobs share a workspace directory:
 - Job logs go to `jobs/<job-id>/`
 - `fleche download` copies `outputs` from `workspace/` to local
 
+## JSON Output
+
+Use the global `--json` flag to get machine-readable output from any supported
+command. This is useful for scripting, piping to `jq`, or when fleche is driven
+by an AI agent.
+
+```bash
+fleche status --json                   # List jobs as JSON
+fleche status --json <job-id>          # Detailed status as JSON
+fleche jobs --json                     # Available job definitions
+fleche tags --json                     # All tags
+fleche stats --json                    # Resource stats
+fleche wait --json                     # Wait and get final status as JSON
+fleche cancel --dry-run --json         # Preview cancellation as JSON
+fleche clean --all --dry-run --json    # Preview cleanup as JSON
+```
+
+The `--json` flag is supported by: `status`, `jobs`, `tags`, `stats`, `wait`,
+`cancel`, and `clean`.
+
+## Dry Run
+
+Use `--dry-run` to preview what a command would do without side effects:
+
+```bash
+fleche run train --dry-run             # Preview sbatch script
+fleche download --dry-run              # Preview downloads
+fleche cancel --all --dry-run          # Preview cancellation
+fleche clean --older-than 7d --dry-run # Preview cleanup
+fleche clean --all --dry-run           # Preview cleanup
+```
+
 ## Troubleshooting
 
 ### Validate Configuration
 
 ```bash
-# Check config syntax locally
-fleche check
-
-# Validate against remote server (SSH, Slurm, disk space)
-fleche check --remote
+fleche check                           # Check config syntax locally
+fleche check --remote                  # Validate against remote server
 ```
 
 The `--remote` flag tests:
@@ -654,44 +751,11 @@ Runs a full diagnostic check including:
 ### Compare Job Configurations
 
 ```bash
-# Compare two jobs side-by-side
 fleche compare <job-a> <job-b>
 ```
 
 Shows differences in command, Slurm settings, environment, tags, and more.
 Useful for debugging why one job succeeded while another failed.
-
-### Listing Available Jobs
-
-See which jobs are defined in your configuration:
-
-```bash
-fleche jobs
-```
-
-Shows each job name alongside its command. Useful when working in an unfamiliar
-project or to quickly recall job names.
-
-### SOCKS Proxy
-
-Route traffic through the remote host using an SSH SOCKS tunnel:
-
-```bash
-# Run curl through the cluster
-fleche proxy -- curl https://example.com
-
-# Download a model via the cluster's network
-fleche proxy -- wget https://huggingface.co/model/weights.bin
-
-# Use a specific port
-fleche proxy --port 1080 -- curl https://example.com
-
-# Use a different host than fleche.toml
-fleche proxy --host other-cluster -- curl https://example.com
-```
-
-The tunnel opens automatically, sets `ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`
-environment variables on the child process, and closes when the command exits.
 
 ### Numeric Index Aliases
 
@@ -717,59 +781,19 @@ Indices are stable within a session — they correspond to position in the
 unfiltered global list. Filtered views may show gaps (e.g., `#1, #4, #7`)
 but the numbers always resolve to the same job.
 
-## JSON Output
+### SOCKS Proxy
 
-Use the global `--json` flag to get machine-readable output from any supported
-command. This is useful for scripting, piping to `jq`, or when fleche is driven
-by an AI agent.
+Route traffic through the remote host using an SSH SOCKS tunnel:
 
 ```bash
-# List jobs as JSON
-fleche status --json
-
-# Detailed status as JSON
-fleche status --json <job-id>
-
-# Available job definitions
-fleche jobs --json
-
-# All tags
-fleche tags --json
-
-# Resource stats
-fleche stats --json
-
-# Wait for completion, get final status as JSON
-fleche wait --json
-
-# Preview what would be cancelled
-fleche cancel --dry-run --json
-
-# Preview what would be cleaned
-fleche clean --all --dry-run --json
+fleche proxy -- curl https://example.com              # Route through cluster
+fleche proxy -- wget https://huggingface.co/weights   # Download via cluster network
+fleche proxy --port 1080 -- curl https://example.com  # Use specific port
+fleche proxy --host other -- curl https://example.com  # Override host
 ```
 
-The `--json` flag is supported by: `status`, `jobs`, `tags`, `stats`, `wait`,
-`cancel`, and `clean`.
-
-## Dry Run
-
-Use `--dry-run` to preview what a command would do without side effects:
-
-```bash
-# Preview sbatch script
-fleche run train --dry-run
-
-# Preview downloads
-fleche download --dry-run
-
-# Preview cancellation
-fleche cancel --all --dry-run
-
-# Preview cleanup
-fleche clean --older-than 7d --dry-run
-fleche clean --all --dry-run
-```
+The tunnel opens automatically, sets `ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`
+environment variables on the child process, and closes when the command exits.
 
 ## Tips
 
@@ -789,7 +813,7 @@ fleche clean --all --dry-run
 - Jobs share workspace, so chained jobs can read each other's outputs
 - Use `--retry` for flaky jobs that may fail due to transient issues
 - Use `--note` to document experiment parameters for future reference
-- Use `--archive` to hide old jobs without deleting them
+- Use `fleche clean` to archive old jobs without deleting them
 - Use `fleche jobs` to see what jobs are available in the project
 - Use `fleche proxy` to route traffic through the cluster's network
 - Use `--ntfy <topic>` to get push notifications on your phone via ntfy.sh

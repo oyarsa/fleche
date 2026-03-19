@@ -143,8 +143,15 @@ pub enum Commands {
         remote: bool,
     },
 
-    /// Print a comprehensive usage guide (for LLMs and humans)
-    Guide,
+    /// Print or install the fleche skill for AI coding agents
+    ///
+    /// Prints the fleche skill reference to stdout. Use --install to
+    /// install it locally for Claude Code and Codex.
+    Skill {
+        /// Install the skill locally for Claude Code and Codex
+        #[arg(long)]
+        install: bool,
+    },
 
     /// Comprehensive diagnostic for troubleshooting
     ///

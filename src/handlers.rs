@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use console::style;
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Handles the `init` command - creates a starter fleche.toml.
 pub fn init() -> Result<()> {
@@ -118,6 +118,36 @@ pub fn list_jobs(config: &Config, format: OutputFormat) -> Result<()> {
         }
         Ok(())
     })
+}
+
+/// Handles the `skill --install` command - installs the fleche skill for AI agents.
+pub fn install_skill() -> Result<()> {
+    let skill_content = include_str!("../docs/skill.md");
+
+    // Claude Code: .claude/skills/fleche/SKILL.md
+    let claude_dir = PathBuf::from(".claude/skills/fleche");
+    std::fs::create_dir_all(&claude_dir).context("creating .claude/skills/fleche/")?;
+    let claude_path = claude_dir.join("SKILL.md");
+    std::fs::write(&claude_path, skill_content).context("writing Claude Code skill")?;
+    println!("{} Installed {}", style("✓").green(), claude_path.display());
+
+    // Codex: AGENTS.md (skill content without YAML frontmatter)
+    let agents_path = PathBuf::from("AGENTS.md");
+    let agents_content = strip_frontmatter(skill_content);
+    std::fs::write(&agents_path, agents_content).context("writing AGENTS.md")?;
+    println!("{} Installed {}", style("✓").green(), agents_path.display());
+
+    Ok(())
+}
+
+/// Strips YAML frontmatter (delimited by `---`) from the beginning of a string.
+fn strip_frontmatter(content: &str) -> &str {
+    if let Some(rest) = content.strip_prefix("---\n") {
+        if let Some(pos) = rest.find("\n---\n") {
+            return &rest[pos + 5..];
+        }
+    }
+    content
 }
 
 /// Handles the `compare` command - shows differences between two jobs.
@@ -368,5 +398,17 @@ mod tests {
     #[test]
     fn test_truncate_str_empty() {
         assert_eq!(truncate_str("", 10), "");
+    }
+
+    #[test]
+    fn test_strip_frontmatter() {
+        let input = "---\nname: test\ndescription: hello\n---\n\n# Content\nBody here.\n";
+        assert_eq!(strip_frontmatter(input), "\n# Content\nBody here.\n");
+    }
+
+    #[test]
+    fn test_strip_frontmatter_no_frontmatter() {
+        let input = "# Just markdown\nNo frontmatter here.\n";
+        assert_eq!(strip_frontmatter(input), input);
     }
 }
