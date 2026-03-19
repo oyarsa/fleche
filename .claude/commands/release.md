@@ -10,7 +10,7 @@ Review the changes made in this session and update documentation, then cut a rel
 
 Update the relevant documentation files:
 
-1. **Guide** (`src/guide.rs`): Add examples and update the Commands Reference table
+1. **Skill** (`docs/skill.md`): Add examples and update the Commands Reference table
 2. **README** (`README.md`): Update if the change affects the quick start or overview
 
 For each change:
