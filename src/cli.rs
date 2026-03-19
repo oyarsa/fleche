@@ -145,16 +145,12 @@ pub enum Commands {
 
     /// Print or install the fleche skill for AI coding agents
     ///
-    /// Prints the fleche skill reference to stdout. Use --install with
-    /// --agent to write it to the appropriate location.
+    /// Prints the fleche skill reference to stdout. Use --install to
+    /// write it to .agents/skills/ (with a symlink from .claude/skills/).
     Skill {
         /// Install the skill to project or global scope
-        #[arg(long, value_name = "SCOPE", requires = "agent")]
+        #[arg(long, value_name = "SCOPE")]
         install: Option<InstallScope>,
-
-        /// Target AI coding agent (required with --install)
-        #[arg(long, value_name = "AGENT", requires = "install")]
-        agent: Option<Agent>,
     },
 
     /// Comprehensive diagnostic for troubleshooting
@@ -271,15 +267,6 @@ pub enum InstallScope {
     Project,
     /// Install to the user-level config directory
     Global,
-}
-
-/// Target AI coding agent.
-#[derive(Clone, Copy, clap::ValueEnum)]
-pub enum Agent {
-    /// Claude Code (~/.claude/skills/ or .claude/skills/)
-    Claude,
-    /// `OpenAI` Codex CLI (AGENTS.md convention)
-    Codex,
 }
 
 #[derive(clap::Args)]

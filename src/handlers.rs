@@ -121,41 +121,49 @@ pub fn list_jobs(config: &Config, format: OutputFormat) -> Result<()> {
 }
 
 /// Handles the `skill --install` command - installs the fleche skill for AI agents.
-pub fn install_skill(scope: crate::cli::InstallScope, agent: crate::cli::Agent) -> Result<()> {
+///
+/// Writes the skill to `.agents/skills/fleche/SKILL.md` and creates a symlink
+/// from `.claude/skills/fleche` so both Codex and Claude Code pick it up.
+pub fn install_skill(scope: crate::cli::InstallScope) -> Result<()> {
     let skill_content = include_str!("../docs/skill.md");
-    let path = skill_install_path(scope, agent)?;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    std::fs::write(&path, skill_content).with_context(|| format!("writing {}", path.display()))?;
-    println!("{} Installed {}", style("✓").green(), path.display());
-
-    Ok(())
-}
-
-/// Returns the installation path for a given scope and agent.
-fn skill_install_path(
-    scope: crate::cli::InstallScope,
-    agent: crate::cli::Agent,
-) -> Result<PathBuf> {
-    use crate::cli::{Agent, InstallScope};
-
-    let base = match (scope, agent) {
-        (InstallScope::Project, Agent::Claude) => PathBuf::from(".claude/skills"),
-        (InstallScope::Global, Agent::Claude) => {
+    let base = match scope {
+        crate::cli::InstallScope::Project => PathBuf::from("."),
+        crate::cli::InstallScope::Global => {
             let home = std::env::var("HOME").context("HOME not set")?;
-            PathBuf::from(home).join(".claude/skills")
-        }
-        (InstallScope::Project, Agent::Codex) => PathBuf::from(".agents/skills"),
-        (InstallScope::Global, Agent::Codex) => {
-            let home = std::env::var("HOME").context("HOME not set")?;
-            PathBuf::from(home).join(".agents/skills")
+            PathBuf::from(home)
         }
     };
 
-    Ok(base.join("fleche/SKILL.md"))
+    // Write skill to .agents/skills/fleche/SKILL.md (canonical location)
+    let agents_dir = base.join(".agents/skills/fleche");
+    std::fs::create_dir_all(&agents_dir)
+        .with_context(|| format!("creating {}", agents_dir.display()))?;
+    let skill_path = agents_dir.join("SKILL.md");
+    std::fs::write(&skill_path, skill_content)
+        .with_context(|| format!("writing {}", skill_path.display()))?;
+    println!("{} Installed {}", style("✓").green(), skill_path.display());
+
+    // Symlink .claude/skills/fleche -> ../../.agents/skills/fleche
+    let claude_skills_dir = base.join(".claude/skills");
+    std::fs::create_dir_all(&claude_skills_dir)
+        .with_context(|| format!("creating {}", claude_skills_dir.display()))?;
+    let claude_link = claude_skills_dir.join("fleche");
+    if claude_link.exists() || claude_link.is_symlink() {
+        std::fs::remove_file(&claude_link)
+            .or_else(|_| std::fs::remove_dir_all(&claude_link))
+            .with_context(|| format!("removing existing {}", claude_link.display()))?;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("../../.agents/skills/fleche", &claude_link)
+        .with_context(|| format!("symlinking {}", claude_link.display()))?;
+    println!(
+        "{} Symlinked {} -> ../../.agents/skills/fleche",
+        style("✓").green(),
+        claude_link.display()
+    );
+
+    Ok(())
 }
 
 /// Handles the `compare` command - shows differences between two jobs.
