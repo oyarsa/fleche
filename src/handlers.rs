@@ -123,21 +123,13 @@ pub fn list_jobs(config: &Config, format: OutputFormat) -> Result<()> {
 /// Handles the `skill --install` command - installs the fleche skill for AI agents.
 pub fn install_skill(scope: crate::cli::InstallScope, agent: crate::cli::Agent) -> Result<()> {
     let skill_content = include_str!("../docs/skill.md");
-
     let path = skill_install_path(scope, agent)?;
-
-    let content = match agent {
-        // Claude Code skills use YAML frontmatter
-        crate::cli::Agent::Claude => skill_content,
-        // Codex uses plain markdown
-        crate::cli::Agent::Codex => strip_frontmatter(skill_content),
-    };
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
     }
-    std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(&path, skill_content).with_context(|| format!("writing {}", path.display()))?;
     println!("{} Installed {}", style("✓").green(), path.display());
 
     Ok(())
@@ -150,32 +142,20 @@ fn skill_install_path(
 ) -> Result<PathBuf> {
     use crate::cli::{Agent, InstallScope};
 
-    match (scope, agent) {
-        (InstallScope::Project, Agent::Claude) => {
-            Ok(PathBuf::from(".claude/skills/fleche/SKILL.md"))
-        }
+    let base = match (scope, agent) {
+        (InstallScope::Project, Agent::Claude) => PathBuf::from(".claude/skills"),
         (InstallScope::Global, Agent::Claude) => {
             let home = std::env::var("HOME").context("HOME not set")?;
-            Ok(PathBuf::from(home).join(".claude/skills/fleche/SKILL.md"))
+            PathBuf::from(home).join(".claude/skills")
         }
-        // Codex reads AGENTS.md per directory; subdirectory AGENTS.md files
-        // are loaded when the agent works in that directory.
-        (InstallScope::Project, Agent::Codex) => Ok(PathBuf::from(".codex/AGENTS.md")),
+        (InstallScope::Project, Agent::Codex) => PathBuf::from(".agents/skills"),
         (InstallScope::Global, Agent::Codex) => {
             let home = std::env::var("HOME").context("HOME not set")?;
-            Ok(PathBuf::from(home).join(".codex/instructions.md"))
+            PathBuf::from(home).join(".agents/skills")
         }
-    }
-}
+    };
 
-/// Strips YAML frontmatter (delimited by `---`) from the beginning of a string.
-fn strip_frontmatter(content: &str) -> &str {
-    if let Some(rest) = content.strip_prefix("---\n") {
-        if let Some(pos) = rest.find("\n---\n") {
-            return &rest[pos + 5..];
-        }
-    }
-    content
+    Ok(base.join("fleche/SKILL.md"))
 }
 
 /// Handles the `compare` command - shows differences between two jobs.
@@ -426,17 +406,5 @@ mod tests {
     #[test]
     fn test_truncate_str_empty() {
         assert_eq!(truncate_str("", 10), "");
-    }
-
-    #[test]
-    fn test_strip_frontmatter() {
-        let input = "---\nname: test\ndescription: hello\n---\n\n# Content\nBody here.\n";
-        assert_eq!(strip_frontmatter(input), "\n# Content\nBody here.\n");
-    }
-
-    #[test]
-    fn test_strip_frontmatter_no_frontmatter() {
-        let input = "# Just markdown\nNo frontmatter here.\n";
-        assert_eq!(strip_frontmatter(input), input);
     }
 }
