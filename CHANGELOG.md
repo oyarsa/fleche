@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.19.0] - 2026-03-19
+
+### Changed
+- Replaced `fleche guide` with `fleche skill`, which prints the same comprehensive
+  reference but in skill format (with YAML frontmatter for AI coding agents)
+
+### Added
+- `fleche skill --install project` installs the skill to `.agents/skills/fleche/SKILL.md`
+  with a symlink from `.claude/skills/fleche`, so both Codex and Claude Code pick it up
+- `fleche skill --install global` does the same in `~/.agents/skills/` and `~/.claude/skills/`
+
+### Removed
+- `fleche guide` command (replaced by `fleche skill`)
+
 ## [6.18.0] - 2026-03-18
 
 ### Added

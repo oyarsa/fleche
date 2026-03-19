@@ -63,8 +63,9 @@ fleche download
 View the built-in skill reference from the CLI, or install it locally for AI coding agents:
 
 ```bash
-fleche skill              # Print skill reference to stdout
-fleche skill --install    # Install for Claude Code and Codex
+fleche skill                    # Print skill reference to stdout
+fleche skill --install project  # Install for current project
+fleche skill --install global   # Install for all projects
 ```
 
 ## Requirements
