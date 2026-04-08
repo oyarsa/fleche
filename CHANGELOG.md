@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.19.1] - 2026-04-08
+
+### Fixed
+- Jobs completing successfully in Slurm were sometimes reported as "failed" when
+  Slurm accounting (sacct) lagged behind actual job completion. The status check
+  now retries up to 6 times before giving up.
+- `fleche status` now re-queries Slurm for jobs marked "failed" that were never
+  confirmed by Slurm, self-healing any previously misreported failures.
+
 ## [6.19.0] - 2026-03-19
 
 ### Changed

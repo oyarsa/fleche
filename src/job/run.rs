@@ -887,9 +887,21 @@ async fn follow_job_logs(
     // Wait for either the tail process to exit or the job to finish
     let live = tokio::select! {
         _ = child.wait() => {
-            // Tail exited on its own - check final status
+            // Tail exited on its own - check final status.
+            // Retry a few times because Slurm accounting (sacct) can lag behind
+            // the actual job completion, causing a transient lookup failure.
             let ssh = ctx.ssh(&host);
-            get_job_status(&ssh, &slurm_id).await.unwrap_or_else(|_| LiveStatus::new(JobStatus::Failed))
+            let mut result = None;
+            for attempt in 0..6 {
+                if attempt > 0 {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                if let Ok(live) = get_job_status(&ssh, &slurm_id).await {
+                    result = Some(live);
+                    break;
+                }
+            }
+            result.unwrap_or_else(|| LiveStatus::new(JobStatus::Failed))
         }
         result = status_check => {
             // Job finished, kill tail and print status
@@ -1272,11 +1284,19 @@ async fn follow_direct_job_logs(
     // Wait for either the tail process to exit or the job to finish
     let live = tokio::select! {
         _ = child.wait() => {
-            // Tail exited on its own - check final status
+            // Tail exited on its own - check final status with retries
             let ssh = ctx.ssh(host);
-            get_remote_direct_job_status(&ssh, job_dir)
-                .await
-                .unwrap_or_else(|_| LiveStatus::new(JobStatus::Failed))
+            let mut result = None;
+            for attempt in 0..6 {
+                if attempt > 0 {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                if let Ok(live) = get_remote_direct_job_status(&ssh, job_dir).await {
+                    result = Some(live);
+                    break;
+                }
+            }
+            result.unwrap_or_else(|| LiveStatus::new(JobStatus::Failed))
         }
         result = status_check => {
             // Job finished, kill tail

@@ -656,14 +656,17 @@ impl Registry {
         self.load_tags_for_jobs(jobs)
     }
 
-    /// Lists all active jobs (pending or running).
+    /// Lists all jobs whose status should be refreshed from Slurm.
     ///
-    /// Used to refresh job statuses from Slurm before displaying.
+    /// Includes pending/running jobs plus failed jobs whose failure was never
+    /// confirmed by Slurm (no `slurm_state` recorded). The latter handles the case
+    /// where a transient error during status lookup caused a false failure.
     /// Excludes archived jobs.
     pub fn list_active_jobs(&self) -> Result<Vec<JobRecord>> {
         let sql = format!(
             "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
-             WHERE status IN ('pending', 'running') \
+             WHERE (status IN ('pending', 'running') \
+                    OR (status = 'failed' AND slurm_id IS NOT NULL AND slurm_state IS NULL)) \
              AND (archived = 0 OR archived IS NULL) \
              ORDER BY created_at DESC"
         );
