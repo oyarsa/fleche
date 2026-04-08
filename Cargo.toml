@@ -1,6 +1,6 @@
 [package]
 name = "fleche"
-version = "6.19.1"
+version = "6.19.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Remote job runner for Slurm clusters"
@@ -13,14 +13,13 @@ clap_complete = "4"
 tokio = { version = "1", features = ["full", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.9.11"
+toml = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
-dirs = "5"
+dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
-indicatif = "0.17"
 console = "0.15"
-thiserror = "1"
+thiserror = "2"
 anyhow = "1"
 regex = "1"
 shellexpand = "3"

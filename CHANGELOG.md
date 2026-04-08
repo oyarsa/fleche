@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.19.2] - 2026-04-08
+
+### Changed
+- Upgraded dependencies: thiserror 1→2, dirs 5→6, toml 0.9→1
+- Removed unused indicatif dependency
+
 ## [6.19.1] - 2026-04-08
 
 ### Fixed
