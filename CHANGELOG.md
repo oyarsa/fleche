@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.22.0] - 2026-06-03
+
+### Fixed
+- `fleche exec` now also rejects empty `inputs` entries (the same protection
+  added to `fleche run` in 6.21.0). Previously the exec path collected job
+  inputs without validation and would silently skip empty entries; it now fails
+  fast with a clear error before touching the network.
+
 ## [6.21.0] - 2026-06-03
 
 ### Fixed
