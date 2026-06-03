@@ -70,6 +70,86 @@ impl SyncStats {
     }
 }
 
+/// The rsync filters used when syncing project code (excludes `.git`,
+/// respects `.gitignore`). Shared between the real sync and the dry-run lister
+/// so the listed files match what would actually be transferred.
+const PROJECT_FILTER_ARGS: [&str; 2] = ["--exclude=.git", "--filter=:- .gitignore"];
+
+/// A placeholder destination for local dry-run listings. rsync requires a
+/// destination argument, but `--dry-run` never writes, so this is never created.
+const DRY_RUN_DEST: &str = "fleche-dry-run-placeholder/";
+
+/// Parses rsync `--out-format=%n` output into a list of relative paths.
+///
+/// Directory entries (paths ending in `/`, including the `./` root) are omitted
+/// so only actual files are listed.
+fn parse_sync_file_list(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty() && !line.ends_with('/'))
+        .map(String::from)
+        .collect()
+}
+
+/// Runs rsync locally in dry-run mode and returns the files it would transfer.
+///
+/// No remote connection is made; the destination is a placeholder that is never
+/// written because of `--dry-run`.
+async fn list_sync_files(source_with_slash: &str, extra_args: &[&str]) -> Result<Vec<String>> {
+    let mut cmd = Command::new("rsync");
+    cmd.args(["-az", "--dry-run", "--out-format=%n"]);
+    cmd.args(extra_args);
+    cmd.arg(source_with_slash);
+    cmd.arg(DRY_RUN_DEST);
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| FlecheError::RsyncFailed(format!("Failed to execute rsync: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(FlecheError::RsyncFailed(format!("rsync failed: {stderr}")));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_sync_file_list(&stdout))
+}
+
+/// Lists the project files that would be synced to the remote workspace.
+///
+/// Uses the same filters as [`sync_project_to_workspace`] so the result matches
+/// what an actual sync would upload to a fresh workspace.
+pub async fn list_project_sync_files(source: &Path) -> Result<Vec<String>> {
+    let source_str = format!("{}/", source.display());
+    list_sync_files(&source_str, &PROJECT_FILTER_ARGS).await
+}
+
+/// Lists the input files that would be synced to the remote workspace.
+///
+/// Mirrors [`sync_inputs_to_workspace`]: directories are expanded to their
+/// contents (prefixed with the input path), and plain files are listed as-is.
+pub async fn list_input_sync_files(source: &Path, inputs: &[String]) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+
+    for input in inputs {
+        let input_path = source.join(input);
+
+        if input_path.is_dir() {
+            let source_str = format!("{}/", input_path.display());
+            let prefix = input.trim_end_matches('/');
+            for file in list_sync_files(&source_str, &[]).await? {
+                files.push(format!("{prefix}/{file}"));
+            }
+        } else {
+            files.push(input.clone());
+        }
+    }
+
+    Ok(files)
+}
+
 /// Syncs project files to the remote workspace.
 ///
 /// Uses rsync with compression, archive mode, and respects `.gitignore`.
@@ -80,12 +160,8 @@ pub async fn sync_project_to_workspace(
 ) -> Result<SyncStats> {
     let mut cmd = Command::new("rsync");
     cmd.args(["-e", &rsync_ssh_cmd()]);
-    cmd.args([
-        "-avz",
-        "--stats",
-        "--exclude=.git",
-        "--filter=:- .gitignore",
-    ]);
+    cmd.args(["-avz", "--stats"]);
+    cmd.args(PROJECT_FILTER_ARGS);
 
     // Ensure source path ends with / to copy contents, not the directory itself
     let source_str = format!("{}/", source.display());
@@ -341,6 +417,19 @@ total size is 125,432  speedup is 7.88
         };
         // 2.25 GB rounds to 2.2 with banker's rounding (round half to even)
         assert_eq!(stats.human_readable(), "2.2 GB");
+    }
+
+    #[test]
+    fn test_parse_sync_file_list_filters_dirs() {
+        let output = "./\n.gitignore\na.txt\nsrc/\nsrc/b.txt\n";
+        let files = parse_sync_file_list(output);
+        assert_eq!(files, vec![".gitignore", "a.txt", "src/b.txt"]);
+    }
+
+    #[test]
+    fn test_parse_sync_file_list_empty() {
+        assert!(parse_sync_file_list("").is_empty());
+        assert!(parse_sync_file_list("./\nsrc/\n").is_empty());
     }
 
     #[test]

@@ -8,7 +8,10 @@ use crate::registry::{JobStatus, LiveStatus, Registry};
 use crate::runtime::{RuntimeCtx, send_notification};
 use crate::slurm::{generate_sbatch_script, get_job_status, submit_job};
 use crate::ssh::{SshClient, shell_escape};
-use crate::sync::{sync_inputs_to_workspace, sync_project_to_workspace};
+use crate::sync::{
+    list_input_sync_files, list_project_sync_files, sync_inputs_to_workspace,
+    sync_project_to_workspace,
+};
 use chrono::Utc;
 use console::style;
 use rand::Rng;
@@ -137,6 +140,8 @@ pub async fn run_job(
         );
         println!();
         println!("{script}");
+        println!();
+        print_dry_run_synced_files(config, &job.inputs).await?;
         return Ok(());
     }
 
@@ -569,6 +574,45 @@ async fn prepare_remote_workspace(
     }
 
     Ok(ssh)
+}
+
+/// Prints the files that would be synced to the remote workspace.
+///
+/// Used by dry-run to show project code and input files without connecting to
+/// the remote.
+async fn print_dry_run_synced_files(config: &Config, inputs: &[String]) -> Result<()> {
+    let project_files = list_project_sync_files(&config.project_path).await?;
+    println!(
+        "{}",
+        style(format!(
+            "[dry-run] Project files to sync ({}):",
+            project_files.len()
+        ))
+        .bold()
+        .yellow()
+    );
+    for file in &project_files {
+        println!("  {file}");
+    }
+
+    let input_files = list_input_sync_files(&config.project_path, inputs).await?;
+    if !input_files.is_empty() {
+        println!();
+        println!(
+            "{}",
+            style(format!(
+                "[dry-run] Input files to sync ({}):",
+                input_files.len()
+            ))
+            .bold()
+            .yellow()
+        );
+        for file in &input_files {
+            println!("  {file}");
+        }
+    }
+
+    Ok(())
 }
 
 /// Re-runs a previous job with the same settings.
@@ -1033,6 +1077,8 @@ async fn run_job_direct_remote(
         );
         println!();
         println!("{script}");
+        println!();
+        print_dry_run_synced_files(config, &job.inputs).await?;
         return Ok(());
     }
 
