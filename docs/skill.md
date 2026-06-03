@@ -687,6 +687,9 @@ All jobs share a workspace directory:
 - Job commands run with `workspace/` as their working directory
 - Job logs go to `jobs/<job-id>/`
 - `fleche download` copies `outputs` from `workspace/` to local
+- An empty `inputs`/`outputs` entry (e.g. a `${VAR}` that expands to `""`) is
+  rejected and the job is not run — set the variable to a real path or remove
+  the entry
 
 ## JSON Output
 
