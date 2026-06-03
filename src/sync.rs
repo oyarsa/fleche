@@ -134,6 +134,11 @@ pub async fn list_input_sync_files(source: &Path, inputs: &[String]) -> Result<V
     let mut files = Vec::new();
 
     for input in inputs {
+        // Defense in depth: skip empty entries (see sync_inputs_to_workspace).
+        if input.trim().is_empty() {
+            continue;
+        }
+
         let input_path = source.join(input);
 
         if input_path.is_dir() {
@@ -198,6 +203,12 @@ pub async fn sync_inputs_to_workspace(
     let mut total_bytes: u64 = 0;
 
     for input in inputs {
+        // Defense in depth: an empty entry joins to the project root and would
+        // make rsync sync the whole tree. resolve_job already rejects these.
+        if input.trim().is_empty() {
+            continue;
+        }
+
         let input_path = source.join(input);
         let is_dir = input_path.is_dir();
 
@@ -259,6 +270,12 @@ pub async fn download_outputs(
     options: &DownloadOptions,
 ) -> Result<()> {
     for output in outputs {
+        // Defense in depth: an empty entry would make rsync pull the entire
+        // remote workspace into the local project root.
+        if output.trim().is_empty() {
+            continue;
+        }
+
         let remote_path = format!("{host}:{workspace}/{output}");
         let local_path = local_base.join(output);
 
@@ -417,6 +434,33 @@ total size is 125,432  speedup is 7.88
         };
         // 2.25 GB rounds to 2.2 with banker's rounding (round half to even)
         assert_eq!(stats.human_readable(), "2.2 GB");
+    }
+
+    #[tokio::test]
+    async fn test_list_input_sync_files_skips_empty_entries() {
+        // Regression: an empty input entry must NOT expand to the project root.
+        // With only an empty entry, nothing should be listed.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tracked.txt"), "data").unwrap();
+        std::fs::create_dir(dir.path().join("ignored")).unwrap();
+        std::fs::write(dir.path().join("ignored/big.bin"), "huge").unwrap();
+
+        let files = list_input_sync_files(dir.path(), &[String::new()])
+            .await
+            .unwrap();
+        assert!(
+            files.is_empty(),
+            "empty input entry must not sync project files, got: {files:?}"
+        );
+
+        // A whitespace-only entry is also skipped.
+        let files = list_input_sync_files(dir.path(), &["   ".to_string()])
+            .await
+            .unwrap();
+        assert!(
+            files.is_empty(),
+            "whitespace entry must be skipped, got: {files:?}"
+        );
     }
 
     #[test]

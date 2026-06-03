@@ -504,6 +504,11 @@ impl Config {
             .map(|v| expand_variables(v, &self.project_name, &expanded_env, &self.dotenv))
             .collect::<Result<Vec<_>>>()?;
 
+        // Reject empty entries: an input/output that expanded to "" would make
+        // rsync treat the project root as the source and sync everything.
+        reject_empty_path_entries(&name, "inputs", &job_def.inputs, &inputs)?;
+        reject_empty_path_entries(&name, "outputs", &job_def.outputs, &outputs)?;
+
         // Resolve host: job definition -> remote.host
         let host = job_def.host.unwrap_or_else(|| self.remote.host.clone());
 
@@ -533,6 +538,33 @@ impl Config {
         names.sort();
         names
     }
+}
+
+/// Rejects empty (or whitespace-only) path entries in an `inputs`/`outputs`
+/// list.
+///
+/// Such an entry — usually a `${VAR}` that expanded to `""` — would otherwise
+/// be handed to rsync as a source, where it resolves to the project root and
+/// recursively syncs the entire tree, bypassing `.gitignore`. `raw` and
+/// `expanded` are index-aligned; `raw` is used only to make the error message
+/// point at the original value.
+fn reject_empty_path_entries(
+    job: &str,
+    field: &str,
+    raw: &[String],
+    expanded: &[String],
+) -> Result<()> {
+    for (index, value) in expanded.iter().enumerate() {
+        if value.trim().is_empty() {
+            return Err(FlecheError::EmptyPathEntry {
+                job: job.to_string(),
+                field: field.to_string(),
+                index,
+                raw: raw.get(index).cloned().unwrap_or_default(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Searches for fleche.toml starting from the current directory and going up.
@@ -989,6 +1021,102 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("dotenv file not found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_empty_input_entry_is_rejected() {
+        // Regression: an input like "${OPTIONAL}" that expands to "" must NOT
+        // be passed to rsync (it would sync the whole project root, bypassing
+        // .gitignore). resolve_job must error instead.
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+                inputs = ["data/real.txt", "${OPTIONAL}"]
+                [jobs.train.env]
+                OPTIONAL = ""
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        assert!(result.is_err(), "expected empty input to be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("inputs"), "got: {err}");
+        assert!(err.contains("empty"), "got: {err}");
+        assert!(err.contains("${OPTIONAL}"), "got: {err}");
+    }
+
+    #[test]
+    fn test_empty_output_entry_is_rejected() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+                outputs = ["${MISSING}"]
+                [jobs.train.env]
+                MISSING = ""
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        assert!(result.is_err(), "expected empty output to be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("outputs"), "got: {err}");
+    }
+
+    #[test]
+    fn test_whitespace_only_input_entry_is_rejected() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+                inputs = ["   "]
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        assert!(
+            result.is_err(),
+            "expected whitespace-only input to be rejected"
+        );
+    }
+
+    #[test]
+    fn test_non_empty_inputs_still_resolve() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [remote]
+                host = "cluster"
+                base_path = "~/fleche"
+                [jobs.train]
+                command = "echo hi"
+                inputs = ["data/real.txt", "${OPTIONAL}"]
+                [jobs.train.env]
+                OPTIONAL = "extra/file.txt"
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let job = config
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .unwrap();
+        assert_eq!(job.inputs, vec!["data/real.txt", "extra/file.txt"]);
     }
 
     #[test]

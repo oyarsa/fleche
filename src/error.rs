@@ -29,6 +29,24 @@ pub enum FlecheError {
     #[error("Missing required field '{0}' in config")]
     MissingField(String),
 
+    /// An `inputs`/`outputs` entry resolved to an empty string, which would
+    /// make rsync sync the entire project root (bypassing `.gitignore`).
+    #[error(
+        "Job '{job}' has an empty {field} entry at index {index} (from {raw:?}). \
+         A `${{VAR}}` likely expanded to an empty string. \
+         Remove the entry or set the variable to a real path."
+    )]
+    EmptyPathEntry {
+        /// The job whose configuration contains the empty entry.
+        job: String,
+        /// Which list the entry came from (`inputs` or `outputs`).
+        field: String,
+        /// The zero-based index of the offending entry.
+        index: usize,
+        /// The raw (pre-expansion) value, e.g. `"${OPTIONAL}"`.
+        raw: String,
+    },
+
     /// Failed to establish an SSH connection to the remote host.
     #[error("SSH connection failed: {0}")]
     SshConnection(String),
