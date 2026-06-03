@@ -23,7 +23,7 @@ Configuration is in `fleche.toml`. Run `fleche skill --install` to install this 
 ```bash
 fleche init                          # Create starter fleche.toml
 fleche check                         # Validate config
-fleche run <job> --dry-run           # Preview sbatch script
+fleche run <job> --dry-run           # Preview sbatch script + files to sync
 fleche run <job>                     # Submit and stream output
 fleche run <job> --bg                # Submit without streaming
 fleche run <job> --bg --notify       # Background + terminal notification
@@ -42,7 +42,7 @@ fleche run <job> --bg                         # Run in background (--notify for 
 fleche run <job> --env VAR=value --tag key=value  # Set env vars and tags
 fleche run <job> --note "description"         # Add note to document experiment
 fleche run <job> --command "nvidia-smi"       # Override command (keeps job's Slurm config)
-fleche run <job> --dry-run                    # Preview sbatch script without submitting
+fleche run <job> --dry-run                    # Preview sbatch script + files to sync without submitting
 fleche run <job> --host local                 # Run locally instead of on remote Slurm cluster
 fleche run <job> --after <job-id>             # Run after another job completes (dependency)
 fleche run <job> --retry 3                    # Auto-retry on failure with exponential backoff
@@ -597,6 +597,7 @@ Job notes (from `--note`) are included in the notification body when present.
 | Command | Description |
 |---------|-------------|
 | `fleche run [job\|cmd] [opts]` | Submit a job via Slurm (or directly with `--exec`, locally with `--host local`) |
+| `fleche run <job> --dry-run` | Preview sbatch script and list the project/input files that would be synced |
 | `fleche rerun <job-id>` | Re-run a previous job with same settings |
 | `fleche exec <cmd>` | Run command directly via SSH (or locally with `--host local`, `--no-sync` to skip sync) |
 | `fleche status [job-id\|#N]` | Show job status (defaults to listing all) |
@@ -712,7 +713,7 @@ The `--json` flag is supported by: `status`, `jobs`, `tags`, `stats`, `wait`,
 Use `--dry-run` to preview what a command would do without side effects:
 
 ```bash
-fleche run train --dry-run             # Preview sbatch script
+fleche run train --dry-run             # Preview sbatch script + project/input files to sync
 fleche download --dry-run              # Preview downloads
 fleche cancel --all --dry-run          # Preview cancellation
 fleche clean --older-than 7d --dry-run # Preview cleanup

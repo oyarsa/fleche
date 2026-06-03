@@ -39,7 +39,7 @@ fleche init
 # Then validate your config
 fleche check
 
-# Preview what would be submitted
+# Preview what would be submitted (sbatch script + files to sync)
 fleche run <job-name> --dry-run
 
 # Submit a job (streams output by default)

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.20.0] - 2026-06-03
+
+### Added
+- `fleche run --dry-run` now lists the project and input files that would be
+  synced to the remote workspace, in addition to printing the generated script.
+  The listing runs rsync locally (respecting `.gitignore` and `--exclude=.git`)
+  and never connects to the remote. Applies to both Slurm and `--exec` jobs.
+
 ## [6.19.2] - 2026-04-08
 
 ### Changed
