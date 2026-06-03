@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.21.0] - 2026-06-03
+
+### Fixed
+- An `inputs`/`outputs` entry that resolved to an empty string (typically a
+  `${VAR}` whose env var defaulted to `""`) caused rsync to treat the project
+  root as the source and recursively upload the entire tree — bypassing
+  `.gitignore` and potentially uploading tens of gigabytes of gitignored data.
+  Such entries are now rejected with a clear error and the job is not run.
+  Empty entries are also defensively skipped in the sync/download layer.
+
 ## [6.20.0] - 2026-06-03
 
 ### Added
