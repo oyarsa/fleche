@@ -1,6 +1,6 @@
 //! Job execution operations - running and re-running jobs on remote clusters.
 
-use crate::config::{Config, ResolvedJob, SlurmConfig};
+use crate::config::{Config, ResolvedJob, SlurmConfig, reject_empty_path_entries};
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::ntfy;
@@ -765,6 +765,13 @@ pub async fn exec_command(
     if no_sync {
         println!("Skipping sync, executing command directly...");
     } else {
+        // Reject empty input entries before touching the network, so `fleche
+        // exec` fails fast with the same error as `fleche run` instead of
+        // silently skipping them (see Config::resolve_job).
+        for (name, job) in &config.jobs {
+            reject_empty_path_entries(name, "inputs", &job.inputs, &job.inputs)?;
+        }
+
         // Create workspace if needed
         println!(
             "{} Creating remote directories...",

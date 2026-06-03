@@ -548,7 +548,7 @@ impl Config {
 /// recursively syncs the entire tree, bypassing `.gitignore`. `raw` and
 /// `expanded` are index-aligned; `raw` is used only to make the error message
 /// point at the original value.
-fn reject_empty_path_entries(
+pub fn reject_empty_path_entries(
     job: &str,
     field: &str,
     raw: &[String],
@@ -1094,6 +1094,29 @@ mod tests {
             result.is_err(),
             "expected whitespace-only input to be rejected"
         );
+    }
+
+    #[test]
+    fn test_reject_empty_path_entries_helper() {
+        // The `fleche exec` path validates raw (unexpanded) entries with this
+        // helper, so a literal empty/whitespace entry must be caught.
+        assert!(reject_empty_path_entries("j", "inputs", &[], &[]).is_ok());
+        assert!(
+            reject_empty_path_entries(
+                "j",
+                "inputs",
+                &["data/x.txt".to_string()],
+                &["data/x.txt".to_string()],
+            )
+            .is_ok()
+        );
+
+        let raw = vec!["data/x.txt".to_string(), String::new()];
+        let err = reject_empty_path_entries("j", "inputs", &raw, &raw).unwrap_err();
+        assert!(err.to_string().contains("index 1"), "got: {err}");
+
+        let ws = vec!["   ".to_string()];
+        assert!(reject_empty_path_entries("j", "inputs", &ws, &ws).is_err());
     }
 
     #[test]
