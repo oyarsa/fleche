@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.23.0] - 2026-06-03
+
+### Changed
+- Release assets now build each published platform with its explicit Rust
+  target triple and package the target-specific binary. The release workflow
+  covers Linux x86_64, Linux aarch64, and macOS Apple Silicon, and smoke-tests
+  each binary before uploading it.
+
 ## [6.22.0] - 2026-06-03
 
 ### Fixed
