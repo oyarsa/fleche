@@ -51,6 +51,9 @@ fleche run <job-name> --bg
 # Check status
 fleche status
 
+# Watch status live, refreshing every second
+fleche watch
+
 # View logs (defaults to most recent job)
 fleche logs
 

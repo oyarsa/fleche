@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.24.0] - 2026-06-04
+
+### Added
+- `fleche watch` continuously displays the recent-jobs status table, redrawing
+  in place every N seconds (`--interval`/`-i`, default 1s, fractional allowed).
+  It accepts the same filters as `fleche status` and runs until interrupted
+  with Ctrl+C. Redraws use synchronized terminal output (mode 2026) to avoid
+  flicker on supporting terminals.
+
 ## [6.23.0] - 2026-06-03
 
 ### Changed
