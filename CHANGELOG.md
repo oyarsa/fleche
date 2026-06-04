@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.26.0] - 2026-06-04
+
+### Changed
+- Long job IDs in status tables are now truncated in the middle, preserving the
+  trailing random suffix that disambiguates them (e.g.
+  `train_glen-20260604-135603…-19ab`) instead of dropping it. Truncation uses a
+  single-character ellipsis (`…`) and is now Unicode-safe (notes with
+  multi-byte characters no longer risk a panic).
+
 ## [6.25.0] - 2026-06-04
 
 ### Fixed
