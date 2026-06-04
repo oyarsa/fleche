@@ -165,7 +165,7 @@ pub fn print_indexed_job_table(jobs: &[JobRecord], global_indices: &[usize], sub
         println!(
             "{}  {:<45} {} {:<12} {:<20}",
             style(format!("{idx:>3}")).dim(),
-            truncate(&job.id, 44),
+            truncate_middle(&job.id, 44),
             format_status(job.status),
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
@@ -192,7 +192,7 @@ pub fn print_job_table(jobs: &[JobRecord], subtitle: bool) {
     for job in jobs {
         println!(
             "{:<45} {} {:<12} {:<20}",
-            truncate(&job.id, 44),
+            truncate_middle(&job.id, 44),
             format_status(job.status),
             job.slurm_id.as_deref().unwrap_or("-"),
             job.created_at.format("%Y-%m-%d %H:%M"),
@@ -253,13 +253,50 @@ fn format_slurm_state(state: &str) -> String {
     }
 }
 
-/// Truncates a string to a maximum length, adding "..." if truncated.
+/// The ellipsis marker used when truncating. A single character (one display
+/// column) so it costs less width than `...`.
+const ELLIPSIS: char = '…';
+
+/// Truncates a string to `max_len` characters, appending an ellipsis if cut.
+///
+/// Truncates from the end (keeps the start), which suits left-to-right text
+/// like notes. For IDs, prefer [`truncate_middle`] so the trailing
+/// disambiguating suffix is preserved.
 fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len - 3])
+    if s.chars().count() <= max_len {
+        return s.to_string();
     }
+    let head: String = s.chars().take(max_len.saturating_sub(1)).collect();
+    format!("{head}{ELLIPSIS}")
+}
+
+/// Truncates an ID-like string in the middle, preserving the trailing
+/// `-<suffix>` segment (the random disambiguator that makes IDs unique).
+///
+/// For example `train_glen-20260604-135603-19ab` becomes
+/// `train_glen-20260604-1356…-19ab` rather than losing the `-19ab` tail.
+/// When the string has no `-`, a fixed-length tail is kept instead.
+fn truncate_middle(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        return s.to_string();
+    }
+
+    // Reserve at least one character for the head plus one for the ellipsis.
+    let max_tail = max_len.saturating_sub(2);
+    let tail_start = s.rfind('-').unwrap_or(0);
+    let tail: String = s[tail_start..]
+        .chars()
+        .rev()
+        .take(max_tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    let tail_len = tail.chars().count();
+    let head_len = max_len.saturating_sub(tail_len + 1);
+    let head: String = s.chars().take(head_len).collect();
+    format!("{head}{ELLIPSIS}{tail}")
 }
 
 #[cfg(test)]
@@ -278,11 +315,37 @@ mod tests {
 
     #[test]
     fn test_truncate_long_string() {
-        assert_eq!(truncate("hello world", 8), "hello...");
+        // 7 head chars + the single-char ellipsis = 8.
+        assert_eq!(truncate("hello world", 8), "hello w…");
     }
 
     #[test]
     fn test_truncate_empty_string() {
         assert_eq!(truncate("", 10), "");
+    }
+
+    #[test]
+    fn test_truncate_middle_short_string() {
+        assert_eq!(truncate_middle("train-abcd", 20), "train-abcd");
+    }
+
+    #[test]
+    fn test_truncate_middle_preserves_suffix() {
+        let id = "train_glen_contrastive-20260604-135603-19ab";
+        let out = truncate_middle(id, 30);
+        assert_eq!(out.chars().count(), 30);
+        assert!(out.ends_with("-19ab"), "tail not preserved: {out}");
+        assert!(out.contains('…'));
+        assert!(out.starts_with("train_glen"));
+    }
+
+    #[test]
+    fn test_truncate_middle_no_hyphen() {
+        let out = truncate_middle("abcdefghijklmnop", 8);
+        assert_eq!(out.chars().count(), 8);
+        assert!(out.contains('…'));
+        // Keeps both ends.
+        assert!(out.starts_with('a'));
+        assert!(out.ends_with('p'));
     }
 }
