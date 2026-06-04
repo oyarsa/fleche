@@ -556,8 +556,16 @@ async fn prepare_remote_workspace(
         "{} Creating remote directories...",
         style("[1/4]").bold().dim()
     );
-    ssh.mkdir(workspace).await?;
-    ssh.mkdir(job_dir).await?;
+    {
+        // Serialize SSH ControlMaster creation so concurrent `fleche run`
+        // processes don't race to open the shared master socket (the loser's
+        // rsync would otherwise fail). The first mkdir establishes the master;
+        // the lock releases at the end of this block, before the transfers, so
+        // they still run in parallel over the now-established master.
+        let _master_lock = crate::ssh::lock_control_master(host);
+        ssh.mkdir(workspace).await?;
+        ssh.mkdir(job_dir).await?;
+    }
 
     print!("{} Syncing project code...", style("[2/4]").bold().dim());
     let _ = std::io::stdout().flush();
@@ -777,7 +785,12 @@ pub async fn exec_command(
             "{} Creating remote directories...",
             style("[1/3]").bold().dim()
         );
-        ssh.mkdir(&workspace).await?;
+        {
+            // Serialize SSH ControlMaster creation across concurrent processes
+            // before the single-shot rsync (see prepare_remote_workspace).
+            let _master_lock = crate::ssh::lock_control_master(&host);
+            ssh.mkdir(&workspace).await?;
+        }
 
         // Sync project code to workspace
         print!("{} Syncing project code...", style("[2/3]").bold().dim());

@@ -9,10 +9,13 @@ use std::path::Path;
 use tokio::process::Command;
 
 /// Returns the SSH command options for rsync.
+///
+/// Note: no `ssh -v` here. The verbose banner gets folded into rsync's stderr,
+/// and on failure that banner (`OpenSSH_x.y ...`) would mask the real error.
 fn rsync_ssh_cmd() -> String {
     // Base command with timeout and batch mode options
     let mut cmd = concat!(
-        "ssh -v",
+        "ssh",
         " -o ClearAllForwardings=yes",
         " -o ConnectTimeout=30",
         " -o ServerAliveInterval=15",

@@ -63,6 +63,52 @@ pub fn ssh_socket_dir() -> PathBuf {
     dir
 }
 
+/// Guard holding an exclusive lock that serializes `ControlMaster` creation.
+///
+/// While held, other `fleche` processes block in [`lock_control_master`] until
+/// it is dropped, by which point this process's master socket is live and can
+/// be reused. The lock releases automatically when the guard goes out of scope.
+#[cfg(unix)]
+pub struct ControlMasterLock {
+    _lock: nix::fcntl::Flock<std::fs::File>,
+}
+
+/// Acquires a cross-process lock that serializes SSH `ControlMaster` creation
+/// for `host`.
+///
+/// Concurrent `fleche` invocations otherwise race to create the shared master
+/// socket; the losers fail before the master is accepting connections (most
+/// visibly, the single-shot rsync step dies). Holding this lock around the
+/// first SSH connection ensures exactly one process establishes the master
+/// while the rest wait and then reuse it. Release the guard before the actual
+/// transfers so they still run in parallel over the established master.
+///
+/// Best-effort: returns `None` if the lock file or lock cannot be obtained, in
+/// which case the caller proceeds without serialization.
+#[cfg(unix)]
+pub fn lock_control_master(host: &str) -> Option<ControlMasterLock> {
+    use nix::fcntl::{Flock, FlockArg};
+
+    let safe_host = host.replace(['/', ':'], "_");
+    let lock_path = ssh_socket_dir().join(format!("{safe_host}.lock"));
+    let file = std::fs::File::create(&lock_path).ok()?;
+    match Flock::lock(file, FlockArg::LockExclusive) {
+        Ok(lock) => Some(ControlMasterLock { _lock: lock }),
+        Err(_) => None,
+    }
+}
+
+/// No-op guard on non-Unix platforms, which do not use `ControlMaster`.
+#[cfg(not(unix))]
+pub struct ControlMasterLock;
+
+/// No-op on non-Unix platforms (see the Unix variant): without `ControlMaster`
+/// each invocation opens its own connection, so there is no master to race on.
+#[cfg(not(unix))]
+pub fn lock_control_master(_host: &str) -> Option<ControlMasterLock> {
+    None
+}
+
 /// Checks if an SSH error looks like a connection/auth failure that might succeed on retry.
 fn is_retryable_error(stderr: &str) -> bool {
     stderr.contains("Permission denied")
@@ -616,6 +662,19 @@ mod tests {
     #[test]
     fn test_quote_with_vars_single_quotes() {
         assert_eq!(quote_with_vars("it's"), "'it'\\''s'");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn control_master_lock_acquires_and_releases() {
+        // A fresh lock can be taken, and after the guard drops a new lock for
+        // the same host can be taken again.
+        let first = lock_control_master("lock-test-host");
+        assert!(first.is_some());
+        drop(first);
+
+        let second = lock_control_master("lock-test-host");
+        assert!(second.is_some());
     }
 
     #[test]
