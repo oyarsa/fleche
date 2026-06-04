@@ -27,7 +27,9 @@ pub use run::{
     RunJobOptions, cancel_remote_direct_job, exec_command, get_remote_direct_job_status, rerun_job,
     run_job,
 };
-pub use status::{StatusOptions, list_tags, note_job, show_status};
+pub use status::{
+    StatusOptions, list_tags, note_job, parse_interval_secs, show_status, watch_status,
+};
 
 /// Returns the workspace path for a project on the remote host.
 pub fn workspace_path(config: &Config) -> String {

@@ -142,6 +142,10 @@ pub enum FlecheError {
     /// A required external dependency is not available.
     #[error("{0}")]
     MissingDependency(String),
+
+    /// A command-line argument had an invalid value.
+    #[error("{0}")]
+    InvalidArgument(String),
 }
 
 /// A Result type alias using [`FlecheError`] as the error type.

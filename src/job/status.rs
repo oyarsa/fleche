@@ -11,7 +11,9 @@ use crate::slurm::{get_job_resource_usage, get_job_status};
 use console::style;
 use regex::Regex;
 use serde::Serialize;
+use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use super::display::{print_indexed_job_table, print_job_details, print_job_table};
 use super::get_remote_direct_job_status;
@@ -93,6 +95,80 @@ pub async fn show_status(
     }
 
     Ok(())
+}
+
+/// Converts a refresh interval given in seconds into a [`Duration`].
+///
+/// Rejects non-finite values and anything `<= 0`, since a zero or negative
+/// interval would make the watch loop spin without pausing.
+pub fn parse_interval_secs(secs: f64) -> Result<Duration> {
+    if !secs.is_finite() || secs <= 0.0 {
+        return Err(FlecheError::InvalidArgument(format!(
+            "--interval must be a positive number of seconds, got {secs}"
+        )));
+    }
+    Ok(Duration::from_secs_f64(secs))
+}
+
+/// Begins a synchronized-output frame (terminal mode 2026).
+///
+/// Terminals that understand this hold rendering until [`SYNC_END`], then swap
+/// the whole frame in atomically — so the screen never shows a half-cleared
+/// state. Terminals that don't understand it ignore the sequence.
+const SYNC_BEGIN: &str = "\x1b[?2026h";
+/// Ends a synchronized-output frame (see [`SYNC_BEGIN`]).
+const SYNC_END: &str = "\x1b[?2026l";
+/// Erase the entire screen and move the cursor home.
+const CLEAR_HOME: &str = "\x1b[2J\x1b[H";
+
+/// Continuously refreshes and redraws the recent-jobs table until interrupted.
+///
+/// Clears the screen and reprints the table every `interval`, reusing the same
+/// filtering/display configuration as [`show_status`]. A failed refresh tick is
+/// reported in place and the loop continues; the loop only ends when the user
+/// interrupts it (Ctrl+C). JSON output is unsupported because clearing the
+/// screen each tick is meaningless for machine-readable output.
+///
+/// To avoid flicker, the (slow) remote refresh runs *before* the frame is
+/// drawn, then the clear-and-redraw is wrapped in a synchronized-output frame
+/// so it presents atomically. The refresh is kept outside that frame because
+/// terminals time out synchronized output after ~150ms, which a slow SSH
+/// refresh would otherwise blow through.
+pub async fn watch_status(
+    opts: StatusOptions<'_>,
+    interval: Duration,
+    ctx: RuntimeCtx,
+) -> Result<()> {
+    if !opts.format.is_human() {
+        return Err(FlecheError::InvalidArgument(
+            "fleche watch does not support --json; use `fleche status --json` instead".to_string(),
+        ));
+    }
+
+    let registry = Registry::open()?;
+    let header = style(format!(
+        "fleche watch — every {}s — Ctrl+C to stop",
+        interval.as_secs_f64()
+    ))
+    .dim();
+
+    loop {
+        // Slow remote work first, outside the synchronized frame.
+        let refresh = refresh_active_job_statuses(&registry, &ctx).await;
+
+        // Fast, atomic redraw: clear + render from the local registry.
+        print!("{SYNC_BEGIN}{CLEAR_HOME}");
+        println!("{header}");
+        println!();
+        match refresh.and_then(|()| list_recent_jobs(&registry, &opts)) {
+            Ok(()) => {}
+            Err(e) => println!("{} {e}", style("refresh error:").red()),
+        }
+        print!("{SYNC_END}");
+        let _ = io::stdout().flush();
+
+        tokio::time::sleep(interval).await;
+    }
 }
 
 /// Shows detailed status for a single job, refreshing its live status first.
@@ -334,5 +410,31 @@ pub fn resolve_job(
             .into_iter()
             .next()
             .ok_or(FlecheError::NoRecentJob)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_interval_accepts_positive_values() {
+        assert_eq!(parse_interval_secs(1.0).unwrap(), Duration::from_secs(1));
+        assert_eq!(
+            parse_interval_secs(0.5).unwrap(),
+            Duration::from_millis(500)
+        );
+    }
+
+    #[test]
+    fn parse_interval_rejects_zero_and_negative() {
+        assert!(parse_interval_secs(0.0).is_err());
+        assert!(parse_interval_secs(-1.0).is_err());
+    }
+
+    #[test]
+    fn parse_interval_rejects_non_finite() {
+        assert!(parse_interval_secs(f64::NAN).is_err());
+        assert!(parse_interval_secs(f64::INFINITY).is_err());
     }
 }

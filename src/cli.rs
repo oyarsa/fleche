@@ -80,6 +80,13 @@ pub enum Commands {
     /// With a job ID, shows detailed status.
     Status(StatusArgs),
 
+    /// Continuously display the job status table, refreshing periodically
+    ///
+    /// Clears the screen and redraws the recent-jobs table every N seconds
+    /// (default 1s), like the Unix `watch` command. Accepts the same filters
+    /// as `status`. Runs until interrupted with Ctrl+C.
+    Watch(WatchArgs),
+
     /// Fetch and display job logs
     ///
     /// Without a job ID, shows logs of the most recent job.
@@ -391,6 +398,41 @@ pub struct StatusArgs {
     /// Hide the subtitle line (job name, tags, note) below each row
     #[arg(long)]
     pub compact: bool,
+}
+
+#[derive(clap::Args)]
+pub struct WatchArgs {
+    /// Filter by status (pending, running, completed, failed, cancelled) - repeatable
+    #[arg(long)]
+    pub filter: Vec<String>,
+
+    /// Filter by job name regex (e.g., "123" matches "train-123-xy", "^train" matches "train-foo")
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Filter by tag (repeatable)
+    #[arg(long = "tag", value_parser = parse_key_value)]
+    pub tags: Vec<(String, String)>,
+
+    /// Number of jobs to show (default: 20)
+    #[arg(short = 'n', long)]
+    pub last: Option<usize>,
+
+    /// Show only archived jobs
+    #[arg(long)]
+    pub archived: bool,
+
+    /// Show all jobs including archived
+    #[arg(long = "all-jobs", conflicts_with = "archived")]
+    pub all_jobs: bool,
+
+    /// Hide the subtitle line (job name, tags, note) below each row
+    #[arg(long)]
+    pub compact: bool,
+
+    /// Refresh interval in seconds (fractional allowed, e.g. 0.5)
+    #[arg(short = 'i', long, default_value_t = 1.0)]
+    pub interval: f64,
 }
 
 #[derive(clap::Args)]

@@ -195,6 +195,34 @@ async fn run() -> Result<()> {
             .await?;
         }
 
+        Commands::Watch(args) => {
+            let archived_filter = if args.archived {
+                ArchivedFilter::OnlyArchived
+            } else if args.all_jobs {
+                ArchivedFilter::IncludeAll
+            } else {
+                ArchivedFilter::ExcludeArchived
+            };
+
+            let interval = job::parse_interval_secs(args.interval)?;
+
+            job::watch_status(
+                StatusOptions {
+                    filters: &args.filter,
+                    name: args.name.as_deref(),
+                    tags: &args.tags,
+                    last: args.last,
+                    default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
+                    archived: archived_filter,
+                    compact: args.compact,
+                    format,
+                },
+                interval,
+                runtime_ctx,
+            )
+            .await?;
+        }
+
         Commands::Logs(args) => {
             job::show_logs(
                 args.job_id.as_deref(),
