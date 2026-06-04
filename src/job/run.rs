@@ -901,15 +901,19 @@ fn exec_command_locally(
     Ok(())
 }
 
+/// The character set for job ID suffixes: lowercase letters and digits.
+///
+/// Restricted to lowercase to avoid collisions on case-insensitive filesystems
+/// (e.g. macOS) where the ID is used as a directory name.
+const SUFFIX_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+
 /// Generates a unique job ID from the job name and current timestamp.
 fn generate_job_id(job_name: &str) -> String {
+    let mut rng = rand::thread_rng();
+    let suffix: String = (0..4)
+        .map(|_| SUFFIX_CHARSET[rng.gen_range(0..SUFFIX_CHARSET.len())] as char)
+        .collect();
     let now = Utc::now();
-    let suffix: String = rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
-        .take(4)
-        .map(char::from)
-        .collect::<String>()
-        .to_lowercase();
     format!(
         "{}-{}-{}",
         job_name,
