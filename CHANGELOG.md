@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.25.0] - 2026-06-04
+
+### Fixed
+- Concurrent `fleche run --bg` submissions from one shell no longer race on
+  the shared SSH `ControlMaster` socket. Previously all but one invocation
+  failed at the rsync step (`[2/4] Syncing project code`) because they raced
+  to create the master before it was accepting connections. Master creation is
+  now serialized with a per-host file lock held only around the directory
+  warm-up, so the data transfers still run in parallel. The lock is acquired
+  off the async runtime and is a no-op on non-Unix platforms (which don't use
+  `ControlMaster`).
+- rsync failures now surface the real SSH error instead of the `OpenSSH_x.y`
+  verbose banner, which previously masked the underlying cause.
+
 ## [6.24.0] - 2026-06-04
 
 ### Added
