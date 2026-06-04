@@ -562,7 +562,18 @@ async fn prepare_remote_workspace(
         // rsync would otherwise fail). The first mkdir establishes the master;
         // the lock releases at the end of this block, before the transfers, so
         // they still run in parallel over the now-established master.
-        let _master_lock = crate::ssh::lock_control_master(host);
+        //
+        // Acquire on a blocking thread so waiting on a sibling's lock doesn't
+        // stall the async runtime; the guard (an flock on an fd) is valid
+        // regardless of which thread took it. Best-effort: proceed unlocked if
+        // the blocking task fails.
+        let _master_lock = {
+            let host = host.to_string();
+            tokio::task::spawn_blocking(move || crate::ssh::lock_control_master(&host))
+                .await
+                .ok()
+                .flatten()
+        };
         ssh.mkdir(workspace).await?;
         ssh.mkdir(job_dir).await?;
     }
@@ -788,7 +799,14 @@ pub async fn exec_command(
         {
             // Serialize SSH ControlMaster creation across concurrent processes
             // before the single-shot rsync (see prepare_remote_workspace).
-            let _master_lock = crate::ssh::lock_control_master(&host);
+            // Acquire off the reactor so the wait doesn't stall the runtime.
+            let _master_lock = {
+                let host = host.clone();
+                tokio::task::spawn_blocking(move || crate::ssh::lock_control_master(&host))
+                    .await
+                    .ok()
+                    .flatten()
+            };
             ssh.mkdir(&workspace).await?;
         }
 
