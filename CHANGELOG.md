@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [8.1.0] - 2026-06-05
+
+### Changed
+- Updated the bundled AI-agent skill (`docs/skill.md`, shown by `fleche skill`)
+  to match the current CLI: the unified `-f`/`--filter 'type:query'` selection,
+  `download --glob`, and `clean --before`. No code changes.
+
 ## [8.0.0] - 2026-06-05
 
 ### Changed (breaking)

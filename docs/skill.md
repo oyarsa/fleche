@@ -15,7 +15,7 @@ Configuration is in `fleche.toml`. Run `fleche skill --install` to install this 
 - Short ID suffix works (e.g., `x7k2` instead of full `train-20260115-153042-847-x7k2`)
 - Numeric index aliases from `fleche status` work anywhere a job ID is accepted (e.g., `fleche logs 1`)
 - Config supports `${VAR}` substitution from env vars, `.env` file, and `${PROJECT}` built-in
-- **`--filter` vs `--tag` vs `--name`**: `--filter` is for job STATUS, `--tag` is for your custom tags, `--name` is regex on job ID
+- **Filtering**: job-selection commands take a unified `-f`/`--filter 'type:query'` (repeatable, ANDed). Types: `status`, `name` (ID regex), `tag` (key=value), `note` (regex). No type prefix means status, so `-f completed` == `-f status:completed`. (Note: `logs` uses `--filter` long-only, since `-f` is `--follow`.)
 - Use `--json` flag on supported commands for machine-readable output
 
 ## Quick Start
@@ -59,15 +59,16 @@ fleche exec <cmd> --host local                # Run command locally without SSH
 
 ```bash
 fleche status -n 20                     # Show last 20 jobs
-  --filter running                      #   Filter by status (running/pending/completed/failed/cancelled)
-  --tag key=value                       #   Filter by tag
-  --name 'pattern'                      #   Filter by job ID regex (substring match, use ^/$ to anchor)
+  -f running                            #   Filter by status (no prefix = status)
+  -f tag:key=value                      #   Filter by tag (repeatable, ANDed)
+  -f name:'pattern'                     #   Filter by job ID regex (substring match, use ^/$ to anchor)
+  -f note:'pattern'                     #   Filter by note content (case-insensitive regex)
   --archived                            #   Show only archived jobs
   --all-jobs                            #   Show all jobs including archived
 fleche logs [job-id]                    # View logs (--raw to strip ANSI, --follow to stream)
   -n 50                                 #   Show only last N lines
   --stdout / --stderr                   #   Show only one stream
-  --note 'pattern'                      #   Filter by note content (case-insensitive regex)
+  --filter note:'pattern'               #   Select default job by filter (logs: --filter long-only)
 fleche wait [job-id]                    # Wait for completion (--notify for alerts, --ntfy for push)
 fleche stats [job-id]                   # Show resource usage (elapsed time, CPU time, max memory)
 fleche note <job-id> [text]             # View or set job note
@@ -85,20 +86,21 @@ fleche proxy -- <cmd>                   # Route traffic through SSH SOCKS tunnel
 
 ```bash
 fleche download [job-id]                # Download output files (--partial while job running)
-  --filter "*.json"                     #   Download only specific file types (repeatable, recursive)
-  --filter "!checkpoints/**"            #   Exclude files/directories with ! prefix
+  --glob "*.json"                       #   Download only specific file types (repeatable, recursive)
+  --glob "!checkpoints/**"              #   Exclude files/directories with ! prefix
+  -f tag:key=value                      #   Select the job to download from by filter
   --dry-run                             #   Preview what would be downloaded
 ```
 
 ## Cleanup
 
 ```bash
-fleche cancel [job-id]                  # Cancel job (--all for all active, --tag to filter)
+fleche cancel [job-id]                  # Cancel job (--all for all active, -f to filter)
 fleche cancel --dry-run                 # Preview what would be cancelled
 fleche clean [job-id]                   # Archive job (default: hides without deleting)
 fleche clean --all                      # Archive all finished jobs
-fleche clean --all --filter failed      # Archive only failed jobs
-fleche clean --older-than 2h -y         # Archive old jobs periodically
+fleche clean --all -f failed            # Archive only failed jobs
+fleche clean --before 2h -y             # Archive jobs older than 2h (delta or timestamp)
 fleche clean --delete [job-id]          # Permanently delete job and remote files
 fleche clean --delete --archived --all  # Delete all archived jobs
 fleche clean --delete --workspace       # Also delete shared workspace (use with caution)
@@ -376,31 +378,31 @@ fleche exec "python -c 'print(1+1)'" --host local
 Add tags to track and filter experiments:
 
 ```bash
-# Tag jobs when submitting
+# Tag jobs when submitting (--tag sets tags on run/rerun)
 fleche run train --tag experiment=ablation --tag model=8b
 fleche run train --tag experiment=baseline --tag model=8b
 
-# Filter status by tag
-fleche status --tag experiment=ablation
-fleche status --tag model=8b --filter running
+# Filter status by tag (selection uses -f tag:..., repeatable and ANDed)
+fleche status -f tag:experiment=ablation
+fleche status -f tag:model=8b -f running
 
 # Filter by job name (regex pattern, implicit .* around)
-fleche status --name 123             # jobs containing "123"
-fleche status --name '^train'        # jobs starting with "train"
-fleche status --name 'ablation$'     # jobs ending with "ablation"
+fleche status -f name:123             # jobs containing "123"
+fleche status -f name:'^train'        # jobs starting with "train"
+fleche status -f name:'ablation$'     # jobs ending with "ablation"
 
-# View logs from most recent job with specific tag
-fleche logs --tag experiment=ablation
+# View logs from most recent job with specific tag (logs: --filter long-only)
+fleche logs --filter tag:experiment=ablation
 
 # Download outputs from most recent job with tag
-fleche download --tag experiment=ablation
+fleche download -f tag:experiment=ablation
 
 # Cancel all jobs with a specific tag
-fleche cancel --all --tag experiment=test
+fleche cancel --all -f tag:experiment=test
 
 # Clean up old experiment jobs
-fleche clean --all --tag experiment=old
-fleche clean --older-than 7d --tag experiment=ablation
+fleche clean --all -f tag:experiment=old
+fleche clean --before 7d -f tag:experiment=ablation
 ```
 
 Tags are shown in status output below each job that has them.
@@ -425,14 +427,14 @@ fleche logs --follow
 fleche download --partial
 
 # Download only specific file types (searches inside directories)
-fleche download --filter "*.json" --filter "*.csv"
+fleche download --glob "*.json" --glob "*.csv"
 
 # Download everything except checkpoints
-fleche download --filter "!checkpoints/**"
+fleche download --glob "!checkpoints/**"
 
 # Preview what would be downloaded without actually downloading
 fleche download --dry-run
-fleche download --dry-run --filter "*.json"
+fleche download --dry-run --glob "*.json"
 ```
 
 ### Job Chaining
@@ -489,9 +491,9 @@ fleche note <job-id>
 
 # Notes also shown in fleche status <job-id>
 
-# Search logs by note content (case-insensitive regex)
-fleche logs --note "learning rate"
-fleche logs --note "experiment.*baseline"
+# Search logs by note content (case-insensitive regex; logs uses --filter)
+fleche logs --filter note:"learning rate"
+fleche logs --filter note:"experiment.*baseline"
 ```
 
 ### Archiving Jobs
@@ -506,7 +508,7 @@ fleche clean <job-id>
 fleche clean --all
 
 # Archive only failed jobs
-fleche clean --all --filter failed
+fleche clean --all -f failed
 
 # View archived jobs
 fleche status --archived
@@ -527,7 +529,7 @@ fleche clean --delete <job-id>
 fleche clean --delete --archived --all
 
 # Delete archived jobs older than 30 days
-fleche clean --delete --archived --older-than 30d
+fleche clean --delete --archived --before 30d
 ```
 
 Archived jobs are hidden from `fleche status` by default but their data is preserved.
@@ -602,24 +604,25 @@ Job notes (from `--note`) are included in the notification body when present.
 | `fleche exec <cmd>` | Run command directly via SSH (or locally with `--host local`, `--no-sync` to skip sync) |
 | `fleche status [job-id\|#N]` | Show job status (defaults to listing all) |
 | `fleche status -n 50` | Show last 50 jobs |
-| `fleche status --filter running` | Filter by status (repeatable) |
-| `fleche status --name <pattern>` | Filter by name (regex, implicit `.*` around) |
-| `fleche status --tag <k=v>` | Filter jobs by tag |
+| `fleche status -f running` | Filter by status (no prefix = status) |
+| `fleche status -f name:<pat>` | Filter by ID regex (implicit `.*` around) |
+| `fleche status -f tag:<k=v>` | Filter jobs by tag (repeatable, ANDed) |
+| `fleche status -f note:<pat>` | Filter by note content (regex) |
 | `fleche logs [job-id]` | View job output (defaults to most recent) |
 | `fleche logs --raw` | Strip ANSI codes (auto when piped) |
-| `fleche logs --tag <k=v>` | Logs from most recent job with tag |
-| `fleche logs --note <pattern>` | Logs from most recent job matching note |
+| `fleche logs --filter tag:<k=v>` | Logs from most recent matching job (`-f` is `--follow`) |
+| `fleche logs --filter note:<pat>` | Logs from most recent job matching note |
 | `fleche download [job-id]` | Pull output files (defaults to most recent) |
-| `fleche download --filter <pat>` | Filter by glob, searches inside directories (`!` to exclude) |
+| `fleche download --glob <pat>` | Filter outputs by glob, searches inside dirs (`!` to exclude) |
 | `fleche download --dry-run` | Preview what would be downloaded |
-| `fleche download --tag <k=v>` | Download from most recent job with tag |
+| `fleche download -f tag:<k=v>` | Download from most recent matching job |
 | `fleche cancel [job-id]` | Cancel a job (defaults to most recent active) |
-| `fleche cancel --all [--tag <k=v>]` | Cancel all (or tagged) active jobs |
+| `fleche cancel --all [-f <filter>]` | Cancel all (or filtered) active jobs |
 | `fleche cancel --dry-run` | Show what would be cancelled without cancelling |
 | `fleche clean [job-id]` | Archive job (hide from listings) |
-| `fleche clean --all [--tag <k=v>]` | Archive all (or tagged) finished jobs |
-| `fleche clean --all --filter failed` | Archive only failed jobs |
-| `fleche clean --older-than <dur>` | Archive jobs older than duration |
+| `fleche clean --all [-f <filter>]` | Archive all (or filtered) finished jobs |
+| `fleche clean --all -f failed` | Archive only failed jobs |
+| `fleche clean --before <delta\|ts>` | Archive jobs created before a delta (7d) or timestamp |
 | `fleche clean --delete [job-id]` | Permanently delete job and remote files |
 | `fleche clean --delete --archived --all` | Delete all archived jobs |
 | `fleche clean --delete --workspace` | Also delete shared workspace |
@@ -719,7 +722,7 @@ Use `--dry-run` to preview what a command would do without side effects:
 fleche run train --dry-run             # Preview sbatch script + project/input files to sync
 fleche download --dry-run              # Preview downloads
 fleche cancel --all --dry-run          # Preview cancellation
-fleche clean --older-than 7d --dry-run # Preview cleanup
+fleche clean --before 7d --dry-run     # Preview cleanup
 fleche clean --all --dry-run           # Preview cleanup
 ```
 
