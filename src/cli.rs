@@ -371,17 +371,13 @@ pub struct StatusArgs {
     /// Job ID to check (default: list recent jobs)
     pub job_id: Option<String>,
 
-    /// Filter by status (pending, running, completed, failed, cancelled) - repeatable
-    #[arg(long)]
+    /// Filter jobs by 'type:query' (repeatable, `ANDed` together).
+    ///
+    /// Types: status, name (ID regex), tag (key=value), note (regex). Without a
+    /// type prefix the value is a status. Examples: -f running, -f name:^train,
+    /// -f tag:env=prod, -f note:baseline.
+    #[arg(short = 'f', long)]
     pub filter: Vec<String>,
-
-    /// Filter by job name regex (e.g., "123" matches "train-123-xy", "^train" matches "train-foo")
-    #[arg(long)]
-    pub name: Option<String>,
-
-    /// Filter by tag (repeatable)
-    #[arg(long = "tag", value_parser = parse_key_value)]
-    pub tags: Vec<(String, String)>,
 
     /// Number of jobs to show (default: 20)
     #[arg(short = 'n', long)]
@@ -402,17 +398,13 @@ pub struct StatusArgs {
 
 #[derive(clap::Args)]
 pub struct WatchArgs {
-    /// Filter by status (pending, running, completed, failed, cancelled) - repeatable
-    #[arg(long)]
+    /// Filter jobs by 'type:query' (repeatable, `ANDed` together).
+    ///
+    /// Types: status, name (ID regex), tag (key=value), note (regex). Without a
+    /// type prefix the value is a status. Examples: -f running, -f name:^train,
+    /// -f tag:env=prod, -f note:baseline.
+    #[arg(short = 'f', long)]
     pub filter: Vec<String>,
-
-    /// Filter by job name regex (e.g., "123" matches "train-123-xy", "^train" matches "train-foo")
-    #[arg(long)]
-    pub name: Option<String>,
-
-    /// Filter by tag (repeatable)
-    #[arg(long = "tag", value_parser = parse_key_value)]
-    pub tags: Vec<(String, String)>,
 
     /// Number of jobs to show (default: 20)
     #[arg(short = 'n', long)]
@@ -572,6 +564,82 @@ fn parse_key_value(s: &str) -> Result<(String, String), String> {
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
+/// A single parsed `--filter` clause selecting jobs by one attribute.
+#[derive(Debug, PartialEq, Eq)]
+pub enum JobFilter {
+    /// Match jobs whose status equals this value.
+    Status(String),
+    /// Match jobs whose ID matches this regex.
+    Name(String),
+    /// Match jobs carrying this `key=value` tag.
+    Tag(String, String),
+    /// Match jobs whose note matches this regex (case-insensitive).
+    Note(String),
+}
+
+/// Parses one `--filter` value of the form `type:query`.
+///
+/// Recognized types are `status`, `name`, `tag`, and `note`. A value with no
+/// recognized `type:` prefix is treated as a status (the common case), so
+/// `--filter completed` and `--filter status:completed` are equivalent. The
+/// split is on the first `:` only, so regex queries may contain colons (e.g.
+/// `name:(?i:train)`).
+fn parse_job_filter(raw: &str) -> Result<JobFilter, String> {
+    let Some((kind, query)) = raw.split_once(':') else {
+        // No prefix: treat the whole value as a status.
+        return Ok(JobFilter::Status(raw.to_string()));
+    };
+
+    match kind {
+        "status" => Ok(JobFilter::Status(query.to_string())),
+        "name" => Ok(JobFilter::Name(query.to_string())),
+        "note" => Ok(JobFilter::Note(query.to_string())),
+        "tag" => {
+            let (key, value) = parse_key_value(query)
+                .map_err(|_| format!("tag filter must be 'tag:key=value', got 'tag:{query}'"))?;
+            Ok(JobFilter::Tag(key, value))
+        }
+        other => Err(format!(
+            "unknown filter type '{other}' in '{raw}'; \
+             expected status, name, tag, or note (or omit the type for a status)"
+        )),
+    }
+}
+
+/// The set of job-selection predicates gathered from `--filter`, bucketed by
+/// attribute.
+///
+/// All buckets are `ANDed` together when listing. Statuses act as set membership
+/// (a job matches if its status is any of them); repeated `name`/`note` clauses
+/// keep the last value.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FilterSelection {
+    /// Statuses to match (membership test).
+    pub statuses: Vec<String>,
+    /// Job-ID regex, if any.
+    pub name: Option<String>,
+    /// Tags that must all be present.
+    pub tags: Vec<(String, String)>,
+    /// Note regex, if any.
+    pub note: Option<String>,
+}
+
+/// Builds a [`FilterSelection`] from the unified `--filter` values.
+pub fn collect_filters(filters: &[String]) -> Result<FilterSelection, String> {
+    let mut selection = FilterSelection::default();
+
+    for raw in filters {
+        match parse_job_filter(raw)? {
+            JobFilter::Status(s) => selection.statuses.push(s),
+            JobFilter::Name(n) => selection.name = Some(n),
+            JobFilter::Note(n) => selection.note = Some(n),
+            JobFilter::Tag(k, v) => selection.tags.push((k, v)),
+        }
+    }
+
+    Ok(selection)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,6 +657,88 @@ mod tests {
         let (k, v) = parse_key_value("CONFIG=a=b=c").unwrap();
         assert_eq!(k, "CONFIG");
         assert_eq!(v, "a=b=c");
+    }
+
+    #[test]
+    fn test_parse_job_filter_defaults_to_status() {
+        assert_eq!(
+            parse_job_filter("completed").unwrap(),
+            JobFilter::Status("completed".to_string())
+        );
+        assert_eq!(
+            parse_job_filter("status:running").unwrap(),
+            JobFilter::Status("running".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_job_filter_no_prefix_equals_status_prefix() {
+        // An untyped value must be exactly equivalent to a `status:` value.
+        for status in ["completed", "running", "pending", "failed", "cancelled"] {
+            assert_eq!(
+                parse_job_filter(status).unwrap(),
+                parse_job_filter(&format!("status:{status}")).unwrap(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_job_filter_typed() {
+        assert_eq!(
+            parse_job_filter("name:^train").unwrap(),
+            JobFilter::Name("^train".to_string())
+        );
+        assert_eq!(
+            parse_job_filter("note:baseline").unwrap(),
+            JobFilter::Note("baseline".to_string())
+        );
+        assert_eq!(
+            parse_job_filter("tag:env=prod").unwrap(),
+            JobFilter::Tag("env".to_string(), "prod".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_job_filter_splits_on_first_colon() {
+        // Regex queries may contain colons; only the first splits type/query.
+        assert_eq!(
+            parse_job_filter("name:(?i:train)").unwrap(),
+            JobFilter::Name("(?i:train)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_job_filter_unknown_type_errors() {
+        assert!(parse_job_filter("naem:foo").is_err());
+    }
+
+    #[test]
+    fn test_parse_job_filter_bad_tag_errors() {
+        assert!(parse_job_filter("tag:novalue").is_err());
+    }
+
+    #[test]
+    fn test_collect_filters_buckets() {
+        let filters = vec![
+            "running".to_string(),
+            "name:^train".to_string(),
+            "tag:env=prod".to_string(),
+            "tag:team=ml".to_string(),
+            "note:baseline".to_string(),
+        ];
+        let sel = collect_filters(&filters).unwrap();
+
+        assert_eq!(sel.statuses, vec!["running".to_string()]);
+        assert_eq!(sel.name, Some("^train".to_string()));
+        assert_eq!(sel.note, Some("baseline".to_string()));
+        // Multiple tags are kept and ANDed.
+        assert_eq!(
+            sel.tags,
+            vec![
+                ("env".to_string(), "prod".to_string()),
+                ("team".to_string(), "ml".to_string()),
+            ]
+        );
     }
 
     #[test]

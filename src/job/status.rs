@@ -9,7 +9,7 @@ use crate::registry::{
 use crate::runtime::RuntimeCtx;
 use crate::slurm::{get_job_resource_usage, get_job_status};
 use console::style;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -38,6 +38,8 @@ pub struct StatusOptions<'a> {
     pub name: Option<&'a str>,
     /// Key-value pairs that must all match for a job to be included.
     pub tags: &'a [(String, String)],
+    /// Regex pattern matched against job notes (case-insensitive).
+    pub note: Option<&'a str>,
     /// Maximum number of jobs to display. Falls back to `default_limit`,
     /// then to [`DEFAULT_LIST_LIMIT`].
     pub last: Option<usize>,
@@ -238,7 +240,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
             None,
             &status_filters,
             opts.name,
-            None,
+            opts.note,
             opts.tags,
             opts.archived,
             limit,
@@ -265,7 +267,10 @@ fn list_indexed_jobs(
     status_filters: &[JobStatus],
     limit: usize,
 ) -> Result<(Vec<usize>, Vec<JobRecord>)> {
-    let has_filters = !status_filters.is_empty() || opts.name.is_some() || !opts.tags.is_empty();
+    let has_filters = !status_filters.is_empty()
+        || opts.name.is_some()
+        || !opts.tags.is_empty()
+        || opts.note.is_some();
     let fetch_limit = if has_filters {
         limit.saturating_mul(10).max(1000)
     } else {
@@ -283,12 +288,26 @@ fn list_indexed_jobs(
         })
         .transpose()?;
 
+    let note_re = opts
+        .note
+        .map(|p| {
+            let pattern = build_job_filter_pattern(p);
+            RegexBuilder::new(&pattern)
+                .case_insensitive(true)
+                .build()
+                .map_err(|e| FlecheError::InvalidRegexPattern(format!("note '{p}': {e}")))
+        })
+        .transpose()?;
+
     Ok(all_jobs
         .into_iter()
         .enumerate()
         .filter(|(_, job)| {
             (status_filters.is_empty() || status_filters.contains(&job.status))
                 && name_re.as_ref().is_none_or(|re| re.is_match(&job.id))
+                && note_re
+                    .as_ref()
+                    .is_none_or(|re| job.note.as_ref().is_some_and(|n| re.is_match(n)))
                 && opts
                     .tags
                     .iter()

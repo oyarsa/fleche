@@ -37,6 +37,7 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
 use config::Config;
 use console::style;
+use error::FlecheError;
 use job::StatusOptions;
 use output::OutputFormat;
 use registry::ArchivedFilter;
@@ -178,12 +179,16 @@ async fn run() -> Result<()> {
                 ArchivedFilter::ExcludeArchived
             };
 
+            let selection =
+                cli::collect_filters(&args.filter).map_err(FlecheError::InvalidArgument)?;
+
             job::show_status(
                 args.job_id.as_deref(),
                 StatusOptions {
-                    filters: &args.filter,
-                    name: args.name.as_deref(),
-                    tags: &args.tags,
+                    filters: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
                     last: args.last,
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
@@ -206,11 +211,15 @@ async fn run() -> Result<()> {
 
             let interval = job::parse_interval_secs(args.interval)?;
 
+            let selection =
+                cli::collect_filters(&args.filter).map_err(FlecheError::InvalidArgument)?;
+
             job::watch_status(
                 StatusOptions {
-                    filters: &args.filter,
-                    name: args.name.as_deref(),
-                    tags: &args.tags,
+                    filters: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
                     last: args.last,
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
