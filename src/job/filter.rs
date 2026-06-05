@@ -5,7 +5,7 @@
 //! flag. [`JobFilters`] is the borrowed view passed to handlers; [`list_matching`]
 //! and [`resolve_job`] run the query against the registry, and [`CompiledFilters`]
 //! does in-memory matching for paths that gather candidates another way (e.g.
-//! `clean --older-than`).
+//! `clean --before`).
 
 use crate::error::{FlecheError, Result};
 use crate::registry::{ArchivedFilter, JobRecord, JobStatus, Registry, build_job_filter_pattern};

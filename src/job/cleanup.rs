@@ -285,7 +285,7 @@ pub async fn clean_jobs(
             registry.list_jobs_created_before(cutoff)?
         }
     } else {
-        println!("Specify a job ID, --all, or --older-than");
+        println!("Specify a job ID, --all, or --before");
         return Ok(());
     };
 

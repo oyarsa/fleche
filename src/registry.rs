@@ -760,7 +760,7 @@ fn get_db_path() -> Result<PathBuf> {
     Ok(config_dir.join("fleche").join("jobs.db"))
 }
 
-/// Resolves a `--before`/`--older-than` value into a cutoff instant.
+/// Resolves a `--before` value into a cutoff instant.
 ///
 /// Accepts either a relative delta (`7d`, `24h`, `30m`), interpreted as
 /// `now - delta`, or an absolute timestamp (see [`parse_timestamp`]). Jobs with

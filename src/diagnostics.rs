@@ -251,7 +251,7 @@ fn print_disk_status(usage: &DiskUsage) {
         );
         println!(
             "    {}",
-            style("Consider cleaning up old jobs with `fleche clean --older-than 30d`").yellow()
+            style("Consider cleaning up old jobs with `fleche clean --before 30d`").yellow()
         );
     } else if usage.use_percent >= 75 {
         println!(
@@ -495,7 +495,7 @@ fn check_cleanable_jobs(registry: &Registry, issues: &mut Vec<String>) {
                 style("ℹ").blue(),
                 cleanable.len()
             );
-            issues.push("Consider `fleche clean --older-than 30d` to clean old jobs".to_string());
+            issues.push("Consider `fleche clean --before 30d` to clean old jobs".to_string());
         }
     }
 }
@@ -575,7 +575,7 @@ async fn check_disk_for_doctor(ssh: &SshClient, base_path: &str, issues: &mut Ve
                     usage.available
                 );
                 issues.push(format!(
-                    "Disk space critically low ({}%) - run `fleche clean --delete --older-than 7d`",
+                    "Disk space critically low ({}%) - run `fleche clean --delete --before 7d`",
                     usage.use_percent
                 ));
             } else if usage.use_percent >= 75 {
