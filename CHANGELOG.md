@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [8.2.0] - 2026-06-05
+
+### Fixed
+- `doctor`/diagnostics cleanup suggestions and the `clean` "specify a target"
+  error message now reference `--before` instead of the removed `--older-than`.
+
 ## [8.1.0] - 2026-06-05
 
 ### Changed
