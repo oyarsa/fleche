@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.0.0] - 2026-06-05
+
+### Changed (breaking)
+- Job filtering is unified under a single `-f`/`--filter 'type:query'` flag
+  across `status`, `watch`, `logs`, `download`, `cancel`, `clean`, `wait`, and
+  `stats`. Types are `status`, `name` (ID regex), `tag` (key=value), and `note`
+  (regex). A value with no type prefix is a status, so `-f completed` works.
+  Filters are repeatable and ANDed together (`-f status:running -f tag:env=prod`).
+  Note filtering is now available on all of these commands.
+- `download`'s output-glob filter moved from `--filter` to `--glob`, freeing
+  `--filter` for job selection.
+
+### Removed (breaking)
+- The standalone `--name`, `--tag`, and `--note` filter flags. Migrate:
+  - `--tag key=value`  →  `-f tag:key=value`
+  - `--name <regex>`   →  `-f name:<regex>`
+  - `--note <regex>`   →  `-f note:<regex>`
+  - `--filter completed` (status) is unchanged (`-f completed` still works)
+  - `fleche download --filter '*.json'`  →  `fleche download --glob '*.json'`
+  Note: `logs` keeps `-f` as the short for `--follow`, so its job filter is the
+  long `--filter` only.
+
 ## [6.26.0] - 2026-06-04
 
 ### Changed
