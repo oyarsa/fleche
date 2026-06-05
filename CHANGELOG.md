@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [8.0.0] - 2026-06-05
+
+### Changed (breaking)
+- `clean --older-than` is replaced by `clean --before`, which accepts either a
+  relative delta (`7d`, `24h`, `30m`) or an absolute timestamp (`2026-06-05`,
+  `'2026-06-05 14:30'`, or an RFC3339 datetime). Bare/naive timestamps are read
+  in the local timezone. The cutoff is exclusive (`created before`), so
+  `--before=2026-06-05` cleans jobs up to but not including the start of that
+  local day. Migrate `--older-than 7d` to `--before 7d`.
+
 ## [7.0.0] - 2026-06-05
 
 ### Changed (breaking)
