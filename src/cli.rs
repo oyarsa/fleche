@@ -188,9 +188,12 @@ pub enum Commands {
         #[arg(long, value_name = "TOPIC")]
         ntfy: Option<String>,
 
-        /// Filter by tag when using default job (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
+        /// Filter the default job by 'type:query' (repeatable, `ANDed`).
+        ///
+        /// Types: status, name (ID regex), tag (key=value), note (regex).
+        /// Without a type prefix the value is a status.
+        #[arg(short = 'f', long)]
+        filter: Vec<String>,
     },
 
     /// Generate shell completions
@@ -215,9 +218,12 @@ pub enum Commands {
         #[arg(long, short = 'n', default_value = "1")]
         last: usize,
 
-        /// Filter by tag (repeatable)
-        #[arg(long = "tag", value_parser = parse_key_value)]
-        tags: Vec<(String, String)>,
+        /// Filter jobs by 'type:query' (repeatable, `ANDed` together).
+        ///
+        /// Types: status, name (ID regex), tag (key=value), note (regex).
+        /// Without a type prefix the value is a status.
+        #[arg(short = 'f', long)]
+        filter: Vec<String>,
     },
 
     /// Add or view a note on a job
@@ -452,13 +458,12 @@ pub struct LogsArgs {
     #[arg(long)]
     pub raw: bool,
 
-    /// Filter by tag when using default job (repeatable)
-    #[arg(long = "tag", value_parser = parse_key_value)]
-    pub tags: Vec<(String, String)>,
-
-    /// Filter by note content (regex pattern, case-insensitive)
+    /// Filter the default job by 'type:query' (repeatable, `ANDed` together).
+    ///
+    /// Types: status, name (ID regex), tag (key=value), note (regex). Without a
+    /// type prefix the value is a status. (No -f short here; -f is --follow.)
     #[arg(long)]
-    pub note: Option<String>,
+    pub filter: Vec<String>,
 }
 
 #[derive(clap::Args)]
@@ -476,11 +481,14 @@ pub struct DownloadArgs {
 
     /// Filter outputs by glob pattern (repeatable). Prefix with ! to exclude.
     #[arg(long)]
-    pub filter: Vec<String>,
+    pub glob: Vec<String>,
 
-    /// Filter by tag when using default job (repeatable)
-    #[arg(long = "tag", value_parser = parse_key_value)]
-    pub tags: Vec<(String, String)>,
+    /// Select the job by 'type:query' (repeatable, `ANDed` together).
+    ///
+    /// Types: status, name (ID regex), tag (key=value), note (regex). Without a
+    /// type prefix the value is a status.
+    #[arg(short = 'f', long)]
+    pub filter: Vec<String>,
 
     /// Show what would be downloaded without actually downloading
     #[arg(long)]
@@ -504,9 +512,12 @@ pub struct CancelArgs {
     #[arg(short, long)]
     pub yes: bool,
 
-    /// Filter by tag (repeatable)
-    #[arg(long = "tag", value_parser = parse_key_value)]
-    pub tags: Vec<(String, String)>,
+    /// Filter jobs by 'type:query' (repeatable, `ANDed` together).
+    ///
+    /// Types: status, name (ID regex), tag (key=value), note (regex). Without a
+    /// type prefix the value is a status.
+    #[arg(short = 'f', long)]
+    pub filter: Vec<String>,
 }
 
 #[derive(clap::Args)]
@@ -518,8 +529,11 @@ pub struct CleanArgs {
     #[arg(long)]
     pub all: bool,
 
-    /// Filter by status (completed, failed, cancelled) - repeatable
-    #[arg(long)]
+    /// Filter jobs by 'type:query' (repeatable, `ANDed` together).
+    ///
+    /// Types: status, name (ID regex), tag (key=value), note (regex). Without a
+    /// type prefix the value is a status.
+    #[arg(short = 'f', long)]
     pub filter: Vec<String>,
 
     /// Clean jobs older than duration (e.g., 7d, 24h)
@@ -535,7 +549,7 @@ pub struct CleanArgs {
     pub workspace: bool,
 
     /// Target archived jobs (for --delete or --unarchive)
-    #[arg(long, conflicts_with_all = ["filter"])]
+    #[arg(long)]
     pub archived: bool,
 
     /// Restore archived job to normal listings
@@ -549,10 +563,6 @@ pub struct CleanArgs {
     /// Skip confirmation prompt
     #[arg(short, long)]
     pub yes: bool,
-
-    /// Filter by tag (repeatable)
-    #[arg(long = "tag", value_parser = parse_key_value)]
-    pub tags: Vec<(String, String)>,
 }
 
 /// Parses a KEY=VALUE string into a tuple.

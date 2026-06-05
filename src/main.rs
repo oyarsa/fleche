@@ -185,10 +185,12 @@ async fn run() -> Result<()> {
             job::show_status(
                 args.job_id.as_deref(),
                 StatusOptions {
-                    filters: &selection.statuses,
-                    name: selection.name.as_deref(),
-                    tags: &selection.tags,
-                    note: selection.note.as_deref(),
+                    filters: job::JobFilters {
+                        statuses: &selection.statuses,
+                        name: selection.name.as_deref(),
+                        tags: &selection.tags,
+                        note: selection.note.as_deref(),
+                    },
                     last: args.last,
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
@@ -216,10 +218,12 @@ async fn run() -> Result<()> {
 
             job::watch_status(
                 StatusOptions {
-                    filters: &selection.statuses,
-                    name: selection.name.as_deref(),
-                    tags: &selection.tags,
-                    note: selection.note.as_deref(),
+                    filters: job::JobFilters {
+                        statuses: &selection.statuses,
+                        name: selection.name.as_deref(),
+                        tags: &selection.tags,
+                        note: selection.note.as_deref(),
+                    },
                     last: args.last,
                     default_limit: optional_settings.as_ref().map(|s| s.default_list_limit),
                     archived: archived_filter,
@@ -233,10 +237,16 @@ async fn run() -> Result<()> {
         }
 
         Commands::Logs(args) => {
+            let selection =
+                cli::collect_filters(&args.filter).map_err(FlecheError::InvalidArgument)?;
             job::show_logs(
                 args.job_id.as_deref(),
-                &args.tags,
-                args.note.as_deref(),
+                job::JobFilters {
+                    statuses: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
+                },
                 job::ShowLogsOptions {
                     follow: args.follow,
                     only_stdout: args.stdout,
@@ -250,12 +260,19 @@ async fn run() -> Result<()> {
         }
 
         Commands::Download(args) => {
+            let selection =
+                cli::collect_filters(&args.filter).map_err(FlecheError::InvalidArgument)?;
             job::download_outputs(
                 args.job_id.as_deref(),
                 args.partial,
                 args.path.as_deref(),
-                &args.filter,
-                &args.tags,
+                &args.glob,
+                job::JobFilters {
+                    statuses: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
+                },
                 args.dry_run,
                 runtime_ctx,
             )
@@ -263,9 +280,16 @@ async fn run() -> Result<()> {
         }
 
         Commands::Cancel(args) => {
+            let selection =
+                cli::collect_filters(&args.filter).map_err(FlecheError::InvalidArgument)?;
             job::cancel_jobs(
                 args.job_id.as_deref(),
-                &args.tags,
+                job::JobFilters {
+                    statuses: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
+                },
                 job::CancelJobsOptions {
                     all: args.all,
                     skip_confirm: args.yes,
@@ -278,13 +302,19 @@ async fn run() -> Result<()> {
         }
 
         Commands::Clean(args) => {
+            let selection =
+                cli::collect_filters(&args.filter).map_err(FlecheError::InvalidArgument)?;
             job::clean_jobs(
                 args.job_id.as_deref(),
                 args.older_than.as_deref(),
-                &args.tags,
+                job::JobFilters {
+                    statuses: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
+                },
                 job::CleanJobsOptions {
                     all: args.all,
-                    status_filters: args.filter,
                     delete: args.delete,
                     clean_workspace: args.workspace,
                     include_archived: args.archived,
@@ -351,13 +381,19 @@ async fn run() -> Result<()> {
             job_id,
             notify,
             ntfy,
-            tags,
+            filter,
         } => {
+            let selection = cli::collect_filters(&filter).map_err(FlecheError::InvalidArgument)?;
             job::wait_for_job(
                 job_id.as_deref(),
                 notify,
                 ntfy.as_deref(),
-                &tags,
+                job::JobFilters {
+                    statuses: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
+                },
                 format,
                 runtime_ctx,
             )
@@ -368,8 +404,25 @@ async fn run() -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "fleche", &mut std::io::stdout());
         }
 
-        Commands::Stats { job_id, last, tags } => {
-            job::show_stats(job_id.as_deref(), last, &tags, format, runtime_ctx).await?;
+        Commands::Stats {
+            job_id,
+            last,
+            filter,
+        } => {
+            let selection = cli::collect_filters(&filter).map_err(FlecheError::InvalidArgument)?;
+            job::show_stats(
+                job_id.as_deref(),
+                last,
+                job::JobFilters {
+                    statuses: &selection.statuses,
+                    name: selection.name.as_deref(),
+                    tags: &selection.tags,
+                    note: selection.note.as_deref(),
+                },
+                format,
+                runtime_ctx,
+            )
+            .await?;
         }
 
         Commands::Note { job_id, note } => {

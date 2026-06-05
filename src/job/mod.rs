@@ -11,6 +11,7 @@
 mod cleanup;
 mod display;
 mod download;
+mod filter;
 mod logs;
 mod ops;
 mod run;
@@ -21,6 +22,7 @@ use crate::config::Config;
 // Re-export public API
 pub use cleanup::{CancelJobsOptions, CleanJobsOptions, cancel_jobs, clean_jobs};
 pub use download::download_outputs;
+pub use filter::{CompiledFilters, JobFilters, list_matching, list_matching_archived, resolve_job};
 pub use logs::{ShowLogsOptions, show_logs};
 pub use ops::{ping_cluster, show_stats, wait_for_job};
 pub use run::{

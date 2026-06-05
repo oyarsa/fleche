@@ -3,13 +3,10 @@
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::output::OutputFormat;
-use crate::registry::{
-    ArchivedFilter, JobRecord, JobStatus, LiveStatus, Registry, build_job_filter_pattern,
-};
+use crate::registry::{ArchivedFilter, JobRecord, JobStatus, LiveStatus, Registry};
 use crate::runtime::RuntimeCtx;
 use crate::slurm::{get_job_resource_usage, get_job_status};
 use console::style;
-use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -18,6 +15,7 @@ use std::time::Duration;
 use super::display::{print_indexed_job_table, print_job_details, print_job_table};
 use super::get_remote_direct_job_status;
 use super::job_path_from_workspace;
+use super::{CompiledFilters, JobFilters};
 
 /// Default number of jobs to show when no limit is specified and no config is available.
 const DEFAULT_LIST_LIMIT: usize = 20;
@@ -32,14 +30,8 @@ const DEFAULT_LIST_LIMIT: usize = 20;
 /// ```
 #[derive(Default)]
 pub struct StatusOptions<'a> {
-    /// Status strings (e.g. `"failed"`, `"running"`) to restrict results.
-    pub filters: &'a [String],
-    /// Regex pattern matched against job IDs.
-    pub name: Option<&'a str>,
-    /// Key-value pairs that must all match for a job to be included.
-    pub tags: &'a [(String, String)],
-    /// Regex pattern matched against job notes (case-insensitive).
-    pub note: Option<&'a str>,
+    /// Job-selection predicates (status, name, tags, note).
+    pub filters: JobFilters<'a>,
     /// Maximum number of jobs to display. Falls back to `default_limit`,
     /// then to [`DEFAULT_LIST_LIMIT`].
     pub last: Option<usize>,
@@ -215,12 +207,6 @@ async fn show_job_detail(
 
 /// Lists recent jobs with optional filtering.
 fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()> {
-    let status_filters: Vec<JobStatus> = opts
-        .filters
-        .iter()
-        .map(|f| f.parse())
-        .collect::<Result<Vec<_>>>()?;
-
     let limit = opts
         .last
         .unwrap_or_else(|| opts.default_limit.unwrap_or(DEFAULT_LIST_LIMIT));
@@ -228,7 +214,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
     let jobs = if opts.archived == ArchivedFilter::ExcludeArchived {
         // Default view: filter in Rust to preserve global indices that
         // match get_job_by_index().
-        let (indices, jobs) = list_indexed_jobs(registry, opts, &status_filters, limit)?;
+        let (indices, jobs) = list_indexed_jobs(registry, opts, limit)?;
         if opts.format.is_human() && !jobs.is_empty() {
             print_indexed_job_table(&jobs, &indices, !opts.compact);
         }
@@ -236,15 +222,7 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
     } else {
         // Archived or "show all" view: indices would not match
         // get_job_by_index(), so omit them.
-        let jobs = registry.list_jobs(
-            None,
-            &status_filters,
-            opts.name,
-            opts.note,
-            opts.tags,
-            opts.archived,
-            limit,
-        )?;
+        let jobs = super::list_matching_archived(registry, opts.filters, opts.archived, limit)?;
         if opts.format.is_human() && !jobs.is_empty() {
             print_job_table(&jobs, !opts.compact);
         }
@@ -264,55 +242,21 @@ fn list_recent_jobs(registry: &Registry, opts: &StatusOptions<'_>) -> Result<()>
 fn list_indexed_jobs(
     registry: &Registry,
     opts: &StatusOptions<'_>,
-    status_filters: &[JobStatus],
     limit: usize,
 ) -> Result<(Vec<usize>, Vec<JobRecord>)> {
-    let has_filters = !status_filters.is_empty()
-        || opts.name.is_some()
-        || !opts.tags.is_empty()
-        || opts.note.is_some();
-    let fetch_limit = if has_filters {
-        limit.saturating_mul(10).max(1000)
-    } else {
+    let fetch_limit = if opts.filters.is_empty() {
         limit
+    } else {
+        limit.saturating_mul(10).max(1000)
     };
 
     let all_jobs = registry.list_all_jobs(fetch_limit)?;
-
-    let name_re = opts
-        .name
-        .map(|p| {
-            let pattern = build_job_filter_pattern(p);
-            Regex::new(&pattern)
-                .map_err(|e| FlecheError::InvalidRegexPattern(format!("--name '{p}': {e}")))
-        })
-        .transpose()?;
-
-    let note_re = opts
-        .note
-        .map(|p| {
-            let pattern = build_job_filter_pattern(p);
-            RegexBuilder::new(&pattern)
-                .case_insensitive(true)
-                .build()
-                .map_err(|e| FlecheError::InvalidRegexPattern(format!("note '{p}': {e}")))
-        })
-        .transpose()?;
+    let matcher = CompiledFilters::compile(opts.filters)?;
 
     Ok(all_jobs
         .into_iter()
         .enumerate()
-        .filter(|(_, job)| {
-            (status_filters.is_empty() || status_filters.contains(&job.status))
-                && name_re.as_ref().is_none_or(|re| re.is_match(&job.id))
-                && note_re
-                    .as_ref()
-                    .is_none_or(|re| job.note.as_ref().is_some_and(|n| re.is_match(n)))
-                && opts
-                    .tags
-                    .iter()
-                    .all(|(k, v)| job.tags.get(k).is_some_and(|tv| tv == v))
-        })
+        .filter(|(_, job)| matcher.matches(job))
         .take(limit)
         .map(|(i, job)| (i + 1, job))
         .unzip())
@@ -404,32 +348,6 @@ pub async fn refresh_active_job_statuses(registry: &Registry, ctx: &RuntimeCtx) 
     }
 
     Ok(())
-}
-
-/// Resolves a job ID or gets the most recent job matching criteria.
-pub fn resolve_job(
-    registry: &Registry,
-    job_id: Option<&str>,
-    tags: &[(String, String)],
-    note_filter: Option<&str>,
-) -> Result<JobRecord> {
-    if let Some(id) = job_id {
-        registry.get_job(id)
-    } else {
-        registry
-            .list_jobs(
-                None,
-                &[],
-                None,
-                note_filter,
-                tags,
-                ArchivedFilter::ExcludeArchived,
-                1,
-            )?
-            .into_iter()
-            .next()
-            .ok_or(FlecheError::NoRecentJob)
-    }
 }
 
 #[cfg(test)]

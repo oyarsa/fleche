@@ -12,20 +12,20 @@ use crate::sync::{
 use console::style;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
-use super::status::resolve_job;
+use super::{JobFilters, resolve_job};
 
 /// Downloads output files from a job's workspace back to the local project.
 pub async fn download_outputs(
     job_id: Option<&str>,
     partial: bool,
     specific_path: Option<&str>,
-    filters: &[String],
-    tags: &[(String, String)],
+    globs: &[String],
+    filters: JobFilters<'_>,
     dry_run: bool,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
-    let job = resolve_job(&registry, job_id, tags, None)?;
+    let job = resolve_job(&registry, job_id, filters)?;
 
     // Local jobs don't need downloading - files are already in place
     if job.remote_host == "local" {
@@ -83,16 +83,16 @@ pub async fn download_outputs(
         }
 
         // Determine files to download
-        let outputs = if filters.is_empty() {
-            // No filters: use configured outputs as-is (fast path)
+        let outputs = if globs.is_empty() {
+            // No globs: use configured outputs as-is (fast path)
             resolved.outputs
         } else {
-            // Filters provided: expand directories and filter individual files
-            expand_and_filter_outputs(&ssh, &job.remote_path, &resolved.outputs, filters).await?
+            // Globs provided: expand directories and filter individual files
+            expand_and_filter_outputs(&ssh, &job.remote_path, &resolved.outputs, globs).await?
         };
 
         if outputs.is_empty() {
-            println!("No outputs match the specified filters.");
+            println!("No outputs match the specified globs.");
             return Ok(());
         }
 

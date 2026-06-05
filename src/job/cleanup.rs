@@ -13,14 +13,13 @@ use std::path::PathBuf;
 
 use super::cancel_remote_direct_job;
 use super::job_path_from_workspace;
+use super::{CompiledFilters, JobFilters, list_matching};
 
 /// Options for cleaning up jobs.
 #[derive(Debug, Default)]
 pub struct CleanJobsOptions {
     /// Clean all completed/failed jobs.
     pub all: bool,
-    /// Filter by status (e.g., failed, completed, cancelled).
-    pub status_filters: Vec<String>,
     /// Permanently delete instead of archiving.
     pub delete: bool,
     /// Also delete the shared workspace.
@@ -57,10 +56,23 @@ pub struct CancelJobsOptions {
 /// Cancels running or pending Slurm jobs.
 pub async fn cancel_jobs(
     job_id: Option<&str>,
-    tags: &[(String, String)],
+    filters: JobFilters<'_>,
     opts: CancelJobsOptions,
 ) -> Result<()> {
     let registry = Registry::open()?;
+
+    // Active jobs matching the filters (fast path when no filters are given).
+    let active_matching = || -> Result<Vec<JobRecord>> {
+        let jobs = if filters.is_empty() {
+            registry.list_active_jobs()?
+        } else {
+            list_matching(&registry, filters, usize::MAX)?
+                .into_iter()
+                .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
+                .collect()
+        };
+        Ok(jobs)
+    };
 
     let jobs_to_cancel: Vec<JobRecord> = if let Some(id) = job_id {
         let job = registry.get_job(id)?;
@@ -75,27 +87,10 @@ pub async fn cancel_jobs(
         }
         vec![job]
     } else if opts.all {
-        // Get active jobs, optionally filtered by tags
-        if tags.is_empty() {
-            registry.list_active_jobs()?
-        } else {
-            registry
-                .list_jobs_by_tags(tags, usize::MAX)?
-                .into_iter()
-                .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
-                .collect()
-        }
+        active_matching()?
     } else {
-        // Cancel most recent active job (optionally filtered by tags)
-        let active: Vec<JobRecord> = if tags.is_empty() {
-            registry.list_active_jobs()?
-        } else {
-            registry
-                .list_jobs_by_tags(tags, usize::MAX)?
-                .into_iter()
-                .filter(|j| matches!(j.status, JobStatus::Pending | JobStatus::Running))
-                .collect()
-        };
+        // Cancel the most recent active job matching the filters.
+        let active = active_matching()?;
         if active.is_empty() {
             let empty: Vec<JobRecord> = Vec::new();
             return opts.format.print(&empty, || {
@@ -215,7 +210,7 @@ pub async fn cancel_jobs(
 pub async fn clean_jobs(
     job_id: Option<&str>,
     older_than: Option<&str>,
-    tags: &[(String, String)],
+    filters: JobFilters<'_>,
     opts: CleanJobsOptions,
 ) -> Result<()> {
     let registry = Registry::open()?;
@@ -271,62 +266,34 @@ pub async fn clean_jobs(
         return opts.format.print_json_only(&jobs_to_unarchive);
     }
 
-    // For archive/delete: get jobs to process
+    // For archive/delete: gather the candidate set per mode, then apply the
+    // unified filters (status, name, note, tags) uniformly below.
     let jobs_to_clean: Vec<JobRecord> = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
     } else if opts.all {
         if opts.include_archived {
-            // Target archived jobs
             registry.list_archived_jobs()?
-        } else if tags.is_empty() {
-            registry.list_finished_jobs()?
         } else {
-            registry
-                .list_jobs_by_tags(tags, usize::MAX)?
-                .into_iter()
-                .filter(|j| {
-                    matches!(
-                        j.status,
-                        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
-                    )
-                })
-                .collect()
+            registry.list_finished_jobs()?
         }
     } else if let Some(duration_str) = older_than {
         let duration = parse_duration(duration_str)?;
-        let older_jobs = if opts.include_archived {
+        if opts.include_archived {
             registry.list_archived_jobs_older_than(duration)?
         } else {
             registry.list_jobs_older_than(duration)?
-        };
-        // Filter by tags if provided
-        if tags.is_empty() {
-            older_jobs
-        } else {
-            older_jobs
-                .into_iter()
-                .filter(|j| tags.iter().all(|(k, v)| j.tags.get(k) == Some(v)))
-                .collect()
         }
     } else {
         println!("Specify a job ID, --all, or --older-than");
         return Ok(());
     };
 
-    // Apply --filter status filters
-    let status_filters: Vec<JobStatus> = opts
-        .status_filters
-        .iter()
-        .map(|f| f.parse())
-        .collect::<Result<Vec<_>>>()?;
-    let jobs_to_clean: Vec<JobRecord> = if status_filters.is_empty() {
-        jobs_to_clean
-    } else {
-        jobs_to_clean
-            .into_iter()
-            .filter(|j| status_filters.contains(&j.status))
-            .collect()
-    };
+    // Apply the unified --filter predicates (status/name/note/tags).
+    let matcher = CompiledFilters::compile(filters)?;
+    let jobs_to_clean: Vec<JobRecord> = jobs_to_clean
+        .into_iter()
+        .filter(|j| matcher.matches(j))
+        .collect();
 
     let action = if opts.delete { "delete" } else { "archive" };
 

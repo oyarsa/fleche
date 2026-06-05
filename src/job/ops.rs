@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use super::get_remote_direct_job_status;
 use super::job_path_from_workspace;
-use super::status::resolve_job;
+use super::{JobFilters, list_matching, resolve_job};
 
 /// Waits for a job to complete.
 ///
@@ -25,12 +25,12 @@ pub async fn wait_for_job(
     job_id: Option<&str>,
     notify: bool,
     ntfy_topic: Option<&str>,
-    tags: &[(String, String)],
+    filters: JobFilters<'_>,
     format: OutputFormat,
     ctx: RuntimeCtx,
 ) -> Result<()> {
     let registry = Registry::open()?;
-    let job = resolve_job(&registry, job_id, tags, None)?;
+    let job = resolve_job(&registry, job_id, filters)?;
 
     if format.is_human() {
         println!("Waiting for job {}...", style(&job.id).bold());
@@ -227,7 +227,7 @@ struct JobStatsEntry {
 pub async fn show_stats(
     job_id: Option<&str>,
     last: usize,
-    tags: &[(String, String)],
+    filters: JobFilters<'_>,
     format: OutputFormat,
     ctx: RuntimeCtx,
 ) -> Result<()> {
@@ -236,7 +236,7 @@ pub async fn show_stats(
     let jobs = if let Some(id) = job_id {
         vec![registry.get_job(id)?]
     } else {
-        registry.list_jobs_by_tags(tags, last)?
+        list_matching(&registry, filters, last)?
     };
 
     if jobs.is_empty() {

@@ -477,23 +477,6 @@ impl Registry {
         )
     }
 
-    /// Lists the most recent non-archived jobs filtered by tags only.
-    pub fn list_jobs_by_tags(
-        &self,
-        tags: &[(String, String)],
-        limit: usize,
-    ) -> Result<Vec<JobRecord>> {
-        self.list_jobs(
-            None,
-            &[],
-            None,
-            None,
-            tags,
-            ArchivedFilter::ExcludeArchived,
-            limit,
-        )
-    }
-
     /// Lists jobs matching the given filters.
     ///
     /// Jobs can be filtered by project path, status, name prefix, note content, and tags.

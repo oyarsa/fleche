@@ -7,7 +7,7 @@ use crate::runtime::RuntimeCtx;
 use console::style;
 use std::path::PathBuf;
 
-use super::{job_path_from_workspace, status::resolve_job};
+use super::{JobFilters, job_path_from_workspace, resolve_job};
 
 /// Options for displaying job logs.
 #[derive(Debug, Default)]
@@ -29,12 +29,11 @@ pub struct ShowLogsOptions {
 /// Displays logs from a job's stdout or stderr.
 pub async fn show_logs(
     job_id: Option<&str>,
-    tags: &[(String, String)],
-    note_filter: Option<&str>,
+    filters: JobFilters<'_>,
     opts: ShowLogsOptions,
 ) -> Result<()> {
     let registry = Registry::open()?;
-    let job = resolve_job(&registry, job_id, tags, note_filter)?;
+    let job = resolve_job(&registry, job_id, filters)?;
 
     // Determine which streams to show
     let show_stdout = !opts.only_stderr || opts.only_stdout;
