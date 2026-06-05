@@ -476,7 +476,8 @@ fn check_stale_jobs(jobs: &[crate::registry::JobRecord], issues: &mut Vec<String
 }
 
 fn check_cleanable_jobs(registry: &Registry, issues: &mut Vec<String>) {
-    if let Ok(old_jobs) = registry.list_jobs_older_than(Duration::days(30)) {
+    if let Ok(old_jobs) = registry.list_jobs_created_before(chrono::Utc::now() - Duration::days(30))
+    {
         let cleanable: Vec<_> = old_jobs
             .iter()
             .filter(|j| {

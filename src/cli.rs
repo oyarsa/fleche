@@ -522,7 +522,7 @@ pub struct CancelArgs {
 
 #[derive(clap::Args)]
 pub struct CleanArgs {
-    /// Job ID (optional with --all or --older-than)
+    /// Job ID (optional with --all or --before)
     pub job_id: Option<String>,
 
     /// Clean all completed/failed jobs
@@ -536,9 +536,10 @@ pub struct CleanArgs {
     #[arg(short = 'f', long)]
     pub filter: Vec<String>,
 
-    /// Clean jobs older than duration (e.g., 7d, 24h)
+    /// Clean jobs created before a delta (7d, 24h, 30m) or timestamp
+    /// (2026-06-05, '2026-06-05 14:30', or RFC3339)
     #[arg(long)]
-    pub older_than: Option<String>,
+    pub before: Option<String>,
 
     /// Permanently delete jobs instead of archiving
     #[arg(long, conflicts_with = "unarchive")]

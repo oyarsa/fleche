@@ -306,7 +306,7 @@ async fn run() -> Result<()> {
                 cli::collect_filters(&args.filter).map_err(FlecheError::InvalidArgument)?;
             job::clean_jobs(
                 args.job_id.as_deref(),
-                args.older_than.as_deref(),
+                args.before.as_deref(),
                 job::JobFilters {
                     statuses: &selection.statuses,
                     name: selection.name.as_deref(),

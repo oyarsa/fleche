@@ -3,9 +3,10 @@
 use crate::error::{FlecheError, Result};
 use crate::local;
 use crate::output::OutputFormat;
-use crate::registry::{JobRecord, JobStatus, LiveStatus, Registry, parse_duration};
+use crate::registry::{JobRecord, JobStatus, LiveStatus, Registry, parse_cutoff};
 use crate::runtime::RuntimeCtx;
 use crate::slurm::cancel_job;
+use chrono::Utc;
 use console::style;
 use std::collections::HashSet;
 use std::io::Write;
@@ -209,7 +210,7 @@ pub async fn cancel_jobs(
 /// Also supports archiving/unarchiving jobs.
 pub async fn clean_jobs(
     job_id: Option<&str>,
-    older_than: Option<&str>,
+    before: Option<&str>,
     filters: JobFilters<'_>,
     opts: CleanJobsOptions,
 ) -> Result<()> {
@@ -276,12 +277,12 @@ pub async fn clean_jobs(
         } else {
             registry.list_finished_jobs()?
         }
-    } else if let Some(duration_str) = older_than {
-        let duration = parse_duration(duration_str)?;
+    } else if let Some(before_str) = before {
+        let cutoff = parse_cutoff(before_str, Utc::now())?;
         if opts.include_archived {
-            registry.list_archived_jobs_older_than(duration)?
+            registry.list_archived_jobs_created_before(cutoff)?
         } else {
-            registry.list_jobs_older_than(duration)?
+            registry.list_jobs_created_before(cutoff)?
         }
     } else {
         println!("Specify a job ID, --all, or --older-than");
@@ -324,7 +325,7 @@ pub async fn clean_jobs(
     // Show jobs and confirm if multiple
     if opts.format.is_human()
         && !jobs_to_clean.is_empty()
-        && (jobs_to_clean.len() > 1 || opts.all || older_than.is_some())
+        && (jobs_to_clean.len() > 1 || opts.all || before.is_some())
     {
         println!("Jobs to {action}:");
         for job in &jobs_to_clean {

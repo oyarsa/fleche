@@ -6,7 +6,7 @@
 
 use crate::config::ResolvedJob;
 use crate::error::{FlecheError, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use regex::{Regex, RegexBuilder};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize, Serializer};
@@ -600,12 +600,11 @@ impl Registry {
         self.load_tags_for_jobs(jobs)
     }
 
-    /// Lists finished jobs older than the given duration.
+    /// Lists finished jobs created before the given cutoff (exclusive).
     ///
     /// Only returns jobs with status completed, failed, or cancelled.
     /// Excludes archived jobs.
-    pub fn list_jobs_older_than(&self, duration: Duration) -> Result<Vec<JobRecord>> {
-        let cutoff = Utc::now() - duration;
+    pub fn list_jobs_created_before(&self, cutoff: DateTime<Utc>) -> Result<Vec<JobRecord>> {
         let sql = format!(
             "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
              WHERE created_at < ?1 AND status IN ('completed', 'failed', 'cancelled') \
@@ -707,9 +706,11 @@ impl Registry {
         self.load_tags_for_jobs(jobs)
     }
 
-    /// Lists archived jobs older than the given duration.
-    pub fn list_archived_jobs_older_than(&self, duration: Duration) -> Result<Vec<JobRecord>> {
-        let cutoff = Utc::now() - duration;
+    /// Lists archived jobs created before the given cutoff (exclusive).
+    pub fn list_archived_jobs_created_before(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> Result<Vec<JobRecord>> {
         let sql = format!(
             "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
              WHERE created_at < ?1 AND archived = 1 \
@@ -759,6 +760,70 @@ fn get_db_path() -> Result<PathBuf> {
     Ok(config_dir.join("fleche").join("jobs.db"))
 }
 
+/// Resolves a `--before`/`--older-than` value into a cutoff instant.
+///
+/// Accepts either a relative delta (`7d`, `24h`, `30m`), interpreted as
+/// `now - delta`, or an absolute timestamp (see [`parse_timestamp`]). Jobs with
+/// `created_at < cutoff` are considered "before" it.
+pub fn parse_cutoff(s: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>> {
+    if let Ok(duration) = parse_duration(s) {
+        return Ok(now - duration);
+    }
+    parse_timestamp(s)
+}
+
+/// Parses an absolute timestamp into UTC.
+///
+/// Accepts RFC3339 (with explicit offset/`Z`), local date+time
+/// (`2026-06-05 14:30` or `2026-06-05T14:30`, optional `:SS`), or a bare local
+/// date (`2026-06-05`, interpreted as local midnight). Naive forms are read in
+/// the local timezone and converted to UTC.
+fn parse_timestamp(s: &str) -> Result<DateTime<Utc>> {
+    let s = s.trim();
+
+    // RFC3339 carries its own offset.
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+
+    // Local date+time, with or without seconds, space or `T` separator.
+    for fmt in [
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M",
+    ] {
+        if let Ok(naive) = NaiveDateTime::parse_from_str(s, fmt) {
+            return local_naive_to_utc(naive);
+        }
+    }
+
+    // Bare date -> local midnight at the start of that day.
+    if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let naive = date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is always a valid time");
+        return local_naive_to_utc(naive);
+    }
+
+    Err(FlecheError::InvalidArgument(format!(
+        "invalid time filter '{s}'; use a delta (7d, 24h, 30m) or a timestamp \
+         (2026-06-05, '2026-06-05 14:30', or an RFC3339 datetime)"
+    )))
+}
+
+/// Interprets a naive datetime in the local timezone and converts it to UTC.
+fn local_naive_to_utc(naive: NaiveDateTime) -> Result<DateTime<Utc>> {
+    match Local.from_local_datetime(&naive) {
+        // Unambiguous, or a DST fall-back overlap (pick the earlier instant).
+        LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => Ok(dt.with_timezone(&Utc)),
+        // Falls in a DST spring-forward gap that doesn't exist locally.
+        LocalResult::None => Err(FlecheError::InvalidArgument(format!(
+            "timestamp '{naive}' does not exist in the local timezone (daylight-saving gap)"
+        ))),
+    }
+}
+
 /// Parses a duration string like "7d", "24h", or "30m".
 pub fn parse_duration(s: &str) -> Result<Duration> {
     let s = s.trim().to_lowercase();
@@ -801,6 +866,68 @@ mod tests {
 
         let d = parse_duration("30D").unwrap();
         assert_eq!(d.num_days(), 30);
+    }
+
+    #[test]
+    fn test_parse_cutoff_delta_is_relative_to_now() {
+        let now = DateTime::parse_from_rfc3339("2026-06-05T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let cutoff = parse_cutoff("2d", now).unwrap();
+        assert_eq!(cutoff, now - Duration::days(2));
+    }
+
+    #[test]
+    fn test_parse_cutoff_rfc3339_timestamp() {
+        let now = Utc::now();
+        let cutoff = parse_cutoff("2026-06-05T00:00:00Z", now).unwrap();
+        assert_eq!(
+            cutoff,
+            DateTime::parse_from_rfc3339("2026-06-05T00:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+    }
+
+    #[test]
+    fn test_parse_cutoff_bare_date_is_local_midnight() {
+        // A bare date resolves to local midnight; converted to UTC it must equal
+        // the same wall-clock midnight reinterpreted through the local offset.
+        let now = Utc::now();
+        let cutoff = parse_cutoff("2026-06-05", now).unwrap();
+
+        let expected = Local
+            .from_local_datetime(
+                &NaiveDate::from_ymd_opt(2026, 6, 5)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(cutoff, expected);
+    }
+
+    #[test]
+    fn test_parse_cutoff_before_is_exclusive_of_named_day() {
+        // `--before=2026-06-05` must exclude jobs created on 2026-06-05 and
+        // include those on 2026-06-04 (cutoff is the start of the 5th).
+        let now = Utc::now();
+        let cutoff = parse_cutoff("2026-06-05T00:00:00Z", now).unwrap();
+
+        let on_4th = DateTime::parse_from_rfc3339("2026-06-04T23:59:59Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let on_5th = DateTime::parse_from_rfc3339("2026-06-05T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(on_4th < cutoff, "the 4th should be before the cutoff");
+        assert!(on_5th >= cutoff, "the 5th should not be before the cutoff");
+    }
+
+    #[test]
+    fn test_parse_cutoff_rejects_garbage() {
+        assert!(parse_cutoff("not-a-time", Utc::now()).is_err());
     }
 
     #[test]
