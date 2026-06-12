@@ -17,6 +17,8 @@ use regex::{Regex, RegexBuilder};
 /// `name` and `note` are regexes; `tags` must all be present.
 #[derive(Clone, Copy, Default)]
 pub struct JobFilters<'a> {
+    /// Restrict matches to jobs created from this project path.
+    pub project_path: Option<&'a str>,
     /// Status strings (e.g. `"running"`); empty means "any status".
     pub statuses: &'a [String],
     /// Regex matched against the job ID.
@@ -31,6 +33,7 @@ impl JobFilters<'_> {
     /// Returns true when no predicate is set (matches every job).
     pub fn is_empty(&self) -> bool {
         self.statuses.is_empty()
+            && self.project_path.is_none()
             && self.name.is_none()
             && self.tags.is_empty()
             && self.note.is_none()
@@ -60,7 +63,7 @@ pub fn list_matching_archived(
 ) -> Result<Vec<JobRecord>> {
     let statuses = parse_statuses(filters.statuses)?;
     registry.list_jobs(
-        None,
+        filters.project_path,
         &statuses,
         filters.name,
         filters.note,
@@ -77,7 +80,7 @@ pub fn resolve_job(
     filters: JobFilters<'_>,
 ) -> Result<JobRecord> {
     if let Some(id) = job_id {
-        registry.get_job(id)
+        registry.get_job_scoped(id, filters.project_path)
     } else {
         list_matching(registry, filters, 1)?
             .into_iter()
@@ -91,6 +94,7 @@ pub fn resolve_job(
 /// Used where candidates are gathered by a query that `list_jobs` can't express
 /// (e.g. "older than a duration"), so the filters are applied in Rust instead.
 pub struct CompiledFilters {
+    project_path: Option<String>,
     statuses: Vec<JobStatus>,
     name: Option<Regex>,
     note: Option<Regex>,
@@ -119,6 +123,7 @@ impl CompiledFilters {
             .transpose()?;
 
         Ok(Self {
+            project_path: filters.project_path.map(str::to_string),
             statuses: parse_statuses(filters.statuses)?,
             name,
             note,
@@ -129,6 +134,10 @@ impl CompiledFilters {
     /// Returns true if `job` satisfies all configured predicates.
     pub fn matches(&self, job: &JobRecord) -> bool {
         (self.statuses.is_empty() || self.statuses.contains(&job.status))
+            && self
+                .project_path
+                .as_ref()
+                .is_none_or(|p| job.project_path == *p)
             && self.name.as_ref().is_none_or(|re| re.is_match(&job.id))
             && self
                 .note

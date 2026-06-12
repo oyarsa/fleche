@@ -18,7 +18,8 @@ pub async fn check_remote(config: &Config, ctx: RuntimeCtx) -> Result<()> {
     println!("{}", style("Remote Validation").bold().underlined());
     println!();
 
-    let ssh = ctx.ssh(&config.remote.host);
+    let remote = config.require_remote()?;
+    let ssh = ctx.ssh(&remote.host);
 
     // Check SSH connectivity
     if !check_ssh_connection(&ssh).await {
@@ -34,10 +35,10 @@ pub async fn check_remote(config: &Config, ctx: RuntimeCtx) -> Result<()> {
     }
 
     // Check base path
-    check_base_path(&ssh, &config.remote.base_path).await;
+    check_base_path(&ssh, &remote.base_path).await;
 
     // Check disk space
-    check_disk_space(&ssh, &config.remote.base_path).await;
+    check_disk_space(&ssh, &remote.base_path).await;
 
     println!();
     Ok(())
@@ -335,7 +336,11 @@ fn check_configuration(issues: &mut Vec<String>) -> Option<Config> {
         Ok(c) => {
             println!("  fleche.toml... {}", style("valid").green());
             println!("    Project: {}", c.project_name);
-            println!("    Remote: {}:{}", c.remote.host, c.remote.base_path);
+            if let Some(remote) = &c.remote {
+                println!("    Remote: {}:{}", remote.host, remote.base_path);
+            } else {
+                println!("    Remote: not configured");
+            }
             println!();
             Some(c)
         }
@@ -504,7 +509,15 @@ async fn check_remote_connection(config: &Config, ctx: RuntimeCtx, issues: &mut 
     println!("{}", style("Remote Connection").bold());
     println!();
 
-    let ssh = ctx.ssh(&config.remote.host);
+    let Ok(remote) = config.require_remote() else {
+        println!(
+            "  Remote config... {} (skipped)",
+            style("not configured").yellow()
+        );
+        println!();
+        return;
+    };
+    let ssh = ctx.ssh(&remote.host);
 
     // Check SSH
     print!("  SSH connection... ");
@@ -530,7 +543,7 @@ async fn check_remote_connection(config: &Config, ctx: RuntimeCtx, issues: &mut 
             check_slurm_for_doctor(&ssh, issues).await;
 
             // Check disk space
-            check_disk_for_doctor(&ssh, &config.remote.base_path, issues).await;
+            check_disk_for_doctor(&ssh, &remote.base_path, issues).await;
         }
         Err(e) => {
             println!("{}", style("FAILED").red().bold());

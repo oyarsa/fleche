@@ -104,8 +104,14 @@ async fn run() -> Result<()> {
         })?;
     }
 
-    // Optional settings are used by commands that can run without a project config.
-    let optional_settings = Config::find_and_load().ok().map(|c| c.settings);
+    // Optional config is used by commands that can run without a project config,
+    // but should scope implicit job selection when a project is available.
+    let optional_config = Config::find_and_load().ok();
+    let optional_settings = optional_config.as_ref().map(|c| c.settings.clone());
+    let optional_project_path = optional_config
+        .as_ref()
+        .map(|c| c.project_path.to_string_lossy().into_owned());
+    let project_scope = optional_project_path.as_deref();
     let runtime_ctx = RuntimeCtx::from_optional_settings(cli.debug, optional_settings.as_ref());
     let format = if cli.json {
         OutputFormat::Json
@@ -186,6 +192,7 @@ async fn run() -> Result<()> {
                 args.job_id.as_deref(),
                 StatusOptions {
                     filters: job::JobFilters {
+                        project_path: project_scope,
                         statuses: &selection.statuses,
                         name: selection.name.as_deref(),
                         tags: &selection.tags,
@@ -219,6 +226,7 @@ async fn run() -> Result<()> {
             job::watch_status(
                 StatusOptions {
                     filters: job::JobFilters {
+                        project_path: project_scope,
                         statuses: &selection.statuses,
                         name: selection.name.as_deref(),
                         tags: &selection.tags,
@@ -242,6 +250,7 @@ async fn run() -> Result<()> {
             job::show_logs(
                 args.job_id.as_deref(),
                 job::JobFilters {
+                    project_path: project_scope,
                     statuses: &selection.statuses,
                     name: selection.name.as_deref(),
                     tags: &selection.tags,
@@ -268,6 +277,7 @@ async fn run() -> Result<()> {
                 args.path.as_deref(),
                 &args.glob,
                 job::JobFilters {
+                    project_path: project_scope,
                     statuses: &selection.statuses,
                     name: selection.name.as_deref(),
                     tags: &selection.tags,
@@ -285,6 +295,7 @@ async fn run() -> Result<()> {
             job::cancel_jobs(
                 args.job_id.as_deref(),
                 job::JobFilters {
+                    project_path: project_scope,
                     statuses: &selection.statuses,
                     name: selection.name.as_deref(),
                     tags: &selection.tags,
@@ -308,6 +319,7 @@ async fn run() -> Result<()> {
                 args.job_id.as_deref(),
                 args.before.as_deref(),
                 job::JobFilters {
+                    project_path: project_scope,
                     statuses: &selection.statuses,
                     name: selection.name.as_deref(),
                     tags: &selection.tags,
@@ -389,6 +401,7 @@ async fn run() -> Result<()> {
                 notify,
                 ntfy.as_deref(),
                 job::JobFilters {
+                    project_path: project_scope,
                     statuses: &selection.statuses,
                     name: selection.name.as_deref(),
                     tags: &selection.tags,
@@ -414,6 +427,7 @@ async fn run() -> Result<()> {
                 job_id.as_deref(),
                 last,
                 job::JobFilters {
+                    project_path: project_scope,
                     statuses: &selection.statuses,
                     name: selection.name.as_deref(),
                     tags: &selection.tags,
@@ -440,7 +454,7 @@ async fn run() -> Result<()> {
         } => {
             let host = match host {
                 Some(h) => h,
-                None => Config::find_and_load()?.remote.host,
+                None => Config::find_and_load()?.require_remote()?.host.clone(),
             };
             let code = proxy::run_proxy_command(&host, &command, port, cli.debug).await?;
             if code != 0 {

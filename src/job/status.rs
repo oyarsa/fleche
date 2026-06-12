@@ -82,7 +82,7 @@ pub async fn show_status(
     let registry = Registry::open()?;
 
     if let Some(id) = job_id {
-        show_job_detail(&registry, id, &ctx, opts.format).await?;
+        show_job_detail(&registry, id, opts.filters.project_path, &ctx, opts.format).await?;
     } else {
         refresh_active_job_statuses(&registry, &ctx).await?;
         list_recent_jobs(&registry, &opts)?;
@@ -169,10 +169,11 @@ pub async fn watch_status(
 async fn show_job_detail(
     registry: &Registry,
     id: &str,
+    project_path: Option<&str>,
     ctx: &RuntimeCtx,
     format: OutputFormat,
 ) -> Result<()> {
-    let mut job = registry.get_job(id)?;
+    let mut job = registry.get_job_scoped(id, project_path)?;
 
     if let Ok(live) = query_live_status(&job, ctx).await {
         registry.update_status(&job.id, &live)?;
@@ -244,13 +245,25 @@ fn list_indexed_jobs(
     opts: &StatusOptions<'_>,
     limit: usize,
 ) -> Result<(Vec<usize>, Vec<JobRecord>)> {
-    let fetch_limit = if opts.filters.is_empty() {
-        limit
-    } else {
+    let has_non_project_filters = !opts.filters.statuses.is_empty()
+        || opts.filters.name.is_some()
+        || !opts.filters.tags.is_empty()
+        || opts.filters.note.is_some();
+    let fetch_limit = if has_non_project_filters {
         limit.saturating_mul(10).max(1000)
+    } else {
+        limit
     };
 
-    let all_jobs = registry.list_all_jobs(fetch_limit)?;
+    let all_jobs = registry.list_jobs(
+        opts.filters.project_path,
+        &[],
+        None,
+        None,
+        &[],
+        crate::registry::ArchivedFilter::ExcludeArchived,
+        fetch_limit,
+    )?;
     let matcher = CompiledFilters::compile(opts.filters)?;
 
     Ok(all_jobs

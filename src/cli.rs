@@ -284,11 +284,11 @@ pub enum InstallScope {
 
 #[derive(clap::Args)]
 pub struct RunArgs {
-    /// Job name from config, or command to run (in quotes)
-    #[arg(value_name = "JOB_OR_COMMAND")]
+    /// Job name from config
+    #[arg(value_name = "JOB")]
     pub job_or_command: Option<String>,
 
-    /// Override or provide command (if job name given)
+    /// Override a job command, or provide an ad hoc command when no job is given
     #[arg(long)]
     pub command: Option<String>,
 

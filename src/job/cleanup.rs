@@ -76,7 +76,7 @@ pub async fn cancel_jobs(
     };
 
     let jobs_to_cancel: Vec<JobRecord> = if let Some(id) = job_id {
-        let job = registry.get_job(id)?;
+        let job = registry.get_job_scoped(id, filters.project_path)?;
         if matches!(
             job.status,
             JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
@@ -219,7 +219,7 @@ pub async fn clean_jobs(
     // Handle --unarchive mode: restore archived jobs
     if opts.unarchive {
         let jobs_to_unarchive: Vec<JobRecord> = if let Some(id) = job_id {
-            let job = registry.get_job(id)?;
+            let job = registry.get_job_scoped(id, filters.project_path)?;
             if !job.archived {
                 println!("Job {} is not archived.", job.id);
                 return Ok(());
@@ -270,7 +270,7 @@ pub async fn clean_jobs(
     // For archive/delete: gather the candidate set per mode, then apply the
     // unified filters (status, name, note, tags) uniformly below.
     let jobs_to_clean: Vec<JobRecord> = if let Some(id) = job_id {
-        vec![registry.get_job(id)?]
+        vec![registry.get_job_scoped(id, filters.project_path)?]
     } else if opts.all {
         if opts.include_archived {
             registry.list_archived_jobs()?

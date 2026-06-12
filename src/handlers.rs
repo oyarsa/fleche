@@ -40,12 +40,18 @@ fn print_config_summary(config: &Config) {
     println!(
         "  {:<14} {}",
         style("Remote host:").bold(),
-        config.remote.host
+        config
+            .remote
+            .as_ref()
+            .map_or("(not configured)", |r| r.host.as_str())
     );
     println!(
         "  {:<14} {}",
         style("Base path:").bold(),
-        config.remote.base_path
+        config
+            .remote
+            .as_ref()
+            .map_or("(not configured)", |r| r.base_path.as_str())
     );
     println!(
         "  {:<14} {}",

@@ -48,7 +48,7 @@ fleche run <job> --after <job-id>             # Run after another job completes 
 fleche run <job> --retry 3                    # Auto-retry on failure with exponential backoff
 fleche run <job> --exec                       # Bypass Slurm, run directly via SSH for this run
 fleche run <job> --ntfy my-topic              # Push notifications via ntfy.sh on state changes
-fleche run "command" --gpus 1 --time 1:00:00  # Adhoc Slurm command (no job definition)
+fleche run --command "nvidia-smi" --gpus 1 --time 1:00:00  # Adhoc Slurm command
 fleche rerun <job-id>                         # Re-run previous job with same settings
 fleche exec <cmd>                             # Run directly via SSH, no Slurm (quick tests)
 fleche exec <cmd> --no-sync                   # Skip project sync (code already on remote)

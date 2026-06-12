@@ -96,7 +96,7 @@ pub enum FlecheError {
     Json(#[from] serde_json::Error),
 
     /// Neither a job name nor a command was provided.
-    #[error("Either job-name or --command must be provided")]
+    #[error("Provide a job name, or use --command for an ad hoc command")]
     NoJobOrCommand,
 
     /// Cannot cancel a job that is already in a terminal state.

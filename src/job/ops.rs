@@ -159,11 +159,12 @@ fn print_wait_result(
 /// Runs `scontrol ping` on the remote host and reports the status of the
 /// Slurm controller(s). Useful for diagnosing timeout issues.
 pub async fn ping_cluster(config: &Config, ctx: RuntimeCtx) -> Result<()> {
-    let ssh = ctx.ssh(&config.remote.host);
+    let remote = config.require_remote()?;
+    let ssh = ctx.ssh(&remote.host);
 
     println!(
         "Pinging Slurm controller on {}...",
-        style(&config.remote.host).bold()
+        style(&remote.host).bold()
     );
     println!();
 
@@ -234,7 +235,7 @@ pub async fn show_stats(
     let registry = Registry::open()?;
 
     let jobs = if let Some(id) = job_id {
-        vec![registry.get_job(id)?]
+        vec![registry.get_job_scoped(id, filters.project_path)?]
     } else {
         list_matching(&registry, filters, last)?
     };

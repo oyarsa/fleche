@@ -37,6 +37,7 @@ pub async fn download_outputs(
     }
 
     let ssh = ctx.ssh(&job.remote_host);
+    let mut effective_status = job.status;
 
     // Check job status
     if !partial && matches!(job.status, JobStatus::Pending | JobStatus::Running) {
@@ -45,6 +46,7 @@ pub async fn download_outputs(
                 .await
                 .map(|live| live.status)
                 .unwrap_or(job.status);
+            effective_status = current_status;
             if matches!(current_status, JobStatus::Pending | JobStatus::Running) {
                 eprintln!(
                     "{}",
@@ -114,12 +116,33 @@ pub async fn download_outputs(
         .await?;
     }
 
+    let full_configured_output_download =
+        should_mark_outputs_synced(specific_path, globs, partial, effective_status);
+
     if !dry_run {
-        registry.set_outputs_synced(&job.id)?;
+        if full_configured_output_download {
+            registry.set_outputs_synced(&job.id)?;
+        }
         println!("{}", style("Download complete.").green());
     }
 
     Ok(())
+}
+
+/// Returns whether a successful download represents all configured outputs.
+fn should_mark_outputs_synced(
+    specific_path: Option<&str>,
+    globs: &[String],
+    partial: bool,
+    status: JobStatus,
+) -> bool {
+    specific_path.is_none()
+        && globs.is_empty()
+        && !partial
+        && matches!(
+            status,
+            JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+        )
 }
 
 /// Expands directory outputs to individual files and applies glob filters.
@@ -335,5 +358,45 @@ mod tests {
     fn test_build_filter_glob_sets_invalid_pattern() {
         let result = build_filter_glob_sets(&["[invalid".to_string()]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_should_mark_outputs_synced_only_for_full_terminal_downloads() {
+        assert!(should_mark_outputs_synced(
+            None,
+            &[],
+            false,
+            JobStatus::Completed
+        ));
+        assert!(should_mark_outputs_synced(
+            None,
+            &[],
+            false,
+            JobStatus::Failed
+        ));
+        assert!(!should_mark_outputs_synced(
+            Some("metrics.json"),
+            &[],
+            false,
+            JobStatus::Completed
+        ));
+        assert!(!should_mark_outputs_synced(
+            None,
+            &["*.json".to_string()],
+            false,
+            JobStatus::Completed
+        ));
+        assert!(!should_mark_outputs_synced(
+            None,
+            &[],
+            true,
+            JobStatus::Completed
+        ));
+        assert!(!should_mark_outputs_synced(
+            None,
+            &[],
+            false,
+            JobStatus::Running
+        ));
     }
 }

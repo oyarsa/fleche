@@ -367,22 +367,44 @@ impl Registry {
         Ok(())
     }
 
-    /// Retrieves a job by its numeric index (1-based, most recent first).
+    /// Retrieves a job by its numeric index (1-based, most recent first) within
+    /// an optional project scope.
     ///
     /// Indices correspond to the position in the default job list (non-archived,
     /// ordered by `created_at DESC`), matching the `#` column in `fleche status`.
     ///
     /// Delegates to `list_jobs` so that ordering and filtering are defined in one place.
-    fn get_job_by_index(&self, index: usize) -> Result<JobRecord> {
-        let jobs = self.list_all_jobs(index)?;
+    fn get_job_by_index_scoped(
+        &self,
+        index: usize,
+        project_path: Option<&str>,
+    ) -> Result<JobRecord> {
+        let jobs = self.list_jobs(
+            project_path,
+            &[],
+            None,
+            None,
+            &[],
+            ArchivedFilter::ExcludeArchived,
+            index,
+        )?;
         if let Some(job) = jobs.into_iter().last() {
             Ok(job)
         } else {
-            let count: usize = self.conn.query_row(
-                "SELECT COUNT(*) FROM jobs WHERE (archived = 0 OR archived IS NULL)",
-                [],
-                |row| row.get(0),
-            )?;
+            let count: usize = if let Some(project_path) = project_path {
+                self.conn.query_row(
+                    "SELECT COUNT(*) FROM jobs \
+                     WHERE project_path = ?1 AND (archived = 0 OR archived IS NULL)",
+                    params![project_path],
+                    |row| row.get(0),
+                )?
+            } else {
+                self.conn.query_row(
+                    "SELECT COUNT(*) FROM jobs WHERE (archived = 0 OR archived IS NULL)",
+                    [],
+                    |row| row.get(0),
+                )?
+            };
             Err(FlecheError::JobIdNotFound(format!(
                 "index {index} (only {count} jobs exist)"
             )))
@@ -398,32 +420,59 @@ impl Registry {
     /// is found, that job is returned. If multiple matches are found, an error is
     /// returned listing the ambiguous matches.
     pub fn get_job(&self, id: &str) -> Result<JobRecord> {
+        self.get_job_scoped(id, None)
+    }
+
+    /// Retrieves a job by ID, suffix, or numeric index within an optional
+    /// project scope.
+    pub fn get_job_scoped(&self, id: &str, project_path: Option<&str>) -> Result<JobRecord> {
         // Try numeric index first
         if let Ok(index) = id.parse::<usize>() {
             if index >= 1 {
-                return self.get_job_by_index(index);
+                return self.get_job_by_index_scoped(index, project_path);
             }
         }
 
         // Try exact match
-        let sql = format!("SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id = ?1");
+        let sql = if project_path.is_some() {
+            format!("SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id = ?1 AND project_path = ?2")
+        } else {
+            format!("SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id = ?1")
+        };
         let mut stmt = self.conn.prepare(&sql)?;
 
-        if let Ok(job) = stmt.query_row(params![id], JobRecord::from_row) {
+        let exact = if let Some(project_path) = project_path {
+            stmt.query_row(params![id, project_path], JobRecord::from_row)
+        } else {
+            stmt.query_row(params![id], JobRecord::from_row)
+        };
+
+        if let Ok(job) = exact {
             let tags = self.get_tags(&job.id)?;
             return Ok(JobRecord { tags, ..job });
         }
 
         // Try suffix match
         let suffix_pattern = format!("%{id}");
-        let sql = format!(
-            "SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id LIKE ?1 ORDER BY created_at DESC"
-        );
+        let sql = if project_path.is_some() {
+            format!(
+                "SELECT {JOB_SELECT_COLUMNS} FROM jobs \
+                 WHERE id LIKE ?1 AND project_path = ?2 ORDER BY created_at DESC"
+            )
+        } else {
+            format!(
+                "SELECT {JOB_SELECT_COLUMNS} FROM jobs WHERE id LIKE ?1 ORDER BY created_at DESC"
+            )
+        };
         let mut stmt = self.conn.prepare(&sql)?;
 
-        let matches: Vec<JobRecord> = stmt
-            .query_map(params![suffix_pattern], JobRecord::from_row)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let matches: Vec<JobRecord> = if let Some(project_path) = project_path {
+            stmt.query_map(params![suffix_pattern, project_path], JobRecord::from_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![suffix_pattern], JobRecord::from_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
 
         match <[_; 1]>::try_from(matches) {
             Ok([job]) => {
@@ -518,8 +567,8 @@ impl Registry {
         }
 
         if let Some(project) = project_filter {
-            conditions.push("j.project_path LIKE ?".to_string());
-            params_vec.push(Box::new(format!("%{project}%")));
+            conditions.push("j.project_path = ?".to_string());
+            params_vec.push(Box::new(project.to_string()));
         }
 
         if !status_filters.is_empty() {

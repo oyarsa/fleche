@@ -298,8 +298,8 @@ pub struct Config {
     pub project_name: String,
     /// Local path to the project directory (where fleche.toml is).
     pub project_path: PathBuf,
-    /// Remote host configuration.
-    pub remote: RemoteConfig,
+    /// Remote host configuration, required for remote jobs.
+    pub remote: Option<RemoteConfig>,
     /// Global environment variables applied to all jobs (raw, unexpanded).
     /// Variable expansion happens in `resolve_job` after merging with CLI overrides.
     pub global_env: IndexMap<String, String>,
@@ -379,10 +379,6 @@ impl Config {
         let raw: RawConfig = toml::from_str(&content)
             .map_err(|e| FlecheError::ConfigParse(format!("Failed to parse TOML: {e}")))?;
 
-        let raw_remote = raw
-            .remote
-            .ok_or_else(|| FlecheError::MissingField("remote".to_string()))?;
-
         let project_name = raw.project.name.unwrap_or_else(|| {
             project_path
                 .file_name()
@@ -393,15 +389,20 @@ impl Config {
 
         // Expand remote.base_path (needed for setup, uses only global env + system env)
         let expanded_global_env = expand_env_map(raw.env.clone(), &project_name, &dotenv)?;
-        let remote = RemoteConfig {
-            host: raw_remote.host,
-            base_path: expand_variables(
-                &raw_remote.base_path,
-                &project_name,
-                &expanded_global_env,
-                &dotenv,
-            )?,
-        };
+        let remote = raw
+            .remote
+            .map(|raw_remote| {
+                Ok::<RemoteConfig, FlecheError>(RemoteConfig {
+                    host: raw_remote.host,
+                    base_path: expand_variables(
+                        &raw_remote.base_path,
+                        &project_name,
+                        &expanded_global_env,
+                        &dotenv,
+                    )?,
+                })
+            })
+            .transpose()?;
 
         // Store raw (unexpanded) global env - expansion happens in resolve_job
         let global_env = raw.env;
@@ -442,6 +443,7 @@ impl Config {
         command_override: Option<&str>,
         env_overrides: &[(String, String)],
         slurm_overrides: &SlurmConfig,
+        host_override: Option<&str>,
     ) -> Result<ResolvedJob> {
         let (name, job_def) = if let Some(name) = job_name {
             let job = self.jobs.get(name).ok_or_else(|| {
@@ -509,8 +511,19 @@ impl Config {
         reject_empty_path_entries(&name, "inputs", &job_def.inputs, &inputs)?;
         reject_empty_path_entries(&name, "outputs", &job_def.outputs, &outputs)?;
 
-        // Resolve host: job definition -> remote.host
-        let host = job_def.host.unwrap_or_else(|| self.remote.host.clone());
+        // Resolve host: CLI override -> job definition -> remote.host.
+        let host = match host_override {
+            Some(host) => host.to_string(),
+            None => job_def
+                .host
+                .or_else(|| self.remote.as_ref().map(|r| r.host.clone()))
+                .ok_or_else(|| {
+                    FlecheError::MissingField(
+                        "remote (required for remote jobs; set host = \"local\" for local jobs)"
+                            .to_string(),
+                    )
+                })?,
+        };
 
         // Resolve exec: job definition (default false)
         let exec = job_def.exec.unwrap_or(false);
@@ -530,6 +543,16 @@ impl Config {
     /// Returns the configured global dotenv file path, if any.
     pub fn dotenv_file(&self) -> Option<&str> {
         self.global_dotenv.as_deref()
+    }
+
+    /// Returns the remote configuration, or a clear error when this is a
+    /// local-only project.
+    pub fn require_remote(&self) -> Result<&RemoteConfig> {
+        self.remote.as_ref().ok_or_else(|| {
+            FlecheError::MissingField(
+                "remote (required for remote commands; set [remote] in fleche.toml)".to_string(),
+            )
+        })
     }
 
     /// Returns all job names, sorted alphabetically.
@@ -671,6 +694,10 @@ base_path = "~/fleche"              # Remote base directory for all projects
 # gpus = 1
 # cpus = 8
 # memory = "32G"
+
+[jobs.smoke]
+command = "echo fleche smoke test"
+host = "local"
 
 # [settings]
 # Optional settings to override defaults
@@ -901,7 +928,7 @@ mod tests {
 
         let config = Config::load_from_path(&config_path).unwrap();
         let job = config
-            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None)
             .unwrap();
         assert_eq!(job.env.get("INJECTED_VAR").unwrap(), "hello_world");
     }
@@ -924,7 +951,7 @@ mod tests {
 
         let config = Config::load_from_path(&config_path).unwrap();
         let job = config
-            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None)
             .unwrap();
         assert_eq!(job.env.get("SHARED").unwrap(), "from_global");
     }
@@ -947,7 +974,7 @@ mod tests {
 
         let config = Config::load_from_path(&config_path).unwrap();
         let job = config
-            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None)
             .unwrap();
         assert_eq!(job.env.get("SHARED").unwrap(), "from_job");
     }
@@ -969,7 +996,13 @@ mod tests {
         let config = Config::load_from_path(&config_path).unwrap();
         let overrides = vec![("SHARED".to_string(), "from_cli".to_string())];
         let job = config
-            .resolve_job(Some("train"), None, &overrides, &SlurmConfig::default())
+            .resolve_job(
+                Some("train"),
+                None,
+                &overrides,
+                &SlurmConfig::default(),
+                None,
+            )
             .unwrap();
         assert_eq!(job.env.get("SHARED").unwrap(), "from_cli");
     }
@@ -994,7 +1027,7 @@ mod tests {
 
         let config = Config::load_from_path(&config_path).unwrap();
         let job = config
-            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None)
             .unwrap();
         // Per-job dotenv replaces global (not additive)
         assert_eq!(job.env.get("SOURCE").unwrap(), "train");
@@ -1017,7 +1050,7 @@ mod tests {
         );
 
         let config = Config::load_from_path(&config_path).unwrap();
-        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("dotenv file not found"), "got: {err}");
@@ -1043,7 +1076,7 @@ mod tests {
         );
 
         let config = Config::load_from_path(&config_path).unwrap();
-        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None);
         assert!(result.is_err(), "expected empty input to be rejected");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("inputs"), "got: {err}");
@@ -1068,7 +1101,7 @@ mod tests {
         );
 
         let config = Config::load_from_path(&config_path).unwrap();
-        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None);
         assert!(result.is_err(), "expected empty output to be rejected");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("outputs"), "got: {err}");
@@ -1089,7 +1122,7 @@ mod tests {
         );
 
         let config = Config::load_from_path(&config_path).unwrap();
-        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default());
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None);
         assert!(
             result.is_err(),
             "expected whitespace-only input to be rejected"
@@ -1137,9 +1170,67 @@ mod tests {
 
         let config = Config::load_from_path(&config_path).unwrap();
         let job = config
-            .resolve_job(Some("train"), None, &[], &SlurmConfig::default())
+            .resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None)
             .unwrap();
         assert_eq!(job.inputs, vec!["data/real.txt", "extra/file.txt"]);
+    }
+
+    #[test]
+    fn test_local_job_resolves_without_remote_config() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [jobs.smoke]
+                command = "echo hi"
+                host = "local"
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        assert!(config.remote.is_none());
+        let job = config
+            .resolve_job(Some("smoke"), None, &[], &SlurmConfig::default(), None)
+            .unwrap();
+        assert_eq!(job.host, "local");
+    }
+
+    #[test]
+    fn test_host_override_local_resolves_without_remote_config() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [jobs.smoke]
+                command = "echo hi"
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let job = config
+            .resolve_job(
+                Some("smoke"),
+                None,
+                &[],
+                &SlurmConfig::default(),
+                Some("local"),
+            )
+            .unwrap();
+        assert_eq!(job.host, "local");
+    }
+
+    #[test]
+    fn test_remote_job_without_remote_config_errors() {
+        let (_dir, config_path) = create_test_project(
+            r#"
+                [jobs.train]
+                command = "echo hi"
+            "#,
+            &[],
+        );
+
+        let config = Config::load_from_path(&config_path).unwrap();
+        let result = config.resolve_job(Some("train"), None, &[], &SlurmConfig::default(), None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("remote"));
     }
 
     #[test]

@@ -35,6 +35,9 @@ cargo install fleche
 # Initialize a new project
 fleche init
 
+# Try the generated local smoke job
+fleche run smoke
+
 # Edit fleche.toml to configure your remote host and jobs
 # Then validate your config
 fleche check
@@ -69,6 +72,37 @@ View the built-in skill reference from the CLI, or install it locally for AI cod
 fleche skill                    # Print skill reference to stdout
 fleche skill --install project  # Install for current project
 fleche skill --install global   # Install for all projects
+```
+
+## Configuration Examples
+
+GPU Python job:
+
+```toml
+[slurm]
+partition = "gpu"
+time = "4:00:00"
+gpus = 1
+cpus = 8
+memory = "32G"
+
+[jobs.train]
+command = "python train.py --config configs/base.yaml"
+inputs = ["data/"]
+outputs = ["checkpoints/", "metrics.json"]
+```
+
+`uv` job with a shared cache:
+
+```toml
+[env]
+UV_CACHE_DIR = "/scratch/${USER}/uv-cache"
+UV_PROJECT_ENVIRONMENT = "/scratch/${USER}/${PROJECT}/.venv"
+
+[jobs.train]
+command = "uv run python train.py"
+inputs = ["data/"]
+outputs = ["outputs/"]
 ```
 
 ## Requirements

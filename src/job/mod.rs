@@ -18,6 +18,7 @@ mod run;
 mod status;
 
 use crate::config::Config;
+use crate::error::Result;
 
 // Re-export public API
 pub use cleanup::{CancelJobsOptions, CleanJobsOptions, cancel_jobs, clean_jobs};
@@ -34,24 +35,26 @@ pub use status::{
 };
 
 /// Returns the workspace path for a project on the remote host.
-pub fn workspace_path(config: &Config) -> String {
-    format!(
+pub fn workspace_path(config: &Config) -> Result<String> {
+    let remote = config.require_remote()?;
+    Ok(format!(
         "{}/{}/.fleche/workspace",
-        config.remote.base_path, config.project_name
-    )
+        remote.base_path, config.project_name
+    ))
 }
 
 /// Returns the jobs directory path for a project on the remote host.
-pub fn jobs_base_path(config: &Config) -> String {
-    format!(
+pub fn jobs_base_path(config: &Config) -> Result<String> {
+    let remote = config.require_remote()?;
+    Ok(format!(
         "{}/{}/.fleche/jobs",
-        config.remote.base_path, config.project_name
-    )
+        remote.base_path, config.project_name
+    ))
 }
 
 /// Returns the path for a specific job's metadata/logs directory.
-pub fn job_path(config: &Config, job_id: &str) -> String {
-    format!("{}/{}", jobs_base_path(config), job_id)
+pub fn job_path(config: &Config, job_id: &str) -> Result<String> {
+    Ok(format!("{}/{}", jobs_base_path(config)?, job_id))
 }
 
 /// Returns the jobs directory path from a workspace path.

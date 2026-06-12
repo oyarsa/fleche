@@ -82,28 +82,28 @@ pub async fn run_job(
     opts: RunJobOptions,
     ctx: RuntimeCtx,
 ) -> Result<()> {
-    // Determine if job_or_command is a job name or a command
+    // A positional argument is always a configured job name. Ad hoc commands use
+    // `--command`, which prevents job-name typos from becoming shell commands.
     let (job_name, actual_command) = if let Some(joc) = job_or_command {
-        if config.jobs.contains_key(joc) {
-            // It's a job name
-            (Some(joc), command_override)
-        } else {
-            // It's a command (or unrecognized job name - will be used as command)
-            (None, Some(joc))
-        }
+        (Some(joc), command_override)
     } else {
         (None, command_override)
     };
 
-    let mut job = config.resolve_job(job_name, actual_command, env_overrides, &slurm_overrides)?;
+    let mut job = config.resolve_job(
+        job_name,
+        actual_command,
+        env_overrides,
+        &slurm_overrides,
+        host_override,
+    )?;
 
     // CLI --exec overrides config
     if opts.exec {
         job.exec = true;
     }
 
-    // Determine final host: CLI override -> job definition -> remote.host
-    let host = host_override.map_or_else(|| job.host.clone(), String::from);
+    let host = job.host.clone();
 
     // Branch based on host
     if host == "local" {
@@ -129,10 +129,10 @@ pub async fn run_job(
 
     // Remote execution path
     let job_id = generate_job_id(&job.name);
-    let workspace = workspace_path(config);
+    let workspace = workspace_path(config)?;
 
     if opts.dry_run {
-        let job_dir = job_path(config, &job_id);
+        let job_dir = job_path(config, &job_id)?;
         let script = generate_sbatch_script(&job_id, &job, &workspace, &job_dir);
         println!(
             "{}",
@@ -145,7 +145,7 @@ pub async fn run_job(
         return Ok(());
     }
 
-    let job_dir = job_path(config, &job_id);
+    let job_dir = job_path(config, &job_id)?;
     let ssh =
         prepare_remote_workspace(config, &host, &workspace, &job_dir, &job.inputs, ctx).await?;
 
@@ -162,7 +162,7 @@ pub async fn run_job(
         } else {
             generate_job_id(&job.name)
         };
-        let job_dir = job_path(config, &job_id);
+        let job_dir = job_path(config, &job_id)?;
 
         // Create job directory for this attempt
         if attempt > 1 {
@@ -708,12 +708,12 @@ async fn run_job_with_resolved(
         return run_job_direct_remote(config, job, &job.host, tags, &opts, ctx).await;
     }
 
-    let workspace = workspace_path(config);
+    let workspace = workspace_path(config)?;
     let host = job.host.clone();
 
     // Generate unique job ID
     let job_id = generate_job_id(&job.name);
-    let job_dir = job_path(config, &job_id);
+    let job_dir = job_path(config, &job_id)?;
     let ssh =
         prepare_remote_workspace(config, &host, &workspace, &job_dir, &job.inputs, ctx).await?;
 
@@ -770,7 +770,10 @@ pub async fn exec_command(
     no_sync: bool,
     ctx: RuntimeCtx,
 ) -> Result<()> {
-    let host = host_override.map_or_else(|| config.remote.host.clone(), String::from);
+    let host = match host_override {
+        Some(host) => host.to_string(),
+        None => config.require_remote()?.host.clone(),
+    };
 
     // Local execution path
     if host == "local" {
@@ -778,7 +781,7 @@ pub async fn exec_command(
     }
 
     // Remote execution path
-    let workspace = workspace_path(config);
+    let workspace = workspace_path(config)?;
     let ssh = ctx.ssh(&host);
 
     if no_sync {
@@ -1108,8 +1111,8 @@ async fn run_job_direct_remote(
     }
 
     let job_id = generate_job_id(&job.name);
-    let workspace = workspace_path(config);
-    let job_dir = job_path(config, &job_id);
+    let workspace = workspace_path(config)?;
+    let job_dir = job_path(config, &job_id)?;
 
     if opts.dry_run {
         let script = generate_exec_script(job, &workspace, &job_dir);
@@ -1140,7 +1143,7 @@ async fn run_job_direct_remote(
         } else {
             generate_job_id(&job.name)
         };
-        let job_dir = job_path(config, &job_id);
+        let job_dir = job_path(config, &job_id)?;
 
         // Create job directory for this attempt
         if attempt > 1 {
