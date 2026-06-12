@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [9.0.0] - 2026-06-12
+
+### Changed (breaking)
+- Bare `fleche run <arg>` now treats `<arg>` strictly as a configured job name.
+  Use `fleche run --command "..."` for ad hoc commands. This prevents job-name
+  typos from silently becoming shell commands.
+- Commands that default to a recent job now scope implicit job selection to the
+  current project when `fleche.toml` is present. Numeric indices shown by
+  `fleche status` resolve within the same project scope.
+- `outputs_synced` is now set only after downloading all configured outputs from
+  a terminal job. Downloads using `--path`, `--glob`, or `--partial` no longer
+  mark the whole job as synced.
+
+### Added
+- `fleche init` now creates a runnable local `smoke` job.
+- Local jobs can run from configs without a `[remote]` section when the job or
+  CLI host is `local`.
+- README examples for GPU Python and `uv` configurations.
+
 ## [8.2.0] - 2026-06-05
 
 ### Fixed
