@@ -148,6 +148,59 @@ pub enum FlecheError {
     InvalidArgument(String),
 }
 
+impl FlecheError {
+    /// Process exit code to use when this error reaches the top level.
+    ///
+    /// Buckets errors into a few categories so scripts can distinguish
+    /// "nothing to do" (not found) from "couldn't reach the cluster"
+    /// (remote failure) from bad input (invalid argument, same code clap
+    /// itself uses for usage errors) from everything else.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Self::ConfigNotFound
+            | Self::JobNotFound(..)
+            | Self::JobIdNotFound(..)
+            | Self::AmbiguousJobId(..)
+            | Self::NoRecentJob
+            | Self::NoSlurmId(..) => 3,
+
+            Self::SshConnection(..)
+            | Self::SshCommand(..)
+            | Self::SshTimeout(..)
+            | Self::RsyncFailed(..)
+            | Self::SbatchFailed(..)
+            | Self::SlurmQueryFailed(..)
+            | Self::SlurmUnavailable
+            | Self::MissingDependency(..) => 4,
+
+            Self::InvalidArgument(..)
+            | Self::NoJobOrCommand
+            | Self::InvalidDuration(..)
+            | Self::InvalidGlobPattern(..)
+            | Self::InvalidRegexPattern(..)
+            | Self::CannotCancel(..) => 2,
+
+            _ => 1,
+        }
+    }
+
+    /// Whether this error represents something unanticipated (a bug or
+    /// environment corruption) rather than an ordinary, actionable failure.
+    ///
+    /// Used to decide whether to point the user at the issue tracker.
+    pub fn is_unexpected(&self) -> bool {
+        matches!(
+            self,
+            Self::Io(..)
+                | Self::IoContext { .. }
+                | Self::Database(..)
+                | Self::Json(..)
+                | Self::ConfigDirNotFound
+                | Self::UnknownJobStatus(..)
+        )
+    }
+}
+
 /// A Result type alias using [`FlecheError`] as the error type.
 pub type Result<T> = std::result::Result<T, FlecheError>;
 

@@ -59,8 +59,31 @@ async fn main() {
 
     if let Err(e) = run().await {
         eprintln!("{} {}", style("Error:").red().bold(), e);
-        std::process::exit(1);
+        let fleche_error = e.downcast_ref::<FlecheError>();
+        if fleche_error.is_some_and(FlecheError::is_unexpected) {
+            eprintln!(
+                "If this looks like a bug, please report it: {}/issues",
+                env!("CARGO_PKG_REPOSITORY")
+            );
+        }
+        let code = fleche_error.map_or(1, FlecheError::exit_code);
+        std::process::exit(code);
     }
+}
+
+/// Returns whether `--json` output is wired up for the given command.
+fn command_supports_json(cmd: &Commands) -> bool {
+    matches!(
+        cmd,
+        Commands::Status(_)
+            | Commands::Watch(_)
+            | Commands::Cancel(_)
+            | Commands::Clean(_)
+            | Commands::Jobs
+            | Commands::Tags
+            | Commands::Wait { .. }
+            | Commands::Stats { .. }
+    )
 }
 
 /// Checks that required external tools are available.
@@ -118,6 +141,13 @@ async fn run() -> Result<()> {
     } else {
         OutputFormat::Human
     };
+
+    if cli.json && !command_supports_json(&cli.command) {
+        return Err(FlecheError::InvalidArgument(
+            "--json is not supported for this command".to_string(),
+        )
+        .into());
+    }
 
     match cli.command {
         Commands::Run(args) => {

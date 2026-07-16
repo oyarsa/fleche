@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [9.1.0] - 2026-07-16
+
+### Added
+- Distinct process exit codes: `2` for invalid arguments, `3` for not-found
+  errors (missing job/config), `4` for remote/connectivity failures (SSH,
+  rsync, sbatch, Slurm), so scripts can branch on failure type.
+- Unexpected errors (I/O, database, JSON, corrupted state) now print a link
+  to file a bug report.
+
+### Fixed
+- Passing `--json` to a command that doesn't support it (e.g. `run`, `exec`,
+  `logs`, `download`) now fails with a clear error instead of silently
+  ignoring the flag.
+
 ## [9.0.0] - 2026-06-12
 
 ### Changed (breaking)
